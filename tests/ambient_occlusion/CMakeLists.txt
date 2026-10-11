@@ -49,11 +49,25 @@ if(MSVC)
 else()
     target_compile_options(ao-post-order-test PRIVATE -Wall -Wextra -UNDEBUG)
 endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(scene_retry_extracted "${CMAKE_CURRENT_BINARY_DIR}/scene_retry.extracted.inc")
+add_custom_command(OUTPUT "${scene_retry_extracted}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_scene_retry.py"
+        --source "${runtime_post}" --output "${scene_retry_extracted}"
+    DEPENDS "${runtime_post}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_scene_retry.py"
+    COMMENT "Extracting the production AO scene coordinator" VERBATIM)
+set_source_files_properties("${scene_retry_extracted}" PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+add_executable(ao-scene-retry-test test_scene_retry.c "${scene_retry_extracted}")
+target_include_directories(ao-scene-retry-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${XBOXRECOMP_DIR}/src/nv2a/kelvin")
+set_property(TARGET ao-scene-retry-test PROPERTY C_STANDARD 11)
+set_property(TARGET ao-scene-retry-test PROPERTY C_STANDARD_REQUIRED ON)
+
 enable_testing()
 add_test(NAME ao-video COMMAND ao-video-test)
 add_test(NAME ao-menu COMMAND ao-menu-test)
 add_test(NAME ao-warp COMMAND ao-warp-test "${runtime_post}")
 add_test(NAME ao-post-order COMMAND ao-post-order-test)
+add_test(NAME ao-scene-retry COMMAND ao-scene-retry-test)
 set_tests_properties(ao-video ao-menu ao-warp ao-post-order PROPERTIES TIMEOUT 120)
 # Retail files are optional for local visual checks. CI exercises the source-only page model.
 set_tests_properties(ao-menu PROPERTIES ENVIRONMENT "BLACK_GAME_DIR=")

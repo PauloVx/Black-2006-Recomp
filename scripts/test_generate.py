@@ -22,6 +22,85 @@ def test_disasm_forwards_feedback_seeds():
     assert arguments[seed_index + 1] == Path("icall-seeds.json"), arguments
 
 
+def test_weapon_trace_hooks_are_bounded_and_repeatable():
+    locations = {
+        "sub_001E68B0": ["001E68B0"],
+        "sub_001E7090": ["001E7090"],
+        "sub_001E0EB0": ["001E0EB0", "001E0FCE"],
+    }
+    for name, labels in locations.items():
+        body = "\n".join(f"loc_{label}: ;\n    original();" for label in labels)
+        traced = generate.weapon_trace_hooks(name, body)
+        assert traced.count("black_weapon_trace(") == len(labels)
+        assert traced.count("original();") == len(labels)
+        assert generate.weapon_trace_hooks(name, traced) == traced
+        try:
+            generate.weapon_trace_hooks(name, "unknown location")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing guest label must fail closed")
+    assert generate.weapon_trace_hooks("unrelated", "unchanged") == "unchanged"
+
+
+def test_viewmodel_hooks_preserve_draw_lifetime():
+    cases = {
+        "sub_0015A8F0": "loc_0015A8F0: ;\n    original();\n",
+        "sub_001D25D0": "loc_001D25D0: ;\n    original();\n",
+        "sub_00172EB0": "loc_00172EB0: ;\n    original();\n    return; /* ret 20 */\n",
+        "sub_0016F610": "    PUSH32(l_esp, 0x0016F680u); sub_00269930();\n",
+        "sub_000D4A50": "loc_000D4A50: ;\n    PUSH32(l_esp, 0x000D4AFDu); sub_00269930();\n",
+    }
+    for name, body in cases.items():
+        hooked = generate.viewmodel_hooks(name, body)
+        assert hooked != body
+        assert generate.viewmodel_hooks(name, hooked) == hooked
+        try:
+            generate.viewmodel_hooks(name, "unknown location")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("changed ownership/upload boundaries must fail closed")
+    draw = generate.viewmodel_hooks("sub_00172EB0", cases["sub_00172EB0"])
+    assert draw.index("draw_begin") < draw.index("original()") < draw.index("draw_end") < draw.index("return;")
+    assert generate.viewmodel_hooks("unrelated", "unchanged") == "unchanged"
+
+
+def test_weapon_model_trace_boundaries():
+    body = "loc_001C5CD0: ;\nloc_001C5D0F: ;\n    MEM32(l_ecx + 0xC) = l_eax;\n"
+    fixed = generate.weapon_model_hooks("sub_001C5CD0", body)
+    assert fixed.count("black_weapon_model_trace(") == 2
+    assert fixed.index("black_weapon_model_trace(1u") < fixed.index("MEM32(l_ecx + 0xC) =")
+    assert fixed.index("black_weapon_model_trace(2u") > fixed.index("MEM32(l_ecx + 0xC) =")
+    assert generate.weapon_model_hooks("sub_001C5CD0", fixed) == fixed
+    for wrong in (body.replace("loc_001C5D0F: ;", "changed:"), body + body):
+        try:
+            generate.weapon_model_hooks("sub_001C5CD0", wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("changed constructor trace boundary must fail closed")
+
+
+def test_unsigned_crt_carry_rotations():
+    body = "    int _cf = 0;\n    /* TODO: rcr ebx, 1 */\n    /* TODO: rcr eax, 1 */\n"
+    for name in ("sub_000A30B0", "sub_000A3380"):
+        fixed = generate.unsigned_division_hooks(name, body)
+        assert "TODO:" not in fixed
+        assert fixed.count("black_rcr_out = ") == 2
+        assert fixed.count("_cf = (int)black_rcr_out;") == 2
+        assert generate.unsigned_division_hooks(name, fixed) == fixed
+        for wrong in (body.replace("int _cf = 0;", ""),
+                      body.replace("/* TODO: rcr eax, 1 */", ""), body + body):
+            try:
+                generate.unsigned_division_hooks(name, wrong)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("changed CRT rotation boundaries must fail closed")
+    assert generate.unsigned_division_hooks("unrelated", body) == body
+
+
 def test_post_transform_audit_describes_final_sources():
     with TemporaryDirectory() as temp:
         root = Path(temp)
@@ -137,4 +216,8 @@ if __name__ == "__main__":
     test_empty_feedback_is_a_noop()
     test_feedback_failures_are_not_ignored()
     test_feedback_merge_with_runtime_parser()
-    print("5 checks passed")
+    test_weapon_trace_hooks_are_bounded_and_repeatable()
+    test_viewmodel_hooks_preserve_draw_lifetime()
+    test_unsigned_crt_carry_rotations()
+    test_weapon_model_trace_boundaries()
+    print("9 checks passed")

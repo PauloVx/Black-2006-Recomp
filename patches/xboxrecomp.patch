@@ -1574,7 +1574,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..188e8e8 100644
+index de14f26..5bcfa6b 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -2145,7 +2145,22 @@ index de14f26..188e8e8 100644
  /* ── DSP command doorbell acknowledgement ────────────────────────────────
   *
   * DirectSound does not stop at creating the device. It hands the audio DSP a
-@@ -103,7 +630,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -79,11 +606,9 @@ static void dsp_ack_init(void)
+                 s_dsp_ack_count, s_dsp_ack[0]);
+ }
+ 
+-/* SUM EVERY MIXBIN THE GUEST ROUTED TO, NOT JUST THE FIRST TWO.
+- *
+- * Default ON. RECOMP_APU_MIXDOWN_ALL=0 restores the previous two-bin read,
+- * because this changes audible output for every title and an escape hatch
+- * costs one branch. */
++/* Include the dry speaker and 3D submixes when native EP output is absent.
++ * RECOMP_APU_MIXDOWN_ALL=0 retains the diagnostic front-only fallback. The
++ * historical variable name does not make effect sends into speakers. */
+ static int mcpx_apu_mixdown_all(void)
+ {
+     static int on = -1;
+@@ -103,7 +628,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -2158,7 +2173,7 @@ index de14f26..188e8e8 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +645,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +643,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
  
@@ -2257,7 +2272,7 @@ index de14f26..188e8e8 100644
  }
  
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,30 +745,44 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,61 +743,60 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2310,16 +2325,61 @@ index de14f26..188e8e8 100644
 +    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
 +        !d->monitor.ep_fifo_frame_valid) {
          for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-             /* Bins 2..31 used to be computed and then dropped on the floor.
+-            /* Bins 2..31 used to be computed and then dropped on the floor.
 -             * On hardware the GP and EP mix the submixes down; here they are
 -             * stubs, so thirty of thirty-two bins were discarded every frame
 -             * with no counter anywhere to say so.
-+             * On hardware the GP and EP mix the submixes down. The fallback
-+             * includes all bins when native output is unavailable.
+-             *
+-             * Measured on Jet Set Radio Future, one 200 s gameplay run, with
+-             * a positive control moving beside it:
+-             *
+-             *     [APU-BIN] 2D heard=557466 lost=0
+-             *               3D heard=0      lost=377768
+-             *               lost by bin: 6,7,8,9,10
+-             *
+-             * 557,466 music voice-frames heard and none lost; 377,768 effect
+-             * voice-frames produced correctly and thrown away. The title's 3D
+-             * positional voices -- its sound effects -- are routed to bins 6
+-             * to 10 by the guest's own V0BIN..V3BIN, and music on 2D voices
+-             * lands in bins 0 and 1, which is why the music was always
+-             * audible and no effect ever was. Every instrument upstream of
+-             * this line read healthy.
+-             *
+-             * Gating the HRTF submix override was tried first and did not fix
+-             * it, so the defect is the width of this mixdown and nothing else.
++            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
++             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
++             * and fold the two non-directional channels equally into stereo.
               *
-              * Measured on Jet Set Radio Future, one 200 s gameplay run, with
-              * a positive control moving beside it:
-@@ -213,6 +831,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+-             * Even bins left, odd bins right, which preserves the stereo
+-             * pairing the guest set up -- bins 6/7 and 8/9 arrive with matched
+-             * counts. This is not what a real EP does; it is the cheapest
+-             * mixdown that stops discarding audio. */
++             * 10 is the I3DL2 reverb send, 11..30 are effect sends and 31 is
++             * a submix input. They are inputs to DSP processing, not extra
++             * speakers: summing them by parity made a right-hand source's
++             * reverb send play dry on the left, duplicated voices and caused
++             * premature clipping. Native EP PCM remains authoritative above;
++             * this path intentionally provides dry audio without inventing
++             * an effect graph when no complete native block is available. */
+             float left, right;
+             if (mcpx_apu_mixdown_all()) {
+-                left = 0.0f;
+-                right = 0.0f;
+-                for (int b = 0; b < NUM_MIXBINS; ++b) {
+-                    if (b & 1) right += mixbins[b][i];
+-                    else       left  += mixbins[b][i];
+-                }
++                const float center_gain = 0.7071067811865476f;
++                float center = center_gain * (mixbins[2][i] + mixbins[3][i]);
++                left = mixbins[0][i] + mixbins[4][i] +
++                       mixbins[6][i] + mixbins[8][i] + center;
++                right = mixbins[1][i] + mixbins[5][i] +
++                        mixbins[7][i] + mixbins[9][i] + center;
+             } else {
+                 left = mixbins[0][i];
+                 right = mixbins[1][i];
+@@ -213,6 +814,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
  
@@ -13236,10 +13296,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..2bf5ce6
+index 0000000..965b5be
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,789 @@
+@@ -0,0 +1,802 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -13270,20 +13330,33 @@ index 0000000..2bf5ce6
 +"SamplerState LinSmp : register(s0);\n"
 +"SamplerState PtSmp  : register(s1);\n"
 +"\n"
-+"// The depth the picture is focused at: what is under the middle of the screen, smoothed over time. Sky (the cleared\n"
-+"// depth) does not count, so looking at the horizon keeps the last focus.\n"
++"// Focus on a surface represented by the central aperture. A mean between foreground foliage\n"
++"// and the aimed background describes neither surface and pumps the whole picture's blur.\n"
++"// The median rejects minority occluders; a foreground subject filling the aperture still wins.\n"
++"// Cleared/invalid depth is not a subject, and a sky-only aperture preserves the last focus.\n"
 +"float focus_ps(float4 p : SV_Position) : SV_Target {\n"
 +"    float prev = FocusTex.Load(int3(0, 0, 0));\n"
-+"    float sum = 0.0, n = 0.0;\n"
++"    float samples[25];\n"
++"    [unroll] for (int k = 0; k < 25; ++k) samples[k] = 1.0;\n"
++"    int n = 0;\n"
 +"    [unroll] for (int j = -2; j <= 2; j++) {\n"
 +"        [unroll] for (int i = -2; i <= 2; i++) {\n"
 +"            float2 uv = float2(0.5 + i * 0.010 * p0.w / p0.z, 0.5 + j * 0.010);\n"
 +"            float d = DepthTex.SampleLevel(PtSmp, uv, 0);\n"
-+"            if (d < 0.99999) { sum += d; n += 1.0; }\n"
++"            if (d >= 0.0 && d < 0.99999) {\n"
++"                int k = n;\n"
++"                [loop] while (k > 0) {\n"
++"                    if (samples[k - 1] <= d) break;\n"
++"                    samples[k] = samples[k - 1];\n"
++"                    --k;\n"
++"                }\n"
++"                samples[k] = d;\n"
++"                ++n;\n"
++"            }\n"
 +"        }\n"
 +"    }\n"
-+"    float target = n > 0.0 ? sum / n : prev;\n"
-+"    if (prev < 0.0) return n > 0.0 ? target : 1.0;\n"
++"    float target = n > 0 ? samples[n / 2] : prev;\n"
++"    if (!(prev >= 0.0 && prev <= 1.0)) return n > 0 ? target : 1.0;\n"
 +"    return lerp(prev, target, p1.z);\n"
 +"}\n"
 +"\n"
@@ -13374,8 +13447,11 @@ index 0000000..2bf5ce6
 +"// and p3.xy=the real camera half-frustum. All methods share depth/normal reconstruction, not their kernels.\n"
 +"float ao_hash(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }\n"
 +"float ao_depth(float2 uv) { return DepthTex.SampleLevel(PtSmp, uv, 0); }\n"
-+"float ao_view_z(float d) { return min(4096.0, d / max(0.00010, 1.0 - d)); }\n"
++"// Perspective depth is 1-near/z (infinite-far approximation); near is a common scale.\n"
++"float ao_view_z(float d) { return min(4096.0, 1.0 / max(0.00010, 1.0 - d)); }\n"
 +"float3 ao_pos(float2 uv) {\n"
++"    // Point-sampled depth belongs to this texel centre, not the unsnapped kernel coordinate.\n"
++"    uv = (clamp(floor(uv * p0.zw), float2(0, 0), p0.zw - 1.0) + 0.5) * p0.xy;\n"
 +"    float z = ao_view_z(ao_depth(uv));\n"
 +"    float2 n = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
 +"    return float3(n * p3.xy * z, z);\n"
@@ -13384,8 +13460,10 @@ index 0000000..2bf5ce6
 +"    float3 l = ao_pos(uv - float2(p0.x, 0)), r = ao_pos(uv + float2(p0.x, 0));\n"
 +"    float3 u = ao_pos(uv - float2(0, p0.y)), d = ao_pos(uv + float2(0, p0.y));\n"
 +"    // Choose the derivative on the same surface at depth discontinuities.\n"
-+"    float3 dx = abs(r.z - c.z) < abs(l.z - c.z) ? r - c : c - l;\n"
-+"    float3 dy = abs(u.z - c.z) < abs(d.z - c.z) ? u - c : c - d;\n"
++"    float3 dx = uv.x <= 0.5 * p0.x ? r - c : uv.x >= 1.0 - 0.5 * p0.x ? c - l :\n"
++"                abs(r.z - c.z) < abs(l.z - c.z) ? r - c : c - l;\n"
++"    float3 dy = uv.y <= 0.5 * p0.y ? c - d : uv.y >= 1.0 - 0.5 * p0.y ? u - c :\n"
++"                abs(u.z - c.z) < abs(d.z - c.z) ? u - c : c - d;\n"
 +"    float3 n = cross(dx, dy);\n"
 +"    float n2 = dot(n, n);\n"
 +"    if (n2 < 1e-12) return float3(0, 0, -1);\n"
@@ -13839,7 +13917,6 @@ index 0000000..2bf5ce6
 +static void kg_post_ao_scene(KGpuSurf *cs, KGpuSurf *zs)
 +{
 +    if (s_post.ao_done) return;
-+    s_post.ao_done = true;
 +    if (s_post.ao_method == PCV_AO_OFF || !cs || cs->bpp != 4 || cs->dxfmt != DXGI_FORMAT_B8G8R8A8_UNORM ||
 +        !post_init() || !post_scene_resources(cs->hw, cs->hh)) return;
 +    if (s_post.ao_method != PCV_AO_OFF && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh && post_ao_init() &&
@@ -13850,6 +13927,8 @@ index 0000000..2bf5ce6
 +        bool mask_capture = !s_post.ao_dump_done && *s_post.ao_dump && frame >= s_post.ao_dump_frame;
 +        uint8_t *before = NULL;
 +        char before_path[MAX_PATH + 16], after_path[MAX_PATH + 16];
++        /* A failed early attempt must allow a later draw with valid scene depth. */
++        s_post.ao_done = true;
 +        before_path[0] = after_path[0] = 0;
 +        if (s_post.ao_method == PCV_AO_HBAO) ps = s_post.ps_ao_hbao;
 +        else if (s_post.ao_method == PCV_AO_HBAO_PLUS) ps = s_post.ps_ao_hbaop;
@@ -13896,13 +13975,10 @@ index 0000000..2bf5ce6
 +        fprintf(stderr, "[KAO] frame %llu ambient occlusion skipped: no valid queued world camera\n", (unsigned long long)(G.frames + 1));
 +    }
 +    kg_post_ao_scene(cs, zs);
-+    if (s_post.dof && zs && zs->depth) {
++    if (s_post.dof && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh) {
 +        const unsigned int next = s_post.focus_cur ^ 1u;
-+        double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : 0.016;
-+        float alpha;
-+        if (dt < 0.001) dt = 0.001;
-+        if (dt > 0.1) dt = 0.1;
-+        alpha = (float)(1.0 - exp(-dt / 0.25));
++        const double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : -1.0;
++        const float alpha = kg_post_focus_blend(dt);
 +        post_dof_preset(s_post.dof, &taps, &radius);
 +        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
 +        post_cb((float)cs->hw, (float)cs->hh, taps, radius * (float)cs->hh, alpha, depth_scale, 0.002f, 0.0f, 0.0f, 1.0f, 1.0f);
@@ -13940,11 +14016,8 @@ index 0000000..2bf5ce6
 +        s_post.world++;
 +        return;
 +    }
-+    {
-+        bool already_done = s_post.ao_done;
-+        if (kg_post_order_should_apply_ao_before_blend(s_post.world, ps->depth_write, ps->blend, &already_done))
-+            kg_post_ao_scene((KGpuSurf *)cs, zs);
-+    }
++    if (kg_post_order_should_apply_ao_before_blend(s_post.world, ps->depth_write, ps->blend, &s_post.ao_done))
++        kg_post_ao_scene((KGpuSurf *)cs, zs);
 +    /* The HUD and menus: depth test on, always passing, nothing written. */
 +    if (!s_post.done && s_post.world >= 4 && ps->depth_test && ps->depth_func == 7 && !ps->depth_write)
 +        kg_post_scene((KGpuSurf *)cs, zs);
@@ -44314,23 +44387,31 @@ index 4c840a1..0cf3c14 100644
 
 diff --git a/src/nv2a/kelvin/kelvin_post_order.h b/src/nv2a/kelvin/kelvin_post_order.h
 new file mode 100644
-index 0000000..ce042b0
+index 0000000..e2153bc
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_post_order.h
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,24 @@
 +#ifndef XBOXRECOMP_KELVIN_POST_ORDER_H
 +#define XBOXRECOMP_KELVIN_POST_ORDER_H
 +
 +#include <stdbool.h>
++#include <math.h>
 +
 +static inline bool kg_post_order_should_apply_ao_before_blend(unsigned int world_draws,
 +                                                               bool depth_write,
 +                                                               bool blend,
-+                                                               bool *ao_done)
++                                                               const bool *ao_done)
 +{
 +    if (!ao_done || *ao_done || world_draws < 4 || depth_write || !blend) return false;
-+    *ao_done = true;
 +    return true;
++}
++
++/* Frame-rate-independent focus response. A loading/pause gap invalidates the
++ * old scene's focus instead of slowly blending it into an unrelated view. */
++static inline float kg_post_focus_blend(double elapsed_seconds)
++{
++    if (!(elapsed_seconds > 0.0) || elapsed_seconds >= 0.5) return 1.0f;
++    return (float)(1.0 - exp(-elapsed_seconds / 0.25));
 +}
 +
 +#endif

@@ -98,29 +98,30 @@ struct Oracle {
         hr(device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &shader), "Create PS failed");
         return shader;
     }
-    Tex texture(DXGI_FORMAT format, const void *data = nullptr, bool target = true) {
+    Tex texture(DXGI_FORMAT format, const void *data = nullptr, bool target = true, UINT width = W, UINT height = H) {
         Tex tex;
         D3D11_TEXTURE2D_DESC td{};
-        td.Width = W; td.Height = H; td.MipLevels = td.ArraySize = 1; td.Format = format; td.SampleDesc.Count = 1;
+        td.Width = width; td.Height = height; td.MipLevels = td.ArraySize = 1; td.Format = format; td.SampleDesc.Count = 1;
         td.BindFlags = D3D11_BIND_SHADER_RESOURCE | (target ? D3D11_BIND_RENDER_TARGET : 0);
-        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem = data; initial.SysMemPitch = W * (format == DXGI_FORMAT_R8_UNORM ? 1 : 4);
+        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem = data; initial.SysMemPitch = width * (format == DXGI_FORMAT_R8_UNORM ? 1 : 4);
         hr(device->CreateTexture2D(&td, data ? &initial : nullptr, &tex.texture), "Create texture failed");
         hr(device->CreateShaderResourceView(tex.texture.Get(), nullptr, &tex.srv), "Create SRV failed");
         if (target) hr(device->CreateRenderTargetView(tex.texture.Get(), nullptr, &tex.rtv), "Create RTV failed");
         return tex;
     }
     void pass(ID3D11PixelShader *shader, Tex &out, ID3D11ShaderResourceView *t0, ID3D11ShaderResourceView *t1,
-              ID3D11ShaderResourceView *t2, const Cb &constants) {
+              ID3D11ShaderResourceView *t2, const Cb &constants, ID3D11ShaderResourceView *t3 = nullptr) {
         ID3D11RenderTargetView *rtv = out.rtv.Get();
         ctx->OMSetRenderTargets(1, &rtv, nullptr);
-        D3D11_VIEWPORT vp{}; vp.Width = W; vp.Height = H; vp.MaxDepth = 1;
+        D3D11_TEXTURE2D_DESC desc{}; out.texture->GetDesc(&desc);
+        D3D11_VIEWPORT vp{}; vp.Width = float(desc.Width); vp.Height = float(desc.Height); vp.MaxDepth = 1;
         ctx->RSSetViewports(1, &vp);
         ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ctx->VSSetShader(vs.Get(), nullptr, 0); ctx->PSSetShader(shader, nullptr, 0);
         ctx->UpdateSubresource(cb.Get(), 0, nullptr, &constants, 0, 0);
         ID3D11Buffer *buffer = cb.Get(); ctx->PSSetConstantBuffers(0, 1, &buffer);
         ID3D11SamplerState *samplers[] = { linear.Get(), point.Get() }; ctx->PSSetSamplers(0, 2, samplers);
-        ID3D11ShaderResourceView *inputs[] = { t0, t1, t2, nullptr }; ctx->PSSetShaderResources(0, 4, inputs);
+        ID3D11ShaderResourceView *inputs[] = { t0, t1, t2, t3 }; ctx->PSSetShaderResources(0, 4, inputs);
         ctx->Draw(3, 0);
         ID3D11ShaderResourceView *none[4]{}; ctx->PSSetShaderResources(0, 4, none);
         ctx->OMSetRenderTargets(0, nullptr, nullptr);
@@ -133,8 +134,8 @@ struct Oracle {
         ctx->CopyResource(stage.Get(), tex.texture.Get());
         D3D11_MAPPED_SUBRESOURCE ms{};
         hr(ctx->Map(stage.Get(), 0, D3D11_MAP_READ, 0, &ms), "Map staging texture failed");
-        std::vector<T> output(W * H);
-        for (UINT y = 0; y < H; ++y) memcpy(output.data() + y * W, static_cast<const uint8_t *>(ms.pData) + y * ms.RowPitch, W * sizeof(T));
+        std::vector<T> output(td.Width * td.Height);
+        for (UINT y = 0; y < td.Height; ++y) memcpy(output.data() + y * td.Width, static_cast<const uint8_t *>(ms.pData) + y * ms.RowPitch, td.Width * sizeof(T));
         ctx->Unmap(stage.Get(), 0);
         return output;
     }
@@ -153,9 +154,100 @@ static Cb preset(int method, int quality, float hx = 0.7002075f, float hy = 0.52
 static void finite_mask(const std::vector<float> &mask) {
     for (float value : mask) require(std::isfinite(value) && value >= 0 && value <= 1, "Mask contains a nonfinite/out-of-range value");
 }
+// A tilted but planar wall cannot occlude itself. Build perspective depth from
+// a known view-space plane, rather than mirroring the reconstruction under test.
+static void planar_ao_regressions(Oracle &gpu) {
+    Tex raw = gpu.texture(DXGI_FORMAT_R32_FLOAT);
+    for (float distance : { 1.8f, 3.0f, 8.0f, 60.0f }) {
+        std::vector<float> depth(W * H);
+        for (UINT y = 0; y < H; ++y) for (UINT x = 0; x < W; ++x) {
+            const float vx = ((x + .5f) / W * 2.0f - 1.0f) * .7002075f;
+            const float vy = (1.0f - (y + .5f) / H * 2.0f) * .5251556f;
+            const float z = distance / (1.0f + .7f * vx + .3f * vy);
+            depth[y * W + x] = 1.0f - 1.0f / z;
+        }
+        Tex plane = gpu.texture(DXGI_FORMAT_R32_FLOAT, depth.data(), false);
+        for (int method = 0; method < 4; ++method) for (int quality = 0; quality < 4; ++quality) {
+            const Cb c = preset(method, quality);
+            gpu.pass(gpu.methods[method].Get(), raw, nullptr, nullptr, plane.srv.Get(), c);
+            const auto mask = gpu.read<float>(raw); finite_mask(mask);
+            require(std::all_of(mask.begin(), mask.end(), [](float value) { return std::abs(value - 1.0f) < 1e-5f; }),
+                    "Unoccluded tilted plane was spuriously darkened");
+        }
+    }
+    std::cout << "PASS: all 16 AO method/quality combinations preserve tilted planes at four distances, including viewport edges\n";
+}
+
+// Execute the real 1x1 focus pass. Use unique aperture sample positions so a
+// branch/reload silhouette can be varied independently from the aimed surface.
+static void focus_regressions(Oracle &gpu, const std::string &hlsl) {
+    constexpr UINT width = 400, height = 300;
+    auto shader = gpu.ps(hlsl, "focus_ps");
+    auto coc_shader = gpu.ps(hlsl, "coc_ps");
+    Tex result = gpu.texture(DXGI_FORMAT_R32_FLOAT, nullptr, true, 1, 1);
+    Cb c; c.p0[0] = 1.0f / width; c.p0[1] = 1.0f / height; c.p0[2] = width; c.p0[3] = height;
+    c.p1[2] = 1.0f; // acquire the selected surface directly, like the first valid frame
+    auto sample = [&](const std::array<float, 25> &aperture, float previous, float alpha = 1.0f) {
+        std::vector<float> depth(width * height, 1.0f);
+        for (int j = -2; j <= 2; ++j) for (int i = -2; i <= 2; ++i) {
+            const UINT x = UINT((.5f + i * .010f * height / width) * width);
+            const UINT y = UINT((.5f + j * .010f) * height);
+            // Cover the neighbouring texel too: float shader/sample rounding at
+            // integral texel boundaries must not alter the synthetic surface.
+            for (UINT oy = 0; oy < 2; ++oy) for (UINT ox = 0; ox < 2; ++ox)
+                depth[(y - oy) * width + x - ox] = aperture[(j + 2) * 5 + i + 2];
+        }
+        Tex z = gpu.texture(DXGI_FORMAT_R32_FLOAT, depth.data(), false, width, height);
+        Tex prev = gpu.texture(DXGI_FORMAT_R32_FLOAT, &previous, false, 1, 1);
+        c.p1[2] = alpha;
+        gpu.pass(shader.Get(), result, nullptr, nullptr, z.srv.Get(), c, prev.srv.Get());
+        const float focus = gpu.read<float>(result)[0];
+        require(std::isfinite(focus) && focus >= 0.0f && focus <= 1.0f, "Autofocus produced invalid depth");
+        return focus;
+    };
+    std::array<float, 25> aperture;
+    aperture.fill(.9f);
+    require(std::abs(sample(aperture, -1.0f) - .9f) < 1e-6f, "First focus did not acquire an aimed surface");
+    for (int i = 0; i < 10; ++i) aperture[i] = .2f;
+    require(std::abs(sample(aperture, .9f) - .9f) < 1e-6f, "Minority foreground silhouette pulled focus off background");
+    aperture.fill(.9f);
+    // A deliberately aimed foreground object occupies all central 3x3 samples
+    // plus its four immediate neighbouring points: a majority of the aperture.
+    for (int j = 1; j <= 3; ++j) for (int i = 1; i <= 3; ++i) aperture[j * 5 + i] = .2f;
+    for (int i : {2, 10, 14, 22}) aperture[i] = .2f;
+    require(std::abs(sample(aperture, .9f) - .2f) < 1e-6f, "Aimed foreground subject could not acquire focus");
+    require(std::abs(sample(aperture, .9f, .25f) - .725f) < 1e-6f, "Focus transition did not preserve temporal smoothing");
+    aperture.fill(1.0f);
+    require(std::abs(sample(aperture, .9f) - .9f) < 1e-6f, "Sky discarded established focus");
+    require(sample(aperture, -1.0f) == 1.0f, "Sky on first frame did not remain sharp");
+    aperture[12] = .8f;
+    require(std::abs(sample(aperture, -1.0f) - .8f) < 1e-6f, "Small aimed subject against sky was discarded");
+    aperture[0] = -1.0f; aperture[1] = std::nanf(""); aperture[2] = INFINITY;
+    require(std::abs(sample(aperture, -1.0f) - .8f) < 1e-6f, "Invalid depth poisoned focus selection");
+    aperture.fill(.9f);
+    require(std::abs(sample(aperture, std::nanf("")) - .9f) < 1e-6f, "Invalid history poisoned focus");
+    // Verify the visible consequence: the background remains sharp after a
+    // minority foreground intrusion instead of becoming fully out of focus.
+    for (int i = 0; i < 10; ++i) aperture[i] = .2f;
+    const float stable = sample(aperture, .9f);
+    std::vector<float> background(W * H, .9f);
+    Tex z = gpu.texture(DXGI_FORMAT_R32_FLOAT, background.data(), false);
+    Tex focus = gpu.texture(DXGI_FORMAT_R32_FLOAT, &stable, false, 1, 1);
+    Tex coc = gpu.texture(DXGI_FORMAT_R32_FLOAT);
+    c.p1[3] = 140.0f; c.p2[0] = .002f;
+    gpu.pass(coc_shader.Get(), coc, nullptr, nullptr, z.srv.Get(), c, focus.srv.Get());
+    const auto mask = gpu.read<float>(coc);
+    require(std::all_of(mask.begin(), mask.end(), [](float value) { return value == 0.0f; }),
+            "Foreground edge spuriously blurred the aimed background");
+    std::cout << "PASS: actual focus/CoC shaders preserve background across minority occluders, acquire foreground subjects, reject invalid samples and retain smoothing/sky behavior\n";
+}
+
 int main(int argc, char **argv) try {
     require(argc == 2, "Usage: ao_warp_test.exe <kelvin_gpu_post.inc>");
-    Oracle gpu(source_hlsl(argv[1]));
+    const std::string hlsl = source_hlsl(argv[1]);
+    Oracle gpu(hlsl);
+    planar_ao_regressions(gpu);
+    focus_regressions(gpu, hlsl);
     std::vector<float> flat(W * H, 8.0f / 9.0f), sky(W * H, 1.0f), corner(W * H);
     for (UINT y = 0; y < H; ++y) for (UINT x = 0; x < W; ++x)
         corner[y * W + x] = y < 8 ? 1.0f : x < W / 2 ? 6.7f / 7.7f : 8.0f / 9.0f;

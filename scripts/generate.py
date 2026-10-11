@@ -353,6 +353,106 @@ def title_hooks(name, body):
         start = body.index(label) + len(label)
         end = body.index("\n", start)
         body = body[:end] + "\n    black_pickup_text_ready(g_esi); /* bounded native pickup caption; guest state preserved */" + body[end:]
+    body = weapon_trace_hooks(name, body)
+    body = weapon_model_hooks(name, body)
+    body = viewmodel_hooks(name, body)
+    body = unsigned_division_hooks(name, body)
+    return body
+
+
+def weapon_trace_hooks(name, body):
+    """Insert bounded, opt-in observations at recovered native drop boundaries.
+
+    Kept separate so a private diagnostic build can add these hooks to a prior
+    generated baseline without re-running or changing any game translation.
+    """
+    sites = {
+        "sub_001E68B0": [("001E68B0", "1u, l_eax")],
+        "sub_001E7090": [("001E7090", "2u, MEM32(l_esp + 4)")],
+        "sub_001E0EB0": [("001E0EB0", "3u, l_eax"),
+                          ("001E0FCE", "4u, l_esi")],
+    }
+    for label, arguments in sites.get(name, []):
+        marker = f"loc_{label}: ;\n"
+        hook = f"    black_weapon_trace({arguments});\n"
+        if marker + hook not in body:
+            body = replace_once(body, marker, marker + hook)
+    return body
+
+
+def viewmodel_hooks(name, body):
+    """Carry first-person ownership through native queues into constant upload."""
+    sites = {
+        "sub_0015A8F0": ("0015A8F0", "black_viewmodel_owner(0u);"),
+        "sub_001D25D0": ("001D25D0", "black_viewmodel_owner(l_ecx);"),
+        "sub_00172EB0": ("00172EB0", "uint32_t black_vm_previous = black_viewmodel_draw_begin(MEM32(l_esp + 20));"),
+        "sub_000D4A50": ("000D4A50", "uint32_t black_vm_caller = MEM32(l_esp);"),
+    }
+    if name in sites:
+        label, call = sites[name]
+        marker = f"loc_{label}: ;\n"
+        hook = f"    {call}\n"
+        if marker + hook not in body:
+            body = replace_once(body, marker, marker + hook)
+    if name == "sub_00172EB0" and "black_viewmodel_draw_end(black_vm_previous);" not in body:
+        lines = body.splitlines()
+        returns = [line for line in lines if "return;" in line]
+        if len(returns) != 1 or "/* ret 20 */" not in returns[0]:
+            raise ValueError("First-person draw exit changed")
+        body = replace_once(body, returns[0], "    black_viewmodel_draw_end(black_vm_previous);\n" + returns[0])
+    if name == "sub_0016F610" and "black_viewmodel_constants(l_edx);" not in body:
+        calls = [line for line in body.splitlines() if "PUSH32(l_esp, 0x0016F680u)" in line]
+        if len(calls) != 1 or "sub_00269930" not in calls[0]:
+            raise ValueError("First-person projection upload changed")
+        body = replace_once(body, calls[0], "    black_viewmodel_constants(l_edx);\n" + calls[0])
+    if name == "sub_000D4A50" and "black_viewmodel_muzzle_constants(l_edx, black_vm_caller);" not in body:
+        calls = [line for line in body.splitlines() if "PUSH32(l_esp, 0x000D4AFDu)" in line]
+        if len(calls) != 1 or "sub_00269930" not in calls[0]:
+            raise ValueError("First-person muzzle projection upload changed")
+        body = replace_once(body, calls[0], "    black_viewmodel_muzzle_constants(l_edx, black_vm_caller);\n" + calls[0])
+    return body
+
+
+def unsigned_division_hooks(name, body):
+    """Restore the four omitted carry rotations in native unsigned CRT math.
+
+    These helpers normalize a 64-bit divisor/numerator as paired SHR/RCRs.
+    SHR already publishes _cf. The following SHR or OR overwrites all flags
+    besides that consumed carry, so no other flag state needs reconstruction.
+    Keep the original arithmetic correction, register saves and stack return.
+    """
+    if name not in {"sub_000A30B0", "sub_000A3380"}:
+        return body
+    if "int _cf = 0;" not in body:
+        raise ValueError("Unsigned CRT helper no longer tracks carry")
+    for register in ("ebx", "eax"):
+        marker = f"    /* TODO: rcr {register}, 1 */"
+        replacement = (
+            f"    {{ uint32_t black_rcr_out = l_{register} & 1u; "
+            f"l_{register} = (l_{register} >> 1) | ((uint32_t)(_cf & 1) << 31); "
+            f"_cf = (int)black_rcr_out; }} /* native rcr {register}, 1 */")
+        if replacement in body:
+            if body.count(replacement) != 1 or marker in body:
+                raise ValueError("Ambiguous unsigned CRT carry rotation")
+            continue
+        body = replace_once(body, marker, replacement)
+    return body
+
+
+def weapon_model_hooks(name, body):
+    """Observe the original resolver result and its unchanged native slot write."""
+    if name != "sub_001C5CD0":
+        return body
+    pairs = [
+        ("loc_001C5CD0: ;\n", "    uint32_t black_model_name_low = MEM32(l_esp + 4), black_model_name_high = MEM32(l_esp + 8);\n"),
+        ("loc_001C5D0F: ;\n", "    black_weapon_model_trace(1u, l_ebx, black_model_name_low, black_model_name_high, l_esi, l_edi, l_eax);\n"),
+        ("    MEM32(l_ecx + 0xC) = l_eax;\n", "    black_weapon_model_trace(2u, l_ebx, black_model_name_low, black_model_name_high, l_esi, l_edi, l_eax);\n"),
+    ]
+    for marker, hook in pairs:
+        if marker + hook not in body:
+            if body.count(marker) != 1:
+                raise ValueError("AI gun-model lookup boundary changed: " + marker)
+            body = body.replace(marker, marker + hook)
     return body
 
 
@@ -558,7 +658,7 @@ def main():
     command(toolkit, "tools.recomp", [xbe, "--all", "--split", "1000", "--game-name", "BLACK", "--disasm-dir", disasm, "--func-id-dir", identified, "--abi-dir", abi, "--gen-dir", generated, "--exclude-manual", manual, "--output-dir", work / "summary"])
     chunks = sorted(generated.glob("recomp_[0-9]*.c"))
     emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
-    declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\n"
+    declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
     for chunk in chunks:
         text = chunk.read_text(encoding="utf-8")
         text = rewrite_functions(text, promote_body)

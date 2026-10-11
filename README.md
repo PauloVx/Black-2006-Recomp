@@ -22,6 +22,19 @@ vendor SDK. The [AO regression tests](tests/ambient_occlusion/README.md) exercis
 the actual shaders, settings, launcher controls, and native camera hook without
 game files.
 
+AO reconstructs positions at the sampled depth texel and retries when an early
+draw has no usable depth buffer. Autofocus selects a representative surface in
+the central aperture, reducing focus jumps from thin foreground objects.
+Wider gameplay FOV preserves the native framing of the player's weapon, arms,
+and suppressor using their render-queue ownership. World and companion weapons
+retain their own projection; see the [viewmodel tests](tests/viewmodel/README.md).
+
+Enemy weapon-model lookup now preserves carry in the original 64-bit name
+calculation. Corrupted model names previously left enemies without a weapon
+model and prevented their native death-drop code from creating pickups. The
+[weapon model regressions](tests/weapon_model_math/README.md) cover the arithmetic
+and save-hash compatibility; native drop rules remain in control.
+
 Launch through the first mission has been tested, including the opening movies,
 mission briefing, movement, shooting, and reloading with audio. This is still a
 work in progress: later missions are unverified, crashes and rendering issues
@@ -31,6 +44,12 @@ Gameplay voices and effects now honor their source sample rate at the 48 kHz
 audio output. This corrects 32 kHz speech playing about 50% too fast and high.
 The [APU regression test](tests/apu_pitch/README.md) checks pitch, duration,
 stream completion, and playback lifecycle without game files or an audio device.
+
+The fallback mixer preserves dry left/right and 3D speaker assignments without
+playing raw effect sends a second time. This avoids reversed duplicate channels
+and the clipping they caused. Native DSP output still takes precedence; see the
+[spatial audio regressions](tests/apu_spatial/README.md). To export speech or
+music from your own Xbox SSH/BKS banks, use the [audio extraction guide](docs/audio-extraction.md).
 
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function
@@ -70,9 +89,11 @@ Building the generated C code can take several minutes.
 
 Use the launcher to configure controls and video settings, then choose **Play**.
 Leave **Skip movies** and **Advance startup menus automatically** unchecked to
-watch the full opening and navigate manually. Local settings live in `local/`,
-saves in `save/`, and diagnostic logs in `reports/`. Close the game before
-removing the project folder; retain `save/` if you want to keep your progress.
+watch the full opening and navigate manually. Local settings live in `local/`
+and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
+`game/UDATA/` and `game/TDATA/` through the native partition mapping. Close the
+game and back up all three data directories before moving or removing the
+project folder if you want to keep your progress.
 
 AO requires the GPU renderer. Every quality uses a full-resolution R8 mask and
 depth-aware blur; higher quality increases sampling density and radius. AO

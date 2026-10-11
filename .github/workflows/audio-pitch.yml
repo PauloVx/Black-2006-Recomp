@@ -58,3 +58,14 @@ jobs:
             ctest --test-dir build-apu-pitch -C $configuration --output-on-failure
             if ($LASTEXITCODE -ne 0) { throw "$configuration regression failed" }
           }
+      - name: Build and run spatial fallback regression
+        shell: pwsh
+        run: |
+          cmake -S tests/apu_spatial -B build-apu-spatial -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Spatial test configure failed' }
+          foreach ($configuration in 'Release', 'Debug') {
+            cmake --build build-apu-spatial --config $configuration --target apu-spatial-test
+            if ($LASTEXITCODE -ne 0) { throw "$configuration spatial test build failed" }
+            ctest --test-dir build-apu-spatial -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$configuration spatial regression failed" }
+          }

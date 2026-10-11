@@ -68,6 +68,41 @@ jobs:
         run: ./tests/ambient_occlusion/test-launcher.ps1
       - name: Test generated-source audit and indirect-call feedback
         run: python scripts/test_generate.py
+      - name: Test audio bank parsing and extraction boundaries
+        run: python -m unittest discover -s scripts -p test_extract_audio.py -v
+      - name: Build and run weapon diagnostic guards
+        shell: pwsh
+        run: |
+          cmake -S tests/weapon_trace -B build-weapon-trace -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Weapon diagnostic configure failed' }
+          cmake --build build-weapon-trace --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Weapon diagnostic build failed' }
+          ctest --test-dir build-weapon-trace -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'Weapon diagnostic regression failed' }
+      - name: Build and run first-person projection regressions
+        shell: pwsh
+        run: |
+          cmake -S tests/viewmodel -B build-viewmodel -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Viewmodel test configure failed' }
+          foreach ($configuration in @('Release', 'Debug')) {
+            cmake --build build-viewmodel --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw 'Viewmodel test build failed' }
+            ctest --test-dir build-viewmodel -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw 'Viewmodel projection regression failed' }
+          }
+      - name: Build and run weapon model arithmetic and observation regressions
+        shell: pwsh
+        run: |
+          foreach ($suite in @('weapon_model_math', 'weapon_model_trace')) {
+            cmake -S "tests/$suite" -B "build-$suite" -G "Visual Studio 17 2022" -A x64
+            if ($LASTEXITCODE -ne 0) { throw "$suite configure failed" }
+            foreach ($configuration in @('Release', 'Debug')) {
+              cmake --build "build-$suite" --config $configuration
+              if ($LASTEXITCODE -ne 0) { throw "$suite $configuration build failed" }
+              ctest --test-dir "build-$suite" -C $configuration --output-on-failure
+              if ($LASTEXITCODE -ne 0) { throw "$suite $configuration regression failed" }
+            }
+          }
       - name: Build and run EEPROM regression
         shell: pwsh
         run: |
