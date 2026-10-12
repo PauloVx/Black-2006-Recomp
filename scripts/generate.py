@@ -325,6 +325,17 @@ def title_hooks(name, body):
         lines.insert(first + 1, line)
         lines.insert(first + 2, "    { uint8_t lv_ = LO8(l_edx), sg_ = LO8(l_eax); black_level_override(&lv_, &sg_); SET_LO8(l_edx, lv_); SET_LO8(l_eax, sg_); } /* lab hook, RECOMP_BLACK_LEVEL */")
         body = "\n".join(lines)
+        body = replace_once(body, "MEM8(ebp + 0x5CB0) = 0;", "MEM8(ebp + 0x5CB0) = 0;\n    if (black_infinite_ammo_enabled()) MEM8(ebp + 0x5CB0) = 1;")
+    if name == "sub_0012CEC0":
+        body = replace_once(body, "SET_LO8(l_edx, MEM8(l_ecx + 0x5CB0));", "SET_LO8(l_edx, MEM8(l_ecx + 0x5CB0));\n    if (black_infinite_ammo_enabled()) SET_LO8(l_edx, 1);")
+    if name == "sub_0013A920":
+        body = replace_once(body, "SET_LO8(l_eax, MEM8(l_ecx + 0x5CB0));", "SET_LO8(l_eax, MEM8(l_ecx + 0x5CB0));\n    if (black_infinite_ammo_enabled()) SET_LO8(l_eax, 1);")
+    if name == "sub_001D4F30":
+        body = replace_once(
+            body,
+            "SET_LO8(l_ecx, MEM8(l_eax + 0x5CB0));",
+            "SET_LO8(l_ecx, MEM8(l_eax + 0x5CB0));\n    { int silver_mode = black_silver_weapons_mode(); if (silver_mode >= 0) SET_LO8(l_ecx, (uint8_t)silver_mode); } /* native, force-on, or force-off runtime mode */",
+        )
     if name in {"sub_00240683_gen", "sub_00241074"}:
         location = "002408D8" if name == "sub_00240683_gen" else "002411ED"
         label = f"loc_{location}: ;\n"
@@ -731,6 +742,8 @@ def main():
     chunks = sorted(generated.glob("recomp_[0-9]*.c"))
     emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
     declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_weapon_attachment_trace(uint32_t, uint32_t);\nextern void black_viewmodel_muzzle_gate(uint32_t);\nextern void black_test_weapon_loadout(uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
+    declarations += "extern int black_silver_weapons_mode(void);\n"
+    declarations += "extern int black_infinite_ammo_enabled(void);\n"
     declarations += "\nextern void black_test_stream_unit(uint32_t);\n"
     for chunk in chunks:
         text = chunk.read_text(encoding="utf-8")

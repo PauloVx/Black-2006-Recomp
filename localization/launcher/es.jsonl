@@ -290,3 +290,68 @@
 {"id": "0289", "text": "F11 alterna la pantalla completa. Los avisos del juego muestran tus asignaciones reales.", "review_status": "editorial-revised-needs-native-review"}
 {"id": "0290", "text": " predeterminado en este equipo con ", "review_status": "editorial-revised-needs-native-review"}
 {"id": "0291", "text": " hilos", "review_status": "editorial-revised-needs-native-review"}
+{"id": "1000", "text": "Guardar"}
+{"id": "1001", "text": "Profile"}
+{"id": "1002", "text": "Browse file"}
+{"id": "1003", "text": "Slot"}
+{"id": "1004", "text": "Operator name"}
+{"id": "1005", "text": "Unlock all"}
+{"id": "1006", "text": "Mission results: Empty = no result; 0 = no threshold; 1 = below target; 2 = target reached."}
+{"id": "1007", "text": "Difficulty"}
+{"id": "1008", "text": "Mission"}
+{"id": "1009", "text": "Available"}
+{"id": "1010", "text": "Result"}
+{"id": "1011", "text": "Apply Profile changes"}
+{"id": "1012", "text": "Elegir copia del perfil"}
+{"id": "1013", "text": "Profile preview"}
+{"id": "1014", "text": "Choose one of the Profile files found in game\\UDATA."}
+{"id": "1015", "text": "No Profile found under game\\UDATA."}
+{"id": "1016", "text": "6,144 bytes  |  SHA-256 "}
+{"id": "1017", "text": "Loaded and integrity-checked. Changes stay pending until Apply."}
+{"id": "1018", "text": "This Profile could not be safely edited."}
+{"id": "1019", "text": "(empty slot)"}
+{"id": "1020", "text": "Could not scan game\\UDATA: "}
+{"id": "1021", "text": "Find a Profile file"}
+{"id": "1022", "text": "All files"}
+{"id": "1023", "text": "Profile name"}
+{"id": "1024", "text": "Save edit stopped: "}
+{"id": "1025", "text": "Profile not changed"}
+{"id": "1026", "text": "Unlock campaign"}
+{"id": "1027", "text": "This marks every mission available and every mission result complete for the selected slot. It changes campaign progress. Continue?"}
+{"id": "1028", "text": "All campaign entries are staged as available and complete. Nothing is written until Apply."}
+{"id": "1029", "text": "Select a Profile slot to preview pending values and hash."}
+{"id": "1030", "text": "Empty"}
+{"id": "1031", "text": "Mission changes are pending. Review the preview before Apply."}
+{"id": "1032", "text": "No changes to apply. Profile unchanged; no backup created. SHA-256 "}
+{"id": "1033", "text": "Applied and verified. Before SHA-256 "}
+{"id": "1034", "text": "; after SHA-256 "}
+{"id": "1035", "text": "; backup: "}
+{"id": "1036", "text": "No Profile backup exists yet."}
+{"id": "1037", "text": "Restore this Profile backup? A backup of the current file will be created first.\n\n"}
+{"id": "1038", "text": "Restore Profile"}
+{"id": "1039", "text": "Backup restored; current file was also backed up as "}
+{"id": "1040", "text": "Pending preview"}
+{"id": "1041", "text": "Candidate SHA-256 "}
+{"id": "1042", "text": "SHA-256 "}
+{"id": "1043", "text": "No changes"}
+{"id": "1044", "text": "Preview unavailable: "}
+{"id": "1045", "text": "Easy"}
+{"id": "1046", "text": "Normal"}
+{"id": "1047", "text": "Hard"}
+{"id": "1048", "text": "Black Ops"}
+{"id": "1049", "text": "Mission "}
+{"id": "1050", "text": "Elegir copia del perfil"}
+{"id": "1051", "text": "Forzar desactivado"}
+{"id": "1052", "text": "Forzar activado"}
+{"id": "1053", "text": "Munición infinita (solo durante el juego)"}
+{"id": "1054", "text": "Copias del perfil"}
+{"id": "1055", "text": "El nombre del perfil tiene cambios pendientes. Revisa la vista previa antes de aplicar."}
+{"id": "1056", "text": "Recargar"}
+{"id": "1057", "text": "Restablecer misión seleccionada"}
+{"id": "1058", "text": "Resultados"}
+{"id": "1059", "text": "Solo durante el juego; no modifica el perfil."}
+{"id": "1060", "text": "La misión volvió a los valores que tenía al cargar este perfil. Aplicar guarda el cambio."}
+{"id": "1061", "text": "Armas plateadas"}
+{"id": "1062", "text": "Ranura "}
+{"id": "1063", "text": "Usar ajuste del perfil/juego"}
+{"id": "1064", "text": "copias válidas del perfil disponibles."}

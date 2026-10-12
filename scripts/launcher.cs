@@ -210,6 +210,9 @@ namespace BlackXboxLauncher
         public int Threads = Math.Max(1, Math.Min(16, Environment.ProcessorCount / 2));
         public bool SkipMovies;
         public bool AdvanceMenus;
+        public bool InfiniteAmmo;
+        // Native preserves the Profile/game reward; force-on/off changes only the runtime flag.
+        public string SilverWeaponMode = "native";
         public string MenuLanguage = GameLanguageBanks.English;
         public bool VisualTraceEnabled;
         public string VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Default;
@@ -410,6 +413,7 @@ namespace BlackXboxLauncher
             if (!IsOneOf(WindowMode, "windowed", "borderless")) throw new ArgumentException("Invalid WindowMode.");
             if (!IsOneOf(ScaleMode, "fit", "stretch", "integer")) throw new ArgumentException("Invalid ScaleMode.");
             if (!IsOneOf(PresentFilter, "nearest", "linear")) throw new ArgumentException("Invalid PresentFilter.");
+            if (!IsOneOf(SilverWeaponMode, "native", "force-on", "force-off")) throw new ArgumentException("Invalid SilverWeaponMode.");
             if (!IsFrameLimit(FpsLimit)) throw new ArgumentOutOfRangeException("FpsLimit");
             if (!IsOneOf(CameraAspect, "original", "4:3", "16:9", "21:9", "32:9")) throw new ArgumentException("Invalid CameraAspect.");
             if (!CameraAspectAvailable && CameraAspect != "original") throw new InvalidOperationException("Camera aspect changes are not supported by this build.");
@@ -450,6 +454,16 @@ namespace BlackXboxLauncher
             // boolean retains the actual original game effect on migration.
             if (fields != null && fields.TryGetValue("MotionBlur", out oldBlur) && !(oldBlur is string))
                 fields.Remove("MotionBlur");
+            object oldSilver;
+            if (fields != null)
+            {
+                if (fields.ContainsKey("InfiniteAmmo") && !(fields["InfiniteAmmo"] is bool)) fields.Remove("InfiniteAmmo");
+                if (!fields.ContainsKey("SilverWeaponMode") && fields.TryGetValue("SilverWeapons", out oldSilver) && oldSilver is bool && (bool)oldSilver)
+                    fields["SilverWeaponMode"] = "force-on";
+                fields.Remove("SilverWeapons");
+                object silverMode;
+                if (fields.TryGetValue("SilverWeaponMode", out silverMode) && !(silverMode is string)) fields.Remove("SilverWeaponMode");
+            }
             object rawFov;
             if (fields != null && fields.TryGetValue("VerticalFov", out rawFov) &&
                 !(rawFov is int || rawFov is decimal || rawFov is double)) fields.Remove("VerticalFov");
@@ -485,6 +499,7 @@ namespace BlackXboxLauncher
             if (!IsOneOf(settings.WindowMode, "windowed", "borderless")) settings.WindowMode = defaults.WindowMode;
             if (!IsOneOf(settings.ScaleMode, "fit", "stretch", "integer")) settings.ScaleMode = defaults.ScaleMode;
             if (!IsOneOf(settings.PresentFilter, "nearest", "linear")) settings.PresentFilter = defaults.PresentFilter;
+            if (!IsOneOf(settings.SilverWeaponMode, "native", "force-on", "force-off")) settings.SilverWeaponMode = defaults.SilverWeaponMode;
             if (!IsFrameLimit(settings.FpsLimit)) settings.FpsLimit = defaults.FpsLimit;
             if (!CameraAspectAvailable || !IsOneOf(settings.CameraAspect, "original", "4:3", "16:9", "21:9", "32:9")) settings.CameraAspect = defaults.CameraAspect;
             if (!IsFov(settings.VerticalFov)) settings.VerticalFov = defaults.VerticalFov;
@@ -824,6 +839,9 @@ namespace BlackXboxLauncher
             // a value there. GameSession.Start writes the file from these options just before the game starts.
             info.EnvironmentVariables["RECOMP_VIDEO_INI"] = LaunchOptions.VideoIniPath(root);
             info.EnvironmentVariables["RECOMP_LANGUAGE"] = options.MenuLanguage;
+            if (options.InfiniteAmmo) info.EnvironmentVariables["RECOMP_BLACK_INFINITE_AMMO"] = "1";
+            if (options.SilverWeaponMode == "force-on") info.EnvironmentVariables["RECOMP_BLACK_SILVER_WEAPONS"] = "1";
+            else if (options.SilverWeaponMode == "force-off") info.EnvironmentVariables["RECOMP_BLACK_SILVER_WEAPONS"] = "0";
             // The measured heavy-raster profile lets the submitter help at queue
             // capacity and reduces idle spinning. Raster quality and timing
             // semantics are unchanged; lighter rasters keep their profile.
@@ -1395,7 +1413,7 @@ namespace BlackXboxLauncher
         }
     }
 
-    internal sealed class LauncherForm : Form
+    internal sealed partial class LauncherForm : Form
     {
         private readonly string root;
         private readonly bool previewOnly;
@@ -1474,7 +1492,8 @@ namespace BlackXboxLauncher
             var game = new TabPage("Game") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
             var graphics = new TabPage("Graphics") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
             var input = new TabPage("Input") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
-            settingsTabs.TabPages.Add(display); settingsTabs.TabPages.Add(graphics); settingsTabs.TabPages.Add(input); settingsTabs.TabPages.Add(game);
+            var save = new TabPage(LauncherLanguage.Text("Save")) { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
+            settingsTabs.TabPages.Add(display); settingsTabs.TabPages.Add(graphics); settingsTabs.TabPages.Add(input); settingsTabs.TabPages.Add(game); settingsTabs.TabPages.Add(save);
             Controls.Add(settingsTabs);
             AddOptionLabel(display, "Window size", 14, 16, 95);
             outputResolution.SetBounds(114, 12, 200, 30);
@@ -1679,6 +1698,7 @@ namespace BlackXboxLauncher
             var controls = new Button(); StyleButton(controls, "Controls", 673, 575, 144, false); controls.Anchor = AnchorStyles.Bottom;
             var localSaves = new Label { Text = "BLACK PC  /  Local saves", Location = new Point(34, 635), Size = new Size(782, 22), Font = OwnFont(9, FontStyle.Regular), ForeColor = muted, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
             Controls.Add(localSaves);
+            BuildSaveTab(save);
             LoadSettings();
             LauncherLanguage.Set(ChoiceValue(menuLanguage));
             menuLanguage.SelectedIndexChanged += delegate
@@ -1758,6 +1778,7 @@ namespace BlackXboxLauncher
         private void ApplyLauncherLanguage()
         {
             LauncherLanguage.Apply(this);
+            ApplySaveLabels();
             foreach (KeyValuePair<Control, string> tip in settingsTips)
                 settingsTip.SetToolTip(tip.Key, LauncherLanguage.Text(tip.Value));
             settingsTabs.Refresh();
@@ -1836,6 +1857,8 @@ namespace BlackXboxLauncher
                 visualTraceFrames.Text = settings.VisualTraceFrames;
                 kgpuDrawLogFrames.Text = settings.KgpuDrawLogFrames ?? "";
                 dspTraceEnabled.Checked = settings.DspTraceEnabled;
+                saveInfiniteAmmo.Checked = settings.InfiniteAmmo;
+                SelectChoice(saveSilverMode, settings.SilverWeaponMode);
                 gpuRenderer.Checked = settings.GpuRenderer; smooth60.Checked = settings.Smooth60;
                 SelectChoice(smoothRate, settings.SmoothHz.ToString(CultureInfo.InvariantCulture)); smoothRate.Enabled = smooth60.Checked;
                 ShowVideo(settings);
@@ -1865,6 +1888,8 @@ namespace BlackXboxLauncher
                 VisualTraceEnabled = visualTraceEnabled.Checked, VisualTraceFrames = visualTraceFrames.Text,
                 KgpuDrawLogFrames = kgpuDrawLogFrames.Text,
                 DspTraceEnabled = dspTraceEnabled.Checked,
+                InfiniteAmmo = saveInfiniteAmmo.Checked,
+                SilverWeaponMode = ChoiceValue(saveSilverMode),
                 WindowMode = ChoiceValue(windowMode), ScaleMode = ChoiceValue(scaleMode), PresentFilter = ChoiceValue(presentFilter),
                 VSync = vsync.Checked, FpsLimit = int.Parse(ChoiceValue(fpsLimit), CultureInfo.InvariantCulture),
                 CameraAspect = ChoiceValue(cameraAspect), MotionBlur = ChoiceValue(motionBlur),

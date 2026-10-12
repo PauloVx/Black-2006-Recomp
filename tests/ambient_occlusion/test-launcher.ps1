@@ -19,6 +19,8 @@ $localeCatalog = Join-Path $PSScriptRoot '..\..\scripts\localization\launcher-lo
     ([IO.Path]::GetFullPath($LauncherSource)) `
     (Join-Path $launcherDirectory 'game-language.cs') `
     (Join-Path $launcherDirectory 'launcher-language.cs') `
+    (Join-Path $launcherDirectory 'save-profile-tab.cs') `
+    (Join-Path $launcherDirectory 'profile_editor.cs') `
     (Join-Path $PSScriptRoot 'test_launcher.cs') `
     (Join-Path $languageTests 'test_banks.cs') `
     (Join-Path $languageTests 'test_controls.cs')

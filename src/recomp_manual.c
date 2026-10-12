@@ -421,6 +421,33 @@ int black_idle_yield_skip(void)
     return !keep && black_step_halved && black_hz >= 120;
 }
 
+/* Silver weapon selection is native by default; force modes affect this process only. */
+int black_silver_weapons_mode(void)
+{
+    static int mode = -2;
+    if (mode == -2) {
+        const char *value = getenv("RECOMP_BLACK_SILVER_WEAPONS");
+        mode = -1;
+        if (value && strcmp(value, "1") == 0) mode = 1;
+        else if (value && strcmp(value, "0") == 0) mode = 0;
+        fprintf(stderr, "[BLACK] silver weapon runtime mode: %s\n",
+                mode < 0 ? "native" : mode ? "forced on" : "forced off");
+    }
+    return mode;
+}
+
+/* Runtime-only infinite ammunition; this does not edit Profile data. */
+int black_infinite_ammo_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("RECOMP_BLACK_INFINITE_AMMO");
+        enabled = value && strcmp(value, "1") == 0;
+        fprintf(stderr, "[BLACK] infinite ammunition runtime toggle: %s\n", enabled ? "on" : "off");
+    }
+    return enabled;
+}
+
 /* Lab hook: RECOMP_BLACK_LEVEL=n[,stage] starts the mission the frontend asked for from level n (and stage) instead, to
  * reach scenes a scripted run cannot walk to. Without the variable the values pass through. */
 void black_level_override(uint8_t *level, uint8_t *stage)
