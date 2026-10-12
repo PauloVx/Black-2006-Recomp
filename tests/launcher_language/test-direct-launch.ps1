@@ -17,7 +17,8 @@ $catalog = Join-Path $scripts 'localization\launcher-locales.json'
 & $compiler /nologo /target:exe /platform:x64 /optimize+ /main:BlackXboxLauncher.LauncherDirectTests `
     /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll `
     "/resource:$catalog,BlackXboxLauncher.launcher-locales.json" "/out:$executable" `
-    (Join-Path $scripts 'launcher.cs') (Join-Path $scripts 'game-language.cs') (Join-Path $scripts 'launcher-language.cs') `
+    (Join-Path $scripts 'launcher.cs') (Join-Path $scripts 'save-profile-tab.cs') (Join-Path $scripts 'profile_editor.cs') `
+    (Join-Path $scripts 'game-language.cs') (Join-Path $scripts 'launcher-language.cs') `
     (Join-Path $PSScriptRoot 'test_direct_launch.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Direct-launcher fixture compilation failed.' }
 $testArguments = @($testOutput, [IO.Path]::GetFullPath($LauncherDirectory))
