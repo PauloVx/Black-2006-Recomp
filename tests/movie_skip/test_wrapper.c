@@ -53,6 +53,15 @@ void sub_000C4570_gen(void)
     g_esp += 4u;
 }
 
+/* The extracted range also contains the unrelated audio wrapper. Movie tests
+ * must never enter it; fail explicitly if these link-only stubs are called. */
+int xbox_IrqlTryEnterDispatch(void)
+{ fputs("Unexpected audio dispatch acquisition in movie fixture\n", stderr); abort(); }
+void xbox_IrqlLeaveDispatch(void)
+{ fputs("Unexpected audio dispatch release in movie fixture\n", stderr); abort(); }
+void sub_0021C7EF_gen(void)
+{ fputs("Unexpected generated audio callback in movie fixture\n", stderr); abort(); }
+
 #include "movie-wrapper-under-test.inc"
 #include "movie-font-under-test.inc"
 

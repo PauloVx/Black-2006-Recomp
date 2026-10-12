@@ -290,7 +290,36 @@ def replace_once(text, old, new):
     return text.replace(old, new, 1)
 
 
+def audio_completion_queue(name, body):
+    if name != "sub_0021EC97":
+        return body
+    start = "loc_0021EE37: ;\n"
+    end = "    l_eax = MEM32(l_esi + 8);\n    MEM32(l_eax + 0x4B8)"
+    replacement = "    l_ecx = black_audio_queue_completion(l_esi);\n"
+    if body.count(start) != 1 or body.count(end) != 1:
+        raise ValueError("Audio completion enqueue boundary changed")
+    begin = body.index(start) + len(start)
+    stop = body.index(end, begin)
+    if body[begin:stop] == replacement:
+        return body
+    # Keep the native status write before this block, plus the work flags and
+    # KeInsertQueueDpc after it. Only the embedded-list insertion is coalesced.
+    required = ("l_ecx = MEM32(l_esi + 8);", "l_eax = l_esi + 0x54;",
+                "l_ecx = l_ecx + 0x4A0;", "MEM32(l_eax) = l_ecx;",
+                "l_ecx = MEM32(l_ecx + 4);", "MEM32(l_eax + 4) = l_ecx;",
+                "MEM32(l_ecx) = l_eax;", "l_ecx = MEM32(l_eax);",
+                "MEM32(l_ecx + 4) = l_eax;")
+    insertion = body[begin:stop]
+    operations = tuple(line.strip() for line in strip_comments(insertion).splitlines()
+                       if line.strip() and not line.strip().startswith(
+                           ("_fa =", "_fb =", "_fas =", "_fbs =")))
+    if operations != required:
+        raise ValueError("Audio completion link contract changed")
+    return body[:begin] + replacement + body[stop:]
+
+
 def title_hooks(name, body):
+    body = audio_completion_queue(name, body)
     # Address metadata selects locations. Original instructions are generated
     # from the local XBE, rather than stored as copied function bodies here.
     if name == "sub_0007EA80":
@@ -600,6 +629,21 @@ def audit_generated_sources(directory):
     }
 
 
+def audit_audio_completion_boundary(directory):
+    text = "\n".join(path.read_text(encoding="utf-8")
+                     for path in sorted(directory.glob("*.c")))
+    contracts = (
+        (r"\bl_ecx = black_audio_queue_completion\(l_esi\);", 1),
+        (r"(?m)^void sub_0021C7EF_gen\(void\)\s*\{", 1),
+        (r"(?m)^void sub_0021C7EF\(void\)\s*\{", 0),
+        (r"RECOMP_ABI_CALL\(0x0021C7EFu, sub_0021C7EF\)", 1),
+        (r"\{ 0x0021C7EFu, \(recomp_func_t\)sub_0021C7EF \}", 1),
+    )
+    for pattern, count in contracts:
+        if len(re.findall(pattern, text)) != count:
+            raise ValueError("Audio completion wrapper/enqueue binding changed: " + pattern)
+
+
 def write_post_transform_audit(generated, output, raw_summary_path):
     """Persist final-source metrics and link them to the raw recompiler summary."""
     audit = audit_generated_sources(output)
@@ -732,6 +776,7 @@ def main():
     emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
     declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_weapon_attachment_trace(uint32_t, uint32_t);\nextern void black_viewmodel_muzzle_gate(uint32_t);\nextern void black_test_weapon_loadout(uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
     declarations += "\nextern void black_test_stream_unit(uint32_t);\n"
+    declarations += "\nextern uint32_t black_audio_queue_completion(uint32_t);\n"
     for chunk in chunks:
         text = chunk.read_text(encoding="utf-8")
         text = rewrite_functions(text, promote_body)
@@ -740,6 +785,7 @@ def main():
         text = rewrite_functions(text, title_hooks)
         text = replace_once(text, '#include <math.h>\n', '#include <math.h>\n' + declarations)
         chunk.write_text(text, encoding="utf-8")
+    audit_audio_completion_boundary(generated)
     output.mkdir(parents=True, exist_ok=True)
     stale = set(output.glob("*.c")) - {output / path.name for path in generated.glob("*.c")}
     if stale:
