@@ -5,8 +5,10 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -197,7 +199,7 @@ namespace BlackXboxLauncher
 
     internal sealed class LaunchOptions
     {
-        public int SettingsVersion = 10;
+        public int SettingsVersion = 11;
         // GpuRenderer draws the game's NV2A graphics on the GPU (Direct3D 11) and presents it directly;
         // off keeps the CPU Kelvin renderer. Smooth60 runs the game's clock at 60 steps per second so
         // 60 presented frames are 60 simulated frames (the original runs at 30).
@@ -208,6 +210,7 @@ namespace BlackXboxLauncher
         public int Threads = Math.Max(1, Math.Min(16, Environment.ProcessorCount / 2));
         public bool SkipMovies;
         public bool AdvanceMenus;
+        public string MenuLanguage = GameLanguageBanks.English;
         public bool VisualTraceEnabled;
         public string VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Default;
         // Empty disables the per-draw GPU trace. The KGPU logger accepts frame[,count].
@@ -415,6 +418,7 @@ namespace BlackXboxLauncher
             if (!MotionBlurAvailable && MotionBlur != "original") throw new InvalidOperationException("Motion blur controls are not supported by this build.");
             if (!IsOneOf(InputMode, "auto", "keyboard_mouse", "controller")) throw new ArgumentException("Invalid InputMode.");
             if (!IsOneOf(PromptMode, "auto", "keyboard_mouse", "controller")) throw new ArgumentException("Invalid PromptMode.");
+            if (!GameLanguageBanks.IsSupported(MenuLanguage)) throw new ArgumentException("Invalid MenuLanguage.");
             if (VisualTraceEnabled)
             {
                 if (GpuRenderer) throw new InvalidOperationException("Detailed per-draw tracing requires CPU Kelvin. Turn off GPU renderer in the Game tab before starting this diagnostic run.");
@@ -462,6 +466,7 @@ namespace BlackXboxLauncher
             // Old files have only the original three fields; initializers give
             // them the new defaults. Repair bad new fields independently.
             settings.SettingsVersion = defaults.SettingsVersion;
+            settings.MenuLanguage = GameLanguageBanks.Normalize(settings.MenuLanguage);
             if (settings.Threads < 1 || settings.Threads > 64) settings.Threads = defaults.Threads;
             if (settings.SmoothHz != 0 && settings.SmoothHz != 120 && settings.SmoothHz != 240) settings.SmoothHz = defaults.SmoothHz;
             try { settings.VisualTraceFrames = BlackXboxLauncher.VisualTraceFrames.Normalize(settings.VisualTraceFrames); }
@@ -680,8 +685,9 @@ namespace BlackXboxLauncher
         internal static string Describe(string value)
         {
             var names = new List<string>();
-            foreach (string token in Tokens(value)) names.Add(FindKey(token).Friendly);
-            return names.Count == 0 ? "unbound" : string.Join(" or ", names.ToArray());
+            foreach (string token in Tokens(value)) names.Add(LauncherLanguage.Text(FindKey(token).Friendly));
+            if (names.Count == 0) return LauncherLanguage.Text("unbound");
+            return string.Join(LauncherLanguage.Current == GameLanguageBanks.PortugueseBrazil ? " ou " : " or ", names.ToArray());
         }
 
         // The Controls help, generated from the same bindings the game is launched with.
@@ -714,7 +720,7 @@ namespace BlackXboxLauncher
                             prompts == "controller" ? "Prompts show controller buttons." : "Prompts show keyboard and mouse bindings.");
             text.AppendLine("Leaving the game window pauses a mission.");
             text.AppendLine("F11 toggles fullscreen. Movies: Escape skips the current one.");
-            return text.ToString();
+            return LauncherLanguage.Text(text.ToString());
         }
     }
 
@@ -817,6 +823,7 @@ namespace BlackXboxLauncher
             // them from the settings file, which its own Video Settings page edits too, and a variable would pin
             // a value there. GameSession.Start writes the file from these options just before the game starts.
             info.EnvironmentVariables["RECOMP_VIDEO_INI"] = LaunchOptions.VideoIniPath(root);
+            info.EnvironmentVariables["RECOMP_LANGUAGE"] = options.MenuLanguage;
             // The measured heavy-raster profile lets the submitter help at queue
             // capacity and reduces idle spinning. Raster quality and timing
             // semantics are unchanged; lighter rasters keep their profile.
@@ -860,6 +867,8 @@ namespace BlackXboxLauncher
                 }
                 int existing = ExistingProcess(root);
                 if (existing != 0) throw new InvalidOperationException("The PC game is already running (PID " + existing + "). Close that instance before starting another.");
+                options.Validate();
+                GameLanguageBanks.Install(root, options.MenuLanguage);
                 Directory.CreateDirectory(Path.Combine(root, "save"));
                 session.DirectoryPath = Path.Combine(root, "reports", "launcher-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.CreateDirectory(session.DirectoryPath);
@@ -883,6 +892,7 @@ namespace BlackXboxLauncher
                     metadata["exeSha256"] = BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "");
                 metadata["workingDirectory"] = info.WorkingDirectory;
                 metadata["xbeSha256"] = RetailHash;
+                metadata["menuLanguage"] = options.MenuLanguage;
                 metadata["environment"] = environment;
                 metadata["visualTraceEnabled"] = options.VisualTraceEnabled;
                 metadata["visualTraceFrames"] = options.VisualTraceEnabled ? VisualTraceFrames.Normalize(options.VisualTraceFrames) : null;
@@ -898,6 +908,7 @@ namespace BlackXboxLauncher
                 metadata["kgpuDrawLogTimingWarning"] = String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames) ? null : "Per-draw GPU logging adds overhead during selected frames; do not use this run to compare normal performance.";
                 File.WriteAllText(Path.Combine(session.DirectoryPath, "launch.json"), new JavaScriptSerializer().Serialize(metadata));
                 session.Write("[launcher] BLACK PC / " + (options.GpuRenderer ? "GPU Kelvin (Direct3D 11)" : "CPU Kelvin") + (options.Smooth60 ? " / " + (options.SmoothHz != 0 ? options.SmoothHz : 60) + " FPS timing" : "") + " / " + options.Threads + " threads");
+                session.Write("[launcher] menu text: " + options.MenuLanguage);
                 session.process = new Process { StartInfo = info };
                 session.process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.WriteOutput(e.Data, false); };
                 session.process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { if (e.Data != null) session.WriteOutput(e.Data, true); };
@@ -1012,6 +1023,7 @@ namespace BlackXboxLauncher
             clear.Click += delegate { Token = ""; DialogResult = DialogResult.OK; };
             cancel.Click += delegate { Token = null; DialogResult = DialogResult.Cancel; };
             Controls.AddRange(new Control[] { prompt, problem, clear, cancel });
+            LauncherLanguage.Apply(this);
             MouseDown += OnMouse; prompt.MouseDown += OnMouse; problem.MouseDown += OnMouse;
             MouseWheel += delegate(object sender, MouseEventArgs e) { Accept(e.Delta > 0 ? "WheelUp" : "WheelDown"); };
             KeyPreview = true;
@@ -1038,9 +1050,9 @@ namespace BlackXboxLauncher
                 int lparam = unchecked((int)(long)msg.LParam);
                 int scancode = ((lparam >> 16) & 0xFF) | (((lparam >> 24) & 1) << 8);
                 if (scancode == 0x01) { Token = null; DialogResult = DialogResult.Cancel; return true; }
-                if (scancode == 0x57) { problem.Text = "F11 toggles fullscreen and cannot be bound."; return true; }
+                if (scancode == 0x57) { problem.Text = LauncherLanguage.Text("F11 toggles fullscreen and cannot be bound."); return true; }
                 InputBindings.KeyDef key = InputBindings.KeyForScancode(scancode);
-                if (key == null) { problem.Text = "That key cannot be bound."; return true; }
+                if (key == null) { problem.Text = LauncherLanguage.Text("That key cannot be bound."); return true; }
                 Accept(key.Token);
                 return true;
             }
@@ -1082,7 +1094,11 @@ namespace BlackXboxLauncher
             grid.Columns[0].Width = 240; grid.Columns[1].Width = 158; grid.Columns[2].Width = 158;
             grid.Columns[3].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             foreach (DataGridViewColumn column in grid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
-            foreach (InputBindings.InputAction action in InputBindings.Actions) grid.Rows.Add(action.Label, "", "", "");
+            foreach (InputBindings.InputAction action in InputBindings.Actions) grid.Rows.Add(LauncherLanguage.Text(action.Label), "", "", "");
+            grid.Columns[0].HeaderText = LauncherLanguage.Text("Action");
+            grid.Columns[1].HeaderText = LauncherLanguage.Text("Binding 1");
+            grid.Columns[2].HeaderText = LauncherLanguage.Text("Binding 2");
+            grid.Columns[3].HeaderText = LauncherLanguage.Text("Binding 3");
             Refill();
             grid.CellDoubleClick += delegate(object sender, DataGridViewCellEventArgs e) { Edit(e.RowIndex, e.ColumnIndex); };
             grid.KeyDown += delegate(object sender, KeyEventArgs e)
@@ -1113,6 +1129,7 @@ namespace BlackXboxLauncher
             };
             AcceptButton = null; CancelButton = cancel;
             Controls.AddRange(new Control[] { title, grid, note, reset, ok, cancel });
+            LauncherLanguage.Apply(this);
             ShowConflicts();
         }
 
@@ -1155,8 +1172,226 @@ namespace BlackXboxLauncher
                     foreach (InputBindings.InputAction b in InputBindings.Actions)
                         if (b != a && string.CompareOrdinal(a.Name, b.Name) < 0 && work[b.Name].Contains(token))
                             lines.Add(InputBindings.FindKey(token).Friendly + ": " + a.Label + " and " + b.Label);
-            note.Text = lines.Count == 0 ? "Escape (pause / back) and F11 (fullscreen) are fixed. Enter always confirms; arrow keys and the wheel move through menus."
-                                         : "Shared keys: " + string.Join("; ", lines.ToArray()) + ". Both actions will fire.";
+            note.Text = LauncherLanguage.Text(lines.Count == 0 ? "Escape (pause / back) and F11 (fullscreen) are fixed. Enter always confirms; arrow keys and the wheel move through menus."
+                                         : "Shared keys: " + string.Join("; ", lines.ToArray()) + ". Both actions will fire.");
+        }
+    }
+
+    internal sealed class ErrorReportDialog : Form
+    {
+        private readonly string root;
+        private readonly string diagnostics;
+        private readonly string attachmentDirectory;
+
+        internal ErrorReportDialog(string projectRoot)
+        {
+            root = projectRoot;
+            diagnostics = ReadLatestDiagnostics(root);
+            attachmentDirectory = FindLatestSessionDirectory(root);
+            Text = LauncherLanguage.Text("Send error report");
+            ClientSize = new Size(720, 545);
+            MinimumSize = new Size(720, 545);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false; MinimizeBox = false;
+            var attachInstructions = new Label { Text = "Attach the listed logs on GitHub before submitting. Use Attach files or drag them into the description, then review and submit.", Location = new Point(18, 14), Size = new Size(684, 50) };
+            var attachmentTitle = new Label { Text = "Logs to attach from the latest session", Location = new Point(18, 68), Size = new Size(684, 24) };
+            var attachmentList = new TextBox { Text = BuildAttachmentList(root, attachmentDirectory), Location = new Point(18, 93), Size = new Size(684, 125), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
+            var detected = new Label { Text = "Detected information from the latest session", Location = new Point(18, 226), Size = new Size(684, 24) };
+            var summary = new TextBox { Text = diagnostics, Location = new Point(18, 251), Size = new Size(684, 155), Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+            var note = new Label { Text = "The GitHub report is generated in English. Logs remain local; no files are attached automatically. Add any extra information under Additional notes on GitHub.", Location = new Point(18, 414), Size = new Size(684, 54) };
+            var openFolder = new Button { Text = "Open logs folder", Location = new Point(18, 490), Size = new Size(170, 36) };
+            var prepare = new Button { Text = "Prepare report and open GitHub", Location = new Point(372, 490), Size = new Size(208, 36), DialogResult = DialogResult.OK };
+            var cancel = new Button { Text = "Cancel", Location = new Point(590, 490), Size = new Size(112, 36), DialogResult = DialogResult.Cancel };
+            openFolder.Click += delegate
+            {
+                try
+                {
+                    string folder = Directory.Exists(attachmentDirectory) ? attachmentDirectory : Path.Combine(root, "reports");
+                    Directory.CreateDirectory(folder);
+                    Process.Start(new ProcessStartInfo { FileName = folder, UseShellExecute = true });
+                }
+                catch (Exception error) { MessageBox.Show(this, error.Message, LauncherLanguage.Text("Could not open logs folder"), MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            };
+            Controls.AddRange(new Control[] { attachInstructions, attachmentTitle, attachmentList, detected, summary, note, openFolder, prepare, cancel });
+            AcceptButton = prepare; CancelButton = cancel;
+            LauncherLanguage.Apply(this);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (DialogResult == DialogResult.OK)
+            {
+                try
+                {
+                    string report = "## Automatically collected diagnostics\r\n\r\n" + diagnostics + "\r\n\r\n" +
+                        "Logs remain local; no files were attached automatically.\r\n\r\nAttachments:\r\nPlease attach the files listed in the launcher before submitting.\r\n\r\n" +
+                        "If you would like to add more information, write it below this line.\r\n\r\nAdditional notes:\r\n";
+                    string draftDirectory = Path.Combine(root, "reports", "issue-drafts");
+                    Directory.CreateDirectory(draftDirectory);
+                    string draftPath = Path.Combine(draftDirectory, "issue-draft-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".md");
+                    File.WriteAllText(draftPath, report, new UTF8Encoding(false));
+                    Clipboard.SetText(report);
+                    Process.Start(new ProcessStartInfo { FileName = BuildIssueUrl("Automatic report", report), UseShellExecute = true });
+                    MessageBox.Show(this, LauncherLanguage.Text("The report was saved and copied. Review the pre-filled issue on GitHub, then click Submit. If the browser text was shortened, the clipboard has the full report."), LauncherLanguage.Text("Report ready"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception error)
+                {
+                    MessageBox.Show(this, LauncherLanguage.Text("Could not prepare report: ") + error.Message, LauncherLanguage.Text("Send error report"), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.Cancel = true;
+                }
+            }
+            base.OnFormClosing(e);
+        }
+
+        private static string ReadLatestDiagnostics(string projectRoot)
+        {
+            try
+            {
+                string reports = Path.Combine(projectRoot, "reports");
+                if (!Directory.Exists(reports)) return "No launcher session data was found.";
+                DirectoryInfo latest = new DirectoryInfo(reports).GetDirectories("launcher-*").OrderByDescending(d => d.Name).FirstOrDefault();
+                if (latest == null) return "No launcher session data was found.";
+                var lines = new List<string>();
+                lines.Add("Session folder: " + latest.Name);
+                string launchPath = Path.Combine(latest.FullName, "launch.json");
+                if (File.Exists(launchPath))
+                {
+                    var launch = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(launchPath));
+                    AddMetadata(lines, launch, "startedUtc", "Started (UTC): ");
+                    AddMenuLanguage(lines, launch);
+                    AddMetadata(lines, launch, "exeSha256", "Game executable SHA-256: ");
+                    AddMetadata(lines, launch, "xbeSha256", "Retail game SHA-256: ");
+                }
+                string exitPath = Path.Combine(latest.FullName, "exit.json");
+                if (File.Exists(exitPath))
+                {
+                    var exit = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(File.ReadAllText(exitPath));
+                    object code;
+                    if (exit != null && exit.TryGetValue("exitCode", out code))
+                    {
+                        lines.Add("Process exit code: " + Convert.ToString(code, CultureInfo.InvariantCulture));
+                        if (Convert.ToString(code, CultureInfo.InvariantCulture) != "0") lines.Add("Classification: process exited with a nonzero code.");
+                        else lines.Add("Classification: no nonzero exit code was detected; please describe the observed symptom under Additional notes.");
+                    }
+                }
+                string sessionPath = Path.Combine(latest.FullName, "session.log");
+                if (File.Exists(sessionPath))
+                {
+                    List<string> failures = ReadMatchingTail(sessionPath, 20);
+                    if (failures.Count == 0) lines.Add("No lines marked error/failure/exception were detected in session.log.");
+                    else
+                    {
+                        lines.Add("Recent error-like lines from session.log:");
+                        foreach (string line in failures) lines.Add("- " + Sanitize(line, projectRoot));
+                    }
+                }
+                string kernelPath = Path.Combine(latest.FullName, "kernel.log");
+                if (File.Exists(kernelPath))
+                {
+                    List<string> failures = ReadMatchingTail(kernelPath, 20);
+                    if (failures.Count > 0)
+                    {
+                        lines.Add("Recent error-like lines from kernel.log:");
+                        foreach (string line in failures) lines.Add("- " + Sanitize(line, projectRoot));
+                    }
+                    else lines.Add("No error-like lines were detected in kernel.log.");
+                }
+                string[] files = Directory.GetFiles(latest.FullName).Select(Path.GetFileName).OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+                lines.Add("Diagnostic files in this session: " + (files.Length == 0 ? "none" : String.Join(", ", files)));
+                string result = String.Join("\r\n", lines.ToArray());
+                return result.Length > 7000 ? result.Substring(0, 7000) + "\r\n[summary truncated]" : result;
+            }
+            catch (Exception error) { return "Session diagnostics could not be read: " + error.GetType().Name; }
+        }
+
+        private static string FindLatestSessionDirectory(string projectRoot)
+        {
+            string reports = Path.Combine(projectRoot, "reports");
+            if (!Directory.Exists(reports)) return null;
+            DirectoryInfo latest = new DirectoryInfo(reports).GetDirectories("launcher-*").OrderByDescending(d => d.Name).FirstOrDefault();
+            return latest == null ? null : latest.FullName;
+        }
+
+        private static string BuildAttachmentList(string projectRoot, string sessionDirectory)
+        {
+            if (String.IsNullOrEmpty(sessionDirectory) || !Directory.Exists(sessionDirectory))
+                return LauncherLanguage.Text("No launcher session folder was found.") + "\r\n" + Path.Combine(projectRoot, "reports");
+
+            var lines = new List<string>();
+            string[] primary = { "session.log", "kernel.log" };
+            foreach (string name in primary)
+            {
+                string path = Path.Combine(sessionDirectory, name);
+                if (File.Exists(path)) lines.Add(LauncherLanguage.Text(name == "session.log" ? "Attach this log:" : "Also attach if available:") + "\r\n" + path);
+                else if (name == "session.log") lines.Add(LauncherLanguage.Text("The main session log was not found.") + "\r\n" + path);
+            }
+            string[] optional = { "visual-trace.log", "audio-dsp-trace.log", "kgpu-draw-trace.log" };
+            foreach (string name in optional)
+            {
+                string path = Path.Combine(sessionDirectory, name);
+                if (File.Exists(path)) lines.Add(LauncherLanguage.Text("Optional diagnostic log:") + "\r\n" + path);
+            }
+            return String.Join("\r\n\r\n", lines.ToArray());
+        }
+
+        private static void AddMetadata(List<string> lines, Dictionary<string, object> metadata, string key, string label)
+        {
+            object value;
+            if (metadata != null && metadata.TryGetValue(key, out value) && value != null)
+                lines.Add(label + Convert.ToString(value, CultureInfo.InvariantCulture));
+        }
+
+        private static void AddMenuLanguage(List<string> lines, Dictionary<string, object> metadata)
+        {
+            object value;
+            if (metadata == null || !metadata.TryGetValue("menuLanguage", out value) || value == null) return;
+            string locale = Convert.ToString(value, CultureInfo.InvariantCulture);
+            string language = String.Equals(locale, "pt-BR", StringComparison.OrdinalIgnoreCase) ? "Portuguese (Brazil)" :
+                String.Equals(locale, "en-US", StringComparison.OrdinalIgnoreCase) ? "English (United States)" : "Other";
+            lines.Add("Game menu language: " + language + " (" + locale + ")");
+        }
+
+        private static List<string> ReadMatchingTail(string path, int maximum)
+        {
+            var matches = new Queue<string>();
+            foreach (string line in File.ReadLines(path))
+                if (Regex.IsMatch(line, "\\b(error|failed|failure|exception|fatal|crash|assert)\\b", RegexOptions.IgnoreCase))
+                {
+                    if (matches.Count == maximum) matches.Dequeue();
+                    matches.Enqueue(line);
+                }
+            return matches.ToList();
+        }
+
+        private static string BuildIssueUrl(string title, string body)
+        {
+            const int maximumUrlLength = 6000;
+            const string url = "https://github.com/portingpete/Black-2006-Recomp/issues/new";
+            const string shortenedNote = "\r\n\r\n[The browser form was shortened to fit the URL. The full report is in the clipboard and local draft.]";
+            string prefix = url + "?title=" + Uri.EscapeDataString(title) + "&body=";
+            string encodedBody = Uri.EscapeDataString(body);
+            if (prefix.Length + encodedBody.Length <= maximumUrlLength) return prefix + encodedBody;
+
+            int bodyLimit = maximumUrlLength - prefix.Length - Uri.EscapeDataString(shortenedNote).Length;
+            int low = 0, high = body.Length;
+            while (low < high)
+            {
+                int middle = (low + high + 1) / 2;
+                if (Uri.EscapeDataString(body.Substring(0, middle)).Length <= bodyLimit) low = middle;
+                else high = middle - 1;
+            }
+            int end = low;
+            if (end > 0 && end < body.Length && Char.IsHighSurrogate(body[end - 1]) && Char.IsLowSurrogate(body[end])) end--;
+            return prefix + Uri.EscapeDataString(body.Substring(0, end) + shortenedNote);
+        }
+
+        private static string Sanitize(string line, string projectRoot)
+        {
+            line = Regex.Replace(line, Regex.Escape(projectRoot), "[game folder]", RegexOptions.IgnoreCase);
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!String.IsNullOrEmpty(userProfile)) line = Regex.Replace(line, Regex.Escape(userProfile), "[user folder]", RegexOptions.IgnoreCase);
+            return line.Length > 500 ? line.Substring(0, 500) + "..." : line;
         }
     }
 
@@ -1171,6 +1406,7 @@ namespace BlackXboxLauncher
         private readonly CheckBox gpuRenderer = new CheckBox();
         private readonly CheckBox smooth60 = new CheckBox();
         private readonly ComboBox smoothRate = new ComboBox();
+        private readonly ComboBox menuLanguage = new ComboBox();
         private readonly CheckBox skipMovies = new CheckBox();
         private readonly CheckBox advanceMenus = new CheckBox();
         private readonly CheckBox visualTraceEnabled = new CheckBox();
@@ -1201,6 +1437,7 @@ namespace BlackXboxLauncher
         private readonly CheckBox invertY = new CheckBox();
         private Dictionary<string, string> bindings = new Dictionary<string, string>();
         private readonly ToolTip settingsTip = new ToolTip();
+        private readonly Dictionary<Control, string> settingsTips = new Dictionary<Control, string>();
         private readonly Button play = new Button();
         private readonly Button stop = new Button();
         private readonly Label status = new Label();
@@ -1230,7 +1467,7 @@ namespace BlackXboxLauncher
             AddText("B L A C K", 30, 23, 640, 77, 43, FontStyle.Bold, ForeColor);
             AddText("BLACK  /  RECOMPILED FOR PC", 34, 107, 630, 23, 10, FontStyle.Bold, accent);
             AddText("Development build", 34, 155, 630, 26, 15, FontStyle.Bold, ForeColor);
-            AddText("First-mission gameplay works with keyboard and mouse or a controller.\nThis is an experimental build; crashes and inaccuracies remain.", 34, 190, 630, 50, 11, FontStyle.Regular, muted);
+            AddText("The game works with keyboard, mouse and controller.\nThis is an experimental build; crashes and inaccuracies remain.", 34, 190, 630, 50, 11, FontStyle.Regular, muted);
             settingsTabs.SetBounds(34, 264, 782, 211);
             settingsTabs.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             var display = new TabPage("Display") { BackColor = BackColor, ForeColor = ForeColor, AutoScroll = true };
@@ -1277,6 +1514,7 @@ namespace BlackXboxLauncher
             ConfigureChoices(cameraAspect, "Camera aspect", 114, 123, 200,
                 new DisplayChoice("original", "Original"), new DisplayChoice("4:3", "Standard (4:3)"), new DisplayChoice("16:9", "Widescreen (16:9)"),
                 new DisplayChoice("21:9", "Ultrawide (21:9)"), new DisplayChoice("32:9", "Ultrawide (32:9)"));
+            cameraAspect.DropDownWidth = 200;
             cameraAspect.Enabled = LaunchOptions.CameraAspectAvailable; display.Controls.Add(cameraAspect);
             AddOptionLabel(display, "Motion blur", 327, 127, 88);
             ConfigureChoices(motionBlur, "Motion blur", 417, 123, 185,
@@ -1297,15 +1535,15 @@ namespace BlackXboxLauncher
                 new DisplayChoice("1440", "1440p"), new DisplayChoice("2160", "2160p"));
             SelectChoice(internalResolution, new LaunchOptions().InternalHeight.ToString(CultureInfo.InvariantCulture));
             display.Controls.Add(internalResolution);
-            settingsTip.SetToolTip(originalFov, "Keep BLACK's original field of view and aim zoom. Uncheck to choose a vertical angle in degrees.");
-            settingsTip.SetToolTip(verticalFov, "Vertical field of view in vertical degrees. Higher values show more above and below; the camera aspect sets how wide the view is.");
-            settingsTip.SetToolTip(scaleMode, "Controls how the picture fits a resized window or a movie. Keep aspect ratio adds bars; Stretch fills the window.");
-            settingsTip.SetToolTip(outputResolution, "The size of the game window when windowed. A saved nonstandard size is retained as a saved choice.");
-            settingsTip.SetToolTip(internalResolution, "How many lines the game renders; the width follows the camera aspect, and the picture is scaled to the window. Higher is sharper and slower. The game's own Video Settings page (Options) changes this too.");
-            settingsTip.SetToolTip(presentFilter, "Sizing and filtering are independent. Smooth blends neighboring pixels; Sharp keeps distinct pixel edges.");
-            settingsTip.SetToolTip(fpsLimit, "Limits display updates. This does not change the game's simulation speed.");
-            settingsTip.SetToolTip(cameraAspect, "Changes how wide the camera can see. Resolution controls picture detail; field of view controls its vertical angle.");
-            settingsTip.SetToolTip(motionBlur, "Original keeps BLACK's own motion blur. Off disables that effect while preserving other post effects.");
+            SetSettingsTip(originalFov, "Keep BLACK's original field of view and aim zoom. Uncheck to choose a vertical angle in degrees.");
+            SetSettingsTip(verticalFov, "Vertical field of view in vertical degrees. Higher values show more above and below; the camera aspect sets how wide the view is.");
+            SetSettingsTip(scaleMode, "Controls how the picture fits a resized window or a movie. Keep aspect ratio adds bars; Stretch fills the window.");
+            SetSettingsTip(outputResolution, "The size of the game window when windowed. A saved nonstandard size is retained as a saved choice.");
+            SetSettingsTip(internalResolution, "How many lines the game renders; the width follows the camera aspect, and the picture is scaled to the window. Higher is sharper and slower. The game's own Video Settings page (Options) changes this too.");
+            SetSettingsTip(presentFilter, "Sizing and filtering are independent. Smooth blends neighboring pixels; Sharp keeps distinct pixel edges.");
+            SetSettingsTip(fpsLimit, "Limits display updates. This does not change the game's simulation speed.");
+            SetSettingsTip(cameraAspect, "Changes how wide the camera can see. Resolution controls picture detail; field of view controls its vertical angle.");
+            SetSettingsTip(motionBlur, "Original keeps BLACK's own motion blur. Off disables that effect while preserving other post effects.");
             AddOptionLabel(graphics, "Anti-aliasing", 14, 16, 120);
             ConfigureChoices(antiAliasing, "Anti-aliasing", 140, 12, 174,
                 new DisplayChoice("off", "Off"), new DisplayChoice("fxaa", "FXAA"), new DisplayChoice("ssaa", "SSAA 4x (2 x 2)"));
@@ -1336,12 +1574,12 @@ namespace BlackXboxLauncher
             aoMethod.SelectedIndexChanged += delegate { aoQuality.Enabled = ChoiceValue(aoMethod) != "off"; };
             AddOptionLabel(graphics, "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", 14, 137, 592).ForeColor = muted;
             AddOptionLabel(graphics, "(Options > V) changes them while playing. Internal resolution is on the Display tab.", 14, 162, 592).ForeColor = muted;
-            settingsTip.SetToolTip(antiAliasing, "FXAA smooths jagged edges at almost no cost. SSAA 4x renders twice as wide and high and averages down: the cleanest and the heaviest. Needs the GPU renderer.");
-            settingsTip.SetToolTip(anisotropy, "Keeps textures sharp on floors and walls seen at a slant. Costs almost nothing. Needs the GPU renderer.");
-            settingsTip.SetToolTip(depthOfField, "Blurs what is behind the point you are looking at; the weapon and the HUD stay sharp. Needs the GPU renderer.");
-            settingsTip.SetToolTip(sharpening, "Brings back fine detail that filtering and scaling soften. Needs the GPU renderer.");
-            settingsTip.SetToolTip(aoMethod, "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO. Needs the GPU renderer.");
-            settingsTip.SetToolTip(aoQuality, "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur. Choose an AO method to enable the effect.");
+            SetSettingsTip(antiAliasing, "FXAA smooths jagged edges at almost no cost. SSAA 4x renders twice as wide and high and averages down: the cleanest and the heaviest. Needs the GPU renderer.");
+            SetSettingsTip(anisotropy, "Keeps textures sharp on floors and walls seen at a slant. Costs almost nothing. Needs the GPU renderer.");
+            SetSettingsTip(depthOfField, "Blurs what is behind the point you are looking at; the weapon and the HUD stay sharp. Needs the GPU renderer.");
+            SetSettingsTip(sharpening, "Brings back fine detail that filtering and scaling soften. Needs the GPU renderer.");
+            SetSettingsTip(aoMethod, "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO. Needs the GPU renderer.");
+            SetSettingsTip(aoQuality, "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur. Choose an AO method to enable the effect.");
             AddOptionLabel(input, "Devices", 14, 16, 95);
             ConfigureChoices(inputMode, "Input devices", 114, 12, 200,
                 new DisplayChoice("auto", "Keyboard, mouse, pad"), new DisplayChoice("keyboard_mouse", "Keyboard and mouse only"), new DisplayChoice("controller", "Controller only")); input.Controls.Add(inputMode);
@@ -1366,8 +1604,8 @@ namespace BlackXboxLauncher
             AddOptionLabel(input, "WASD moves, the mouse looks, the left button fires.", 227, 95, 380).ForeColor = muted;
             AddOptionLabel(input, "Escape pauses a mission (and goes back in menus). Leaving the window pauses too.", 14, 135, 592).ForeColor = muted;
             AddOptionLabel(input, "F11 toggles fullscreen. In-game prompts show your real bindings.", 14, 160, 592).ForeColor = muted;
-            settingsTip.SetToolTip(inputMode, "Controller only ignores the keyboard and mouse in the game; keyboard and mouse only ignores the pad.");
-            settingsTip.SetToolTip(mouseSensitivity, "Raw mouse input, no acceleration. 1.00 is 0.06 degrees per mouse count.");
+            SetSettingsTip(inputMode, "Controller only ignores the keyboard and mouse in the game; keyboard and mouse only ignores the pad.");
+            SetSettingsTip(mouseSensitivity, "Raw mouse input, no acceleration. 1.00 is 0.06 degrees per mouse count.");
             gpuRenderer.SetBounds(14, 6, 590, 28);
             gpuRenderer.Text = "GPU renderer (Direct3D 11)"; gpuRenderer.Checked = true;
             gpuRenderer.AccessibleName = gpuRenderer.Text;
@@ -1380,9 +1618,9 @@ namespace BlackXboxLauncher
                 new DisplayChoice("0", "60 steps per second"), new DisplayChoice("120", "120 steps per second"), new DisplayChoice("240", "240 steps per second"));
             game.Controls.Add(smoothRate);
             smooth60.CheckedChanged += delegate { smoothRate.Enabled = smooth60.Checked; };
-            settingsTip.SetToolTip(smoothRate, "How often the game's clock steps. Presented frames match it, so 240 needs a fast PC and a 240 Hz display to show.");
-            settingsTip.SetToolTip(gpuRenderer, "Draws the game on the graphics card, which holds 60 FPS at 3440x1440. Off uses the CPU renderer, which is far slower at high resolutions.");
-            settingsTip.SetToolTip(smooth60, "Runs the game clock faster so every presented frame is a simulated frame. Off keeps the original 30 Hz clock.");
+            SetSettingsTip(smoothRate, "How often the game's clock steps. Presented frames match it, so 240 needs a fast PC and a 240 Hz display to show.");
+            SetSettingsTip(gpuRenderer, "Draws the game on the graphics card, which holds 60 FPS at 3440x1440. Off uses the CPU renderer, which is far slower at high resolutions.");
+            SetSettingsTip(smooth60, "Runs the game clock faster so every presented frame is a simulated frame. Off keeps the original 30 Hz clock.");
             AddOptionLabel(game, "Renderer threads", 14, 76, 180);
             threads.SetBounds(194, 72, 90, 31);
             threads.Minimum = 1; threads.Maximum = 64;
@@ -1391,46 +1629,61 @@ namespace BlackXboxLauncher
             threads.AccessibleName = "Renderer threads";
             game.Controls.Add(threads);
             AddOptionLabel(game, new LaunchOptions().Threads + " default on this " + Environment.ProcessorCount + "-thread PC", 298, 77, 300).ForeColor = muted;
-            skipMovies.SetBounds(14, 110, 590, 28);
+            AddOptionLabel(game, "Menu language", 14, 110, 176);
+            ConfigureChoices(menuLanguage, "Game menu language", 194, 106, 408,
+                new DisplayChoice(GameLanguageBanks.English, "English"),
+                new DisplayChoice(GameLanguageBanks.PortugueseBrazil, "Português (Brasil)"));
+            game.Controls.Add(menuLanguage);
+            SetSettingsTip(menuLanguage, "Selects the game's text bank. The launcher installs this choice before each run; English is selected by default.");
+            skipMovies.SetBounds(14, 142, 590, 28);
             skipMovies.Text = "Skip movies"; skipMovies.Checked = false;
             skipMovies.AccessibleName = skipMovies.Text;
             game.Controls.Add(skipMovies);
-            advanceMenus.SetBounds(14, 142, 590, 28);
+            advanceMenus.SetBounds(14, 174, 590, 28);
             advanceMenus.Text = "Advance startup menus automatically (first 65 seconds)";
             advanceMenus.AccessibleName = advanceMenus.Text;
             game.Controls.Add(advanceMenus);
-            visualTraceEnabled.SetBounds(14, 174, 245, 28);
+            visualTraceEnabled.SetBounds(14, 206, 245, 28);
             visualTraceEnabled.Text = "Detailed visual trace";
             visualTraceEnabled.AccessibleName = visualTraceEnabled.Text;
             game.Controls.Add(visualTraceEnabled);
-            AddOptionLabel(game, "Frames (start-end/step)", 266, 177, 188);
-            visualTraceFrames.SetBounds(455, 173, 147, 29);
+            AddOptionLabel(game, "Frames (start-end/step)", 266, 209, 188);
+            visualTraceFrames.SetBounds(455, 205, 147, 29);
             visualTraceFrames.Text = VisualTraceFrames.Default;
             visualTraceFrames.AccessibleName = "Visual trace frames";
             game.Controls.Add(visualTraceFrames);
             visualTraceFrames.Enabled = false;
             visualTraceEnabled.CheckedChanged += delegate { visualTraceFrames.Enabled = visualTraceEnabled.Checked; };
-            settingsTip.SetToolTip(visualTraceEnabled, "Records detailed [KTRACE] drawing data in reports\\...\\visual-trace.log (maximum 1 MB). Requires CPU Kelvin; turn off GPU renderer for this diagnostic. The renderer synchronizes work during collection, which can change frame timing. Use an untraced run for performance comparisons.");
-            settingsTip.SetToolTip(visualTraceFrames, "Examples: 120, 120-180, or 120-240/30. Requires CPU Kelvin and can change frame timing; compare performance with a normal run.");
-            dspTraceEnabled.SetBounds(14, 206, 590, 28); dspTraceEnabled.Text = "Detailed DSP state trace (GP/EP stack)";
+            SetSettingsTip(visualTraceEnabled, "Records detailed [KTRACE] drawing data in reports\\...\\visual-trace.log (maximum 1 MB). Requires CPU Kelvin; turn off GPU renderer for this diagnostic. The renderer synchronizes work during collection, which can change frame timing. Use an untraced run for performance comparisons.");
+            SetSettingsTip(visualTraceFrames, "Examples: 120, 120-180, or 120-240/30. Requires CPU Kelvin and can change frame timing; compare performance with a normal run.");
+            dspTraceEnabled.SetBounds(14, 238, 590, 28); dspTraceEnabled.Text = "Detailed DSP state trace (GP/EP stack)";
             dspTraceEnabled.AccessibleName = dspTraceEnabled.Text; game.Controls.Add(dspTraceEnabled);
-            settingsTip.SetToolTip(dspTraceEnabled, "Records GP/EP state, EP output FIFO activity, and final PCM levels about once per second in reports\\...\\audio-dsp-trace.log (maximum 1 MB). No audio is saved; short stack events may be missed.");
-            AddOptionLabel(game, "GPU draw log (frame,count)", 286, 241, 166);
-            kgpuDrawLogFrames.SetBounds(455, 237, 147, 29);
+            SetSettingsTip(dspTraceEnabled, "Records GP/EP state, EP output FIFO activity, and final PCM levels about once per second in reports\\...\\audio-dsp-trace.log (maximum 1 MB). No audio is saved; short stack events may be missed.");
+            AddOptionLabel(game, "GPU draw log (frame,count)", 286, 273, 166);
+            kgpuDrawLogFrames.SetBounds(455, 269, 147, 29);
             kgpuDrawLogFrames.AccessibleName = "GPU draw log frames";
             game.Controls.Add(kgpuDrawLogFrames);
-            settingsTip.SetToolTip(kgpuDrawLogFrames, "Leave blank to keep this diagnostic off. Example: 2400,2 records at most 2 frames to reports\\...\\kgpu-draw-trace.log (maximum 1 MB). Requires GPU Kelvin and adds overhead during those frames.");
+            SetSettingsTip(kgpuDrawLogFrames, "Leave blank to keep this diagnostic off. Example: 2400,2 records at most 2 frames to reports\\...\\kgpu-draw-trace.log (maximum 1 MB). Requires GPU Kelvin and adds overhead during those frames.");
             status.SetBounds(34, 490, 782, 27); status.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom; status.Font = OwnFont(11, FontStyle.Bold);
             Controls.Add(status);
             detail.SetBounds(34, 520, 782, 43); detail.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom; detail.ForeColor = muted;
             Controls.Add(detail);
-            StyleButton(play, "PLAY", 109, 575, 190, true); play.Anchor = AnchorStyles.Bottom;
-            StyleButton(stop, "Stop game", 311, 575, 122, false); stop.Anchor = AnchorStyles.Bottom; stop.Enabled = false;
-            var openLogs = new Button(); StyleButton(openLogs, "Open logs", 445, 575, 140, false); openLogs.Anchor = AnchorStyles.Bottom;
-            var controls = new Button(); StyleButton(controls, "Controls", 597, 575, 144, false); controls.Anchor = AnchorStyles.Bottom;
+            StyleButton(play, "PLAY", 33, 575, 190, true); play.Anchor = AnchorStyles.Bottom;
+            StyleButton(stop, "Stop game", 235, 575, 122, false); stop.Anchor = AnchorStyles.Bottom; stop.Enabled = false;
+            var openLogs = new Button(); StyleButton(openLogs, "Open logs", 369, 575, 140, false); openLogs.Anchor = AnchorStyles.Bottom;
+            var sendError = new Button(); StyleButton(sendError, "Send error", 521, 575, 140, false); sendError.Anchor = AnchorStyles.Bottom;
+            var controls = new Button(); StyleButton(controls, "Controls", 673, 575, 144, false); controls.Anchor = AnchorStyles.Bottom;
             var localSaves = new Label { Text = "BLACK PC  /  Local saves", Location = new Point(34, 635), Size = new Size(782, 22), Font = OwnFont(9, FontStyle.Regular), ForeColor = muted, Anchor = AnchorStyles.Left | AnchorStyles.Bottom };
             Controls.Add(localSaves);
             LoadSettings();
+            LauncherLanguage.Set(ChoiceValue(menuLanguage));
+            menuLanguage.SelectedIndexChanged += delegate
+            {
+                LauncherLanguage.Set(ChoiceValue(menuLanguage));
+                ApplyLauncherLanguage();
+                SaveSettings();
+            };
+            ApplyLauncherLanguage();
             play.Click += delegate { StartGame(); };
             stop.Click += delegate { StopGame(); };
             openLogs.Click += delegate
@@ -1438,9 +1691,14 @@ namespace BlackXboxLauncher
                 try { Directory.CreateDirectory(logs); using (Process.Start(new ProcessStartInfo { FileName = logs, UseShellExecute = true })) { } }
                 catch (Exception error) { MessageBox.Show(this, error.Message, "Could not open logs"); }
             };
+            sendError.Click += delegate
+            {
+                using (var dialog = new ErrorReportDialog(root)) dialog.ShowDialog(this);
+            };
             controls.Click += delegate
             {
-                MessageBox.Show(this, InputBindings.Help(Options()) + "\nClose the game window or use Stop game to end the session. Finish saving before closing.", "BLACK PC controls", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, InputBindings.Help(Options()) + "\n" + LauncherLanguage.Text("Close the game window or use Stop game to end the session. Finish saving before closing."),
+                    LauncherLanguage.Text("BLACK PC controls"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
             FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
@@ -1465,9 +1723,9 @@ namespace BlackXboxLauncher
         private sealed class DisplayChoice
         {
             internal readonly string Value;
-            private readonly string label;
-            internal DisplayChoice(string value, string text) { Value = value; label = text; }
-            public override string ToString() { return label; }
+            private readonly string englishLabel;
+            internal DisplayChoice(string value, string text) { Value = value; englishLabel = text; }
+            public override string ToString() { return LauncherLanguage.Text(englishLabel); }
         }
         private sealed class ResolutionChoice
         {
@@ -1493,6 +1751,19 @@ namespace BlackXboxLauncher
             var label = new Label { Text = text, Location = new Point(x, y), Size = new Size(width, 25), ForeColor = ForeColor };
             parent.Controls.Add(label); return label;
         }
+        private void ApplyLauncherLanguage()
+        {
+            LauncherLanguage.Apply(this);
+            foreach (KeyValuePair<Control, string> tip in settingsTips)
+                settingsTip.SetToolTip(tip.Key, LauncherLanguage.Text(tip.Value));
+            settingsTabs.Refresh();
+        }
+        private void SetSettingsTip(Control control, string english)
+        {
+            settingsTips[control] = english;
+            settingsTip.SetToolTip(control, LauncherLanguage.Text(english));
+        }
+        private static string UiText(string english) { return LauncherLanguage.Text(english); }
         private void ConfigureChoices(ComboBox box, string name, int x, int y, int width, params DisplayChoice[] choices)
         {
             box.SetBounds(x, y, width, 30); box.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -1556,6 +1827,7 @@ namespace BlackXboxLauncher
                 if (haveVideo) settings.ApplyVideoIni(File.ReadAllText(VideoPath));
                 threads.Value = settings.Threads;
                 skipMovies.Checked = settings.SkipMovies; advanceMenus.Checked = settings.AdvanceMenus;
+                SelectChoice(menuLanguage, settings.MenuLanguage);
                 visualTraceEnabled.Checked = settings.VisualTraceEnabled;
                 visualTraceFrames.Text = settings.VisualTraceFrames;
                 kgpuDrawLogFrames.Text = settings.KgpuDrawLogFrames ?? "";
@@ -1572,13 +1844,14 @@ namespace BlackXboxLauncher
         private void SaveSettings()
         {
             try { Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)); File.WriteAllText(SettingsPath, new JavaScriptSerializer().Serialize(Options())); }
-            catch (Exception error) { detail.Text = "Settings could not be saved: " + error.Message; }
+            catch (Exception error) { detail.Text = UiText("Settings could not be saved: " + error.Message); }
         }
         private LaunchOptions Options()
         {
             var resolution = (ResolutionChoice)outputResolution.SelectedItem;
             return new LaunchOptions {
                 Threads = (int)threads.Value, SkipMovies = skipMovies.Checked, AdvanceMenus = advanceMenus.Checked,
+                MenuLanguage = ChoiceValue(menuLanguage),
                 GpuRenderer = gpuRenderer.Checked, Smooth60 = smooth60.Checked, SmoothHz = int.Parse(ChoiceValue(smoothRate), CultureInfo.InvariantCulture),
                 OutputWidth = resolution.Width, OutputHeight = resolution.Height,
                 InternalHeight = int.Parse(ChoiceValue(internalResolution), CultureInfo.InvariantCulture),
@@ -1599,7 +1872,7 @@ namespace BlackXboxLauncher
         }
         internal static string ReadinessText(int existing, bool haveBuild)
         {
-            return existing != 0 ? "PC game already running (PID " + existing + ")" : haveBuild ? "Ready to play" : "PC Release build is missing";
+            return UiText(existing != 0 ? "PC game already running (PID " + existing + ")" : haveBuild ? "Ready to play" : "PC Release build is missing");
         }
         private void RefreshReady()
         {
@@ -1607,7 +1880,7 @@ namespace BlackXboxLauncher
             bool haveBuild = File.Exists(GameSession.Executable(root));
             play.Enabled = !previewOnly && existing == 0 && haveBuild;
             status.Text = ReadinessText(existing, haveBuild);
-            detail.Text = existing != 0 ? "Close the existing game before Play. This launcher can stop sessions it starts." : "Keyboard and mouse are ready; a controller is optional. Startup may take a minute.\nSaves stay in the local save folder.";
+            detail.Text = UiText(existing != 0 ? "Close the existing game before Play. This launcher can stop sessions it starts." : "Keyboard and mouse are ready; a controller is optional. Startup may take a minute.\nSaves stay in the local save folder.");
         }
         private void StartGame()
         {
@@ -1620,14 +1893,14 @@ namespace BlackXboxLauncher
                 session = GameSession.Start(root, options); logs = session.DirectoryPath;
                 play.Enabled = settingsTabs.Enabled = false;
                 stop.Enabled = true; stopped = false;
-                status.Text = "Game running";
-                detail.Text = options.VisualTraceEnabled
+                status.Text = UiText("Game running");
+                detail.Text = UiText(options.VisualTraceEnabled
                     ? "Visual trace may change frame timing. Compare performance with a normal run.\nDetailed data: visual-trace.log (max 1 MB)."
                     : options.DspTraceEnabled
                     ? "DSP trace samples GP/EP and final PCM levels about once per second; timing may shift slightly.\nDetailed data: audio-dsp-trace.log (max 1 MB)."
                     : !String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames)
                     ? "GPU draw logging adds overhead on selected frames.\nDetailed data: kgpu-draw-trace.log (max 1 MB)."
-                    : "Use the BLACK PC window to play.\nStop ends the game process; finish saving first.";
+                    : "Use the BLACK PC window to play.\nStop ends the game process; finish saving first.");
                 var running = session;
                 Task.Factory.StartNew(delegate
                 {
@@ -1639,15 +1912,15 @@ namespace BlackXboxLauncher
             }
             catch (Exception error)
             {
-                status.Text = "Unable to launch";
-                MessageBox.Show(this, error.Message, "BLACK PC", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                status.Text = UiText("Unable to launch");
+                MessageBox.Show(this, UiText(error.Message), UiText("BLACK PC"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
         private void StopGame()
         {
             if (session == null) return;
-            try { session.Stop(); stopped = true; stop.Enabled = false; status.Text = "Stopping game..."; }
-            catch (Exception error) { closing = false; MessageBox.Show(this, error.Message, "Could not stop the game"); }
+            try { session.Stop(); stopped = true; stop.Enabled = false; status.Text = UiText("Stopping game..."); }
+            catch (Exception error) { closing = false; MessageBox.Show(this, UiText(error.Message), UiText("Could not stop the game")); }
         }
         private void GameExited(GameSession running, int code, string error)
         {
@@ -1655,8 +1928,8 @@ namespace BlackXboxLauncher
             settingsTabs.Enabled = true; stop.Enabled = false;
             ReloadVideo();                                  // the game's Video Settings page may have changed them
             RefreshReady();
-            status.Text = stopped ? "Game stopped" : code == 0 && error == null ? "Game closed" : "Game exited with an error (" + code + ")";
-            detail.Text = error == null ? "Open logs for this session's output and launch settings." : "Session logging error: " + error;
+            status.Text = UiText(stopped ? "Game stopped" : code == 0 && error == null ? "Game closed" : "Game exited with an error (" + code + ")");
+            detail.Text = UiText(error == null ? "Open logs for this session's output and launch settings." : "Session logging error: " + error);
             if (closing) Close();
         }
         protected override void Dispose(bool disposing)

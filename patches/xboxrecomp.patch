@@ -36245,10 +36245,10 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..1b65387
+index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2338 @@
+@@ -0,0 +1,2400 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -36260,6 +36260,7 @@ index 0000000..1b65387
 + */
 +#include "pc_menu.h"
 +#include "pc_video_menu.h"
++#include "pc_movie_skip.h"
 +#include "../input/pc_input.h"
 +#include <ctype.h>
 +#include <math.h>
@@ -37434,6 +37435,36 @@ index 0000000..1b65387
 +    out[n] = 0;
 +}
 +
++static int portuguese_menu_language(void)
++{
++    const char *language = getenv("RECOMP_LANGUAGE");
++    return language && !_stricmp(language, "pt-BR");
++}
++
++static const char *localized_video_literal(const char *text)
++{
++    const char *active_page = m_page >= 0 && m_doc ? m_doc->page[m_page].name : m_page_name;
++    static const struct { const char *english, *portuguese; } words[] = {
++        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO" }, { "DISPLAY", "TELA" },
++        { "GRAPHICS", "GRÁFICOS" }, { "RESET TO DEFAULTS", "RESTAURAR PADRÕES" },
++        { "BACK", "VOLTAR" }, { "WINDOW MODE", "MODO DE JANELA" },
++        { "WINDOW SIZE", "RESOLUÇÃO" }, { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA" },
++        { "ASPECT RATIO", "PROPORÇÃO DA IMAGEM" }, { "SCALING", "ESCALA DA IMAGEM" },
++        { "SCALING FILTER", "FILTRO DE ESCALA" }, { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL" },
++        { "FRAME LIMIT", "LIMITE DE QUADROS" }, { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO" },
++        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA" }, { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO" },
++        { "SHARPENING", "NITIDEZ" }, { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE" },
++        { "AO QUALITY", "QUALIDADE DA OCLUSÃO" }, { "FIELD OF VIEW", "FOV" },
++        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO" }
++    };
++    int i;
++    if (!portuguese_menu_language() ||
++        (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
++    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
++        if (!strcmp(text, words[i].english)) return words[i].portuguese;
++    return text;
++}
++
 +/* Resolves a text spec to UTF-16. Returns 0 when there is nothing to show. */
 +static int spec_text(const PcMenuHost *host, const char *spec, uint16_t *out, unsigned cap)
 +{
@@ -37443,7 +37474,7 @@ index 0000000..1b65387
 +        size_t n = strlen(spec);
 +        copy(tmp, sizeof(tmp), spec + 1);
 +        if (n >= 2) tmp[n - 2] = 0;
-+        utf8_to_utf16(tmp, out, cap);
++        utf8_to_utf16(localized_video_literal(tmp), out, cap);
 +    } else if (!strcmp(spec, "&VIDEO_HELP")) {
 +        const Item *it = m_page >= 0 && m_focus >= 0 && m_focus < m_doc->page[m_page].nitem ? &m_doc->page[m_page].item[m_focus] : NULL;
 +        utf8_to_utf16(it && it->kind == IT_VIDEO ? pc_video_menu_row_help(it->video_row) : "", out, cap);
@@ -38434,48 +38465,79 @@ index 0000000..1b65387
 +int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
 +{
 +    static uint32_t *hint, *composed;
++    static uint16_t previous_caption[PCM_TEXT_CAP];
 +    static unsigned hw, hh;
-+    static int hint_was_on, base_was_on;
++    static int overlay_was_on, hint_was_on, base_was_on, caption_was_on;
 +    const uint32_t *base = NULL;
-+    int base_changed = 0, hint_changed = 0;
++    uint16_t caption[PCM_TEXT_CAP];
++    int base_changed = 0, overlay_changed = 0, caption_changed;
 +    const int base_on = page_overlay(w, h, px, py, pw, ph, &base, &base_changed);
 +    int hint_on = InterlockedCompareExchange(&m_movie_skip_prompt, 0, 0) && w && h && pw && ph &&
 +                  m_font[PCM_FONT_SMALL].pixels;
-+    if (hint_on && (hw != w || hh != h || !hint || !composed)) {
++    int subtitle_on;
++    memset(caption, 0, sizeof(caption));
++    subtitle_on = w && h && pw && ph && m_font[PCM_FONT_SMALL].pixels &&
++                  pc_movie_skip_subtitle(caption, PCM_TEXT_CAP);
++    caption_changed = subtitle_on != caption_was_on || memcmp(caption, previous_caption, sizeof(caption)) != 0;
++    if (caption_changed) memcpy(previous_caption, caption, sizeof(caption));
++    caption_was_on = subtitle_on;
++    if ((hint_on || subtitle_on) && (hw != w || hh != h || !hint || !composed)) {
 +        uint32_t *next_hint = (uint32_t *)malloc((size_t)w * h * 4);
 +        uint32_t *next_composed = (uint32_t *)malloc((size_t)w * h * 4);
-+        if (!next_hint || !next_composed) { free(next_hint); free(next_composed); hint_on = 0; }
++        if (!next_hint || !next_composed) { free(next_hint); free(next_composed); hint_on = subtitle_on = 0; }
 +        else {
 +            free(hint); free(composed);
 +            hint = next_hint; composed = next_composed; hw = w; hh = h;
-+            hint_changed = 1;
++            overlay_changed = 1;
 +        }
 +    }
-+    if (!hint_on) {
-+        *changed = base_changed || hint_was_on;
-+        if (hint_was_on && base_on) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
-+        hint_was_on = 0; base_was_on = base_on;
++    if (!hint_on && !subtitle_on) {
++        *changed = base_changed || overlay_was_on;
++        if (overlay_was_on && base_on) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
++        overlay_was_on = hint_was_on = 0; base_was_on = base_on;
 +        if (base_on) *pixels = base;
 +        return base_on;
 +    }
-+    hint_changed |= !hint_was_on;
-+    if (hint_changed) {
++    overlay_changed |= !overlay_was_on || caption_changed || hint_on != hint_was_on;
++    if (overlay_changed) {
 +        static Display d;
 +        static const uint16_t text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
 +        Canvas c;
 +        float right, bottom, tw;
 +        d.n = 0; d.slide = 0;
-+        /* Movie aspect/letterboxing must not pull the prompt into the middle of
-+         * an ultrawide window. Its safe margin belongs to the client area. */
-+        canvas_for(&c, hint, w, h, 0, 0, w, h);
-+        right = ((float)w - c.ox) / c.s - 20.0f;
-+        bottom = ((float)h - c.oy) / c.s - 20.0f;
-+        tw = text_width(PCM_FONT_SMALL, text, 16.0f);
-+        rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
-+        text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
++        if (hint_on) {
++            /* The skip prompt belongs to the client area, including letterbox bars. */
++            canvas_for(&c, hint, w, h, 0, 0, w, h);
++            right = ((float)w - c.ox) / c.s - 20.0f;
++            bottom = ((float)h - c.oy) / c.s - 20.0f;
++            tw = text_width(PCM_FONT_SMALL, text, 16.0f);
++            rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
++            text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
++        }
++        if (subtitle_on) {
++            uint16_t rows[2][PCM_TEXT_CAP];
++            unsigned row = 0, pos = 0, i;
++            float widths[2] = {0, 0}, box_w, box_y;
++            memset(rows, 0, sizeof(rows));
++            for (i = 0; caption[i] && row < 2; ++i) {
++                if (caption[i] == '\n' || caption[i] == '\r') {
++                    if (caption[i] == '\r' && caption[i + 1] == '\n') ++i;
++                    if (row == 0) { ++row; pos = 0; }
++                } else if (pos + 1 < PCM_TEXT_CAP) rows[row][pos++] = caption[i];
++            }
++            for (i = 0; i < 2; ++i) widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
++            box_w = fmaxf(widths[0], widths[1]) + 28.0f;
++            if (box_w > 600.0f) box_w = 600.0f;
++            box_y = 480.0f - (row ? 64.0f : 42.0f) - 14.0f;
++            rect(&d, 320.0f - box_w * 0.5f, box_y, box_w, row ? 58.0f : 36.0f, 0xB8000000u, 0);
++            text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[0] * 0.5f, box_y + 8.0f,
++                      17.0f, 1.0f, 0xFFFFFFFFu, rows[0]);
++            if (row) text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[1] * 0.5f, box_y + 30.0f,
++                               17.0f, 1.0f, 0xFFFFFFFFu, rows[1]);
++        }
 +        render(&d, hint, w, h, 0, 0, w, h);
 +    }
-+    *changed = base_changed || hint_changed || base_on != base_was_on;
++    *changed = base_changed || overlay_changed || base_on != base_was_on;
 +    if (base_on) {
 +        if (*changed) {
 +            const size_t n = (size_t)w * h;
@@ -38486,7 +38548,7 @@ index 0000000..1b65387
 +        *pixels = composed;
 +    } else *pixels = hint;
 +    if (*changed) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
-+    hint_was_on = 1; base_was_on = base_on;
++    overlay_was_on = 1; hint_was_on = hint_on; base_was_on = base_on;
 +    return 1;
 +}
 +
@@ -38908,16 +38970,17 @@ index 0000000..6affd56
 +}
 diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
 new file mode 100644
-index 0000000..e4a5da3
+index 0000000..5ff10e0
 --- /dev/null
 +++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,346 @@
 +/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
 +#include "pc_movie_skip.h"
 +#include "pc_menu.h"
 +#include "../input/pc_input.h"
 +#include <stdio.h>
 +#include <string.h>
++#include <stdlib.h>
 +#ifndef WIN32_LEAN_AND_MEAN
 +#define WIN32_LEAN_AND_MEAN
 +#endif
@@ -38933,8 +38996,15 @@ index 0000000..e4a5da3
 +
 +static SRWLOCK m_lock = SRWLOCK_INIT;
 +static uint64_t m_session, m_seen, m_confirm;
++static uint64_t m_started;
 +static int m_kind, m_request, m_release;
++static int m_subtitle_target, m_subtitle_loaded;
 +static int m_focused = 1;
++#define PC_MOVIE_CAPTIONS 64
++#define PC_MOVIE_CAPTION_CHARS 160
++typedef struct MovieCaption { uint64_t start, end; uint16_t text[PC_MOVIE_CAPTION_CHARS]; } MovieCaption;
++static MovieCaption m_captions[PC_MOVIE_CAPTIONS];
++static unsigned m_caption_count;
 +/* Physical state survives movie transitions, so a held button cannot affect the
 + * next movie. Consumed releases also stay consumed after the movie ends. */
 +static unsigned m_keys, m_pad, m_mouse;
@@ -38952,8 +39022,11 @@ index 0000000..e4a5da3
 +static void retire_locked(void)
 +{
 +    m_session = m_seen = m_confirm = 0;
++    m_started = 0;
 +    m_kind = PC_MOVIE_SKIP_NONE;
 +    m_request = 0;
++    m_subtitle_target = m_subtitle_loaded = 0;
++    m_caption_count = 0;
 +    m_release = (m_keys | m_pad | m_mouse) != 0;
 +    pc_menu_set_movie_skip_prompt(0);
 +}
@@ -39002,10 +39075,109 @@ index 0000000..e4a5da3
 +            retire_locked();
 +            m_session = session;
 +            m_kind = kind;
++            m_started = now;
 +        }
 +        m_seen = now;
 +    }
 +    ReleaseSRWLockExclusive(&m_lock);
++}
++
++static int srt_time_ms(const char *s, uint64_t *out)
++{
++    int h, m, sec, ms;
++    if (sscanf(s, "%d:%d:%d,%d", &h, &m, &sec, &ms) != 4 ||
++        h < 0 || m < 0 || m > 59 || sec < 0 || sec > 59 || ms < 0 || ms > 999) return 0;
++    *out = (((uint64_t)h * 60u + (unsigned)m) * 60u + (unsigned)sec) * 1000u + (unsigned)ms;
++    return 1;
++}
++
++static void subtitle_load_locked(void)
++{
++    FILE *f;
++    char line[1024];
++    const char *language = getenv("RECOMP_LANGUAGE");
++    const char *subtitle_path = language && !_stricmp(language, "pt-BR")
++        ? "subtitles\\pt-BR\\03_N.srt" : "subtitles\\03_N.srt";
++    m_subtitle_loaded = 1;
++    m_caption_count = 0;
++    f = fopen(subtitle_path, "rb");
++    if (!f) {
++        fprintf(stderr, "[SUBTITLE] %s not found\n", subtitle_path);
++        return;
++    }
++    while (m_caption_count < PC_MOVIE_CAPTIONS && fgets(line, sizeof(line), f)) {
++        uint64_t start, end;
++        char *arrow, joined[PC_MOVIE_CAPTION_CHARS * 4];
++        size_t used = 0;
++        int wide_count;
++        while (fgets(line, sizeof(line), f)) {
++            char *p = line;
++            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
++            if (*p) break;
++        }
++        if (!line[0]) break;
++        arrow = strstr(line, " --> ");
++        if (!arrow) continue;
++        *arrow = 0;
++        if (!srt_time_ms(line, &start) || !srt_time_ms(arrow + 5, &end) || end <= start) continue;
++        joined[0] = 0;
++        while (fgets(line, sizeof(line), f)) {
++            size_t n = strlen(line);
++            while (n && (line[n - 1] == '\r' || line[n - 1] == '\n')) line[--n] = 0;
++            if (!n) break;
++            if (used && used + 1 < sizeof(joined)) joined[used++] = '\n';
++            if (n > sizeof(joined) - used - 1) n = sizeof(joined) - used - 1;
++            memcpy(joined + used, line, n); used += n; joined[used] = 0;
++        }
++        if (!used) continue;
++        wide_count = MultiByteToWideChar(CP_UTF8, 0, joined, -1,
++            (wchar_t *)m_captions[m_caption_count].text, PC_MOVIE_CAPTION_CHARS);
++        if (!wide_count) continue;
++        m_captions[m_caption_count].start = start;
++        m_captions[m_caption_count].end = end;
++        m_caption_count++;
++    }
++    fclose(f);
++    fprintf(stderr, "[SUBTITLE] loaded %u cues for 03_N\n", m_caption_count);
++}
++
++void pc_movie_skip_subtitle_target(uint64_t session, const char *stem)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    if (active_locked(now_ms()) && session == m_session) {
++        const int target = stem && !_stricmp(stem, "03_N");
++        if (target != m_subtitle_target) {
++            m_subtitle_target = target;
++            m_subtitle_loaded = 0;
++            m_caption_count = 0;
++        }
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity)
++{
++    uint64_t elapsed;
++    unsigned i;
++    int found = 0;
++    if (!out || !capacity) return 0;
++    out[0] = 0;
++    AcquireSRWLockExclusive(&m_lock);
++    if (active_locked(now_ms()) && m_subtitle_target && m_started) {
++        if (!m_subtitle_loaded) subtitle_load_locked();
++        elapsed = now_ms() - m_started;
++        for (i = 0; i < m_caption_count; ++i) {
++            if (elapsed >= m_captions[i].start && elapsed < m_captions[i].end) {
++                unsigned n = 0;
++                while (m_captions[i].text[n] && n + 1 < capacity) { out[n] = m_captions[i].text[n]; n++; }
++                out[n] = 0;
++                found = n != 0;
++                break;
++            }
++        }
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return found;
 +}
 +
 +int pc_movie_skip_take_request(uint64_t session)
@@ -39150,10 +39322,10 @@ index 0000000..e4a5da3
 +#endif
 diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
 new file mode 100644
-index 0000000..725072f
+index 0000000..5023deb
 --- /dev/null
 +++ b/src/video/pc_movie_skip.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,25 @@
 +#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
 +#define XBOXRECOMP_PC_MOVIE_SKIP_H
 +#include <stdint.h>
@@ -39163,6 +39335,10 @@ index 0000000..725072f
 +/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
 + * retires it. A new identity always starts with an unarmed confirmation. */
 +void pc_movie_skip_update(uint64_t session, int kind, int playing);
++/* Selects the one movie stem that owns the current subtitle track. Call on the game thread. */
++void pc_movie_skip_subtitle_target(uint64_t session, const char *stem);
++/* Presenter thread: copies the active UTF-16 caption and returns 1 while a cue is visible. */
++int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity);
 +int pc_movie_skip_take_request(uint64_t session);
 +void pc_movie_skip_clear(void);
 +/* Input/presenter threads: a fresh native movie currently owns input. */
@@ -39924,10 +40100,10 @@ index 0000000..5610b01
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..db9c143
+index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
-@@ -0,0 +1,788 @@
+@@ -0,0 +1,835 @@
 +/* The native Video Settings page. See pc_video_menu.h. */
 +#include "pc_video_menu.h"
 +#include "pc_video.h"
@@ -40431,9 +40607,44 @@ index 0000000..db9c143
 +    "MOTION BLUR", "RESET TO DEFAULTS", "DONE"
 +};
 +
++static const char *const k_row_label_pt[R_COUNT] = {
++    "MODO DE JANELA", "RESOLUÇÃO", "RESOLUÇÃO INTERNA", "SUAVIZAÇÃO DE SERRILHADO", "FILTRAGEM ANISOTRÓPICA", "PROFUNDIDADE DE CAMPO",
++    "NITIDEZ", "MÉTODO DE OCLUSÃO", "QUALIDADE DA OCLUSÃO", "PROPORÇÃO", "FOV", "ESCALA DA IMAGEM", "FILTRO DE ESCALA", "SINCRONIZAÇÃO VERTICAL", "LIMITE DE QUADROS",
++    "DESFOQUE DE MOVIMENTO", "RESTAURAR PADRÕES", "CONCLUÍDO"
++};
++
++static int video_menu_portuguese(void)
++{
++    const char *language = getenv("RECOMP_LANGUAGE");
++    return language && !_stricmp(language, "pt-BR");
++}
++
++static const char *localized_video_value(const char *value)
++{
++    static const struct { const char *english, *portuguese; } words[] = {
++        { "BORDERLESS", "SEM BORDAS" }, { "WINDOWED", "EM JANELA" },
++        { "OFF", "DESATIVADO" }, { "ON", "ATIVADO" }, { "LOW", "BAIXA" },
++        { "MEDIUM", "MÉDIA" }, { "HIGH", "ALTA" }, { "ULTRA", "MÁXIMA" },
++        { "SSAO CLASSIC", "SSAO CLÁSSICO" }, { "ORIGINAL", "ORIGINAL" },
++        { "STRETCH", "ESTICAR" }, { "INTEGER", "INTEIRA" }, { "FIT", "AJUSTAR" },
++        { "NEAREST", "VIZINHO PRÓXIMO" }, { "LINEAR", "LINEAR" }, { "UNLIMITED", "ILIMITADO" },
++        { "32:9", "SUPER ULTRA-WIDE (32:9)" }
++    };
++    int i;
++    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
++        if (!strcmp(value, words[i].english)) return words[i].portuguese;
++    return value;
++}
++
++static const char *video_menu_text(const char *english, const char *portuguese)
++{
++    return video_menu_portuguese() ? portuguese : english;
++}
++
 +const char *pc_video_menu_row_label(int row)
 +{
-+    return row >= 0 && row < R_COUNT ? k_row_label[row] : "";
++    if (row < 0 || row >= R_COUNT) return "";
++    return video_menu_portuguese() ? k_row_label_pt[row] : k_row_label[row];
 +}
 +
 +/* Values are deliberately compact so the game's 640 x 480 native pages retain their normal row
@@ -40491,6 +40702,12 @@ index 0000000..db9c143
 +    case R_BLUR: strcpy(value, s->motion_blur_off ? "OFF" : "ORIGINAL"); break;
 +    default: break;
 +    }
++    if (video_menu_portuguese()) {
++        const char *localized = localized_video_value(value);
++        if (localized != value) snprintf(value, sizeof(value), "%s", localized);
++        else if (!strcmp(value, "SSAA 4X")) strcpy(value, "SSAA 4X");
++        else if (!strcmp(value, "SSAO CLASSIC")) strcpy(value, "SSAO CLÁSSICO");
++    }
 +    len = strlen(value);
 +    n = len < cap - 1 ? len : cap - 1;
 +    /* A small caller buffer must not receive half of a UTF-8 degree symbol. */
@@ -40503,36 +40720,36 @@ index 0000000..db9c143
 +{
 +    PcVideoSettings cur;
 +    int live = pc_video_live_resize();
-+    if (pc_video_menu_row_locked(row)) return "This setting is fixed by an environment variable for this run.";
++    if (pc_video_menu_row_locked(row)) return video_menu_text("This setting is fixed by an environment variable for this run.", "Esta opção está fixada por uma variável de ambiente nesta partida.");
 +    pc_video_get(&cur);
 +    switch (row) {
-+    case R_MODE: return "Borderless fills the screen. F11 switches at any time.";
-+    case R_WINDOW: return "The size of the window when windowed.";
-+    case R_INTERNAL: return live ? "Resolution of the rendered scene. Higher is sharper and slower. Changes apply immediately."
-+                                 : "Resolution of the rendered scene. Changes require a restart.";
++    case R_MODE: return video_menu_text("Borderless fills the screen. F11 switches at any time.", "O modo sem bordas preenche a tela. F11 alterna o modo a qualquer momento.");
++    case R_WINDOW: return video_menu_text("The size of the window when windowed.", "O tamanho da janela no modo em janela.");
++    case R_INTERNAL: return live ? video_menu_text("Resolution of the rendered scene. Higher is sharper and slower. Changes apply immediately.", "Resolução da cena renderizada. Valores maiores deixam a imagem mais nítida e lenta. As alterações são aplicadas na hora.")
++                                 : video_menu_text("Resolution of the rendered scene. Changes require a restart.", "Resolução da cena renderizada. As alterações exigem reiniciar o jogo.");
 +    case R_AA:
-+        if (!live) return "Anti-aliasing is available with the GPU renderer only.";
++        if (!live) return video_menu_text("Anti-aliasing is available with the GPU renderer only.", "A suavização de serrilhado só está disponível no renderizador GPU.");
 +        if (cur.aa == PCV_AA_SSAA && pc_video_ssaa_factor_for(&cur) == 1)
-+            return "SSAA 4X is unavailable at this resolution. Lower the internal resolution to enable it.";
-+        return "FXAA smooths edges. SSAA 4X renders twice as wide and high for a cleaner picture.";
-+    case R_AF: return live ? "Keeps textures sharp on floors and walls seen at a slant." : "Anisotropic filtering is available with the GPU renderer only.";
-+    case R_DOF: return live ? "Blurs the background. Higher is a wider, stronger blur." : "Depth of field is available with the GPU renderer only.";
-+    case R_SHARPEN: return live ? "Brings back fine detail softened by filters and scaling." : "Sharpening is available with the GPU renderer only.";
-+    case R_AO_METHOD: return live ? "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO."
-+                                    : "Ambient occlusion is available with the GPU renderer only.";
++            return video_menu_text("SSAA 4X is unavailable at this resolution. Lower the internal resolution to enable it.", "SSAA 4X não está disponível nesta resolução. Reduza a resolução interna para ativá-lo.");
++        return video_menu_text("FXAA smooths edges. SSAA 4X renders twice as wide and high for a cleaner picture.", "FXAA suaviza as bordas. SSAA 4X renderiza com o dobro da largura e da altura para uma imagem mais limpa.");
++    case R_AF: return live ? video_menu_text("Keeps textures sharp on floors and walls seen at a slant.", "Mantém nítidas as texturas de pisos e paredes vistas de lado.") : video_menu_text("Anisotropic filtering is available with the GPU renderer only.", "A filtragem anisotrópica só está disponível no renderizador GPU.");
++    case R_DOF: return live ? video_menu_text("Blurs the background. Higher is a wider, stronger blur.", "Desfoca o fundo. Valores maiores ampliam e intensificam o desfoque.") : video_menu_text("Depth of field is available with the GPU renderer only.", "A profundidade de campo só está disponível no renderizador GPU.");
++    case R_SHARPEN: return live ? video_menu_text("Brings back fine detail softened by filters and scaling.", "Recupera detalhes finos suavizados pelos filtros e pela escala.") : video_menu_text("Sharpening is available with the GPU renderer only.", "A nitidez só está disponível no renderizador GPU.");
++    case R_AO_METHOD: return live ? video_menu_text("Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO.", "A oclusão de ambiente adiciona sombras de contato usando a profundidade da cena. Escolha SSAO clássico, HBAO, HBAO+ ou GTAO.")
++                                    : video_menu_text("Ambient occlusion is available with the GPU renderer only.", "A oclusão de ambiente só está disponível no renderizador GPU.");
 +    case R_AO_QUALITY:
-+        if (!live) return "Ambient occlusion is available with the GPU renderer only.";
-+        if (cur.ao_method == PCV_AO_OFF) return "Quality changes AO sampling density and radius. Choose an AO method to enable the effect.";
-+        return "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.";
-+    case R_ASPECT: return "The shape of the camera. Original is the game's 4:3 camera.";
-+    case R_FOV: return "Vertical field of view during gameplay, in degrees.";
-+    case R_SCALE: return "Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.";
-+    case R_FILTER: return "Linear smooths the scaled picture. Nearest keeps its pixels sharp.";
-+    case R_VSYNC: return "Waits for the display to refresh before showing a frame.";
-+    case R_FPS: return "Caps how often the picture is shown.";
-+    case R_BLUR: return "The game's own camera motion blur.";
-+    case R_RESET: return "Restores every video setting to its default. Locked settings keep their values.";
-+    case R_DONE: return "Back to the Options page.";
++        if (!live) return video_menu_text("Ambient occlusion is available with the GPU renderer only.", "A oclusão de ambiente só está disponível no renderizador GPU.");
++        if (cur.ao_method == PCV_AO_OFF) return video_menu_text("Quality changes AO sampling density and radius. Choose an AO method to enable the effect.", "A qualidade altera a amostragem e o alcance da oclusão. Escolha um método para ativar o efeito.");
++        return video_menu_text("Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.", "Qualidades maiores aumentam a amostragem e o alcance da oclusão, exigindo mais da GPU. Todos os níveis usam a resolução da cena e desfoque sensível à profundidade.");
++    case R_ASPECT: return video_menu_text("The shape of the camera. Original is the game's 4:3 camera.", "Proporção da câmera. Original usa a proporção 4:3 do jogo.");
++    case R_FOV: return video_menu_text("Vertical field of view during gameplay, in degrees.", "Campo de visão vertical durante o jogo, em graus.");
++    case R_SCALE: return video_menu_text("Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.", "Ajustar mantém a proporção da imagem. Esticar preenche a janela. Inteira usa múltiplos sem fração.");
++    case R_FILTER: return video_menu_text("Linear smooths the scaled picture. Nearest keeps its pixels sharp.", "Linear suaviza a imagem redimensionada. Vizinho próximo preserva os pixels nítidos.");
++    case R_VSYNC: return video_menu_text("Waits for the display to refresh before showing a frame.", "Aguarda a atualização da tela antes de exibir cada quadro.");
++    case R_FPS: return video_menu_text("Caps how often the picture is shown.", "Limita a frequência de exibição da imagem.");
++    case R_BLUR: return video_menu_text("The game's own camera motion blur.", "Desfoque de movimento original da câmera do jogo.");
++    case R_RESET: return video_menu_text("Restores every video setting to its default. Locked settings keep their values.", "Restaura as configurações de vídeo para os valores padrão. Opções fixadas mantêm seus valores.");
++    case R_DONE: return video_menu_text("Back to the Options page.", "Volta à página de opções.");
 +    default: return "";
 +    }
 +}
@@ -40575,7 +40792,11 @@ index 0000000..db9c143
 +
 +static void draw_hint(double s, int keyboard)
 +{
-+    const wchar_t *text = keyboard ? L"[V]  VIDEO SETTINGS" : L"[RB]  VIDEO SETTINGS";
++    wchar_t text[96];
++    const char *suffix = video_menu_text("VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO");
++    char hint[112];
++    snprintf(hint, sizeof(hint), keyboard ? "[V]  %s" : "[RB]  %s", suffix);
++    MultiByteToWideChar(CP_UTF8, 0, hint, -1, text, (int)(sizeof(text) / sizeof(text[0])));
 +    HFONT font = make_font((int)(21 * s + 0.5), FW_NORMAL);
 +    const int tw = text_width(font, text), pad = (int)(18 * s), h = (int)(44 * s);
 +    const int w = tw + 2 * pad, x = ((int)m_buf_w - w) / 2, y = (int)m_buf_h - h - (int)(34 * s);
@@ -40601,6 +40822,7 @@ index 0000000..db9c143
 +    const int vw = (int)(400 * s), vx = px + pw - pad - vw;
 +    HFONT f_title = make_font((int)(44 * s + 0.5), FW_BOLD), f_row = make_font((int)(24 * s + 0.5), FW_NORMAL);
 +    HFONT f_sel = make_font((int)(24 * s + 0.5), FW_BOLD), f_small = make_font((int)(19 * s + 0.5), FW_NORMAL);
++    wchar_t title[64];
 +    int row, y;
 +    pc_video_get(&cur);
 +    {   /* dim the page underneath: a plain store, the buffer holds nothing yet (a blend over 3440x1440 would be a stutter) */
@@ -40610,7 +40832,8 @@ index 0000000..db9c143
 +    fill_rect(px, py, pw, ph, RGBA(8, 14, 15, 238));
 +    frame_rect(px, py, pw, ph, 1, RGBA(92, 112, 108, 255));
 +    fill_rect(px + pad, py + (int)(28 * s), (int)(6 * s) + 1, (int)(48 * s), RGBA(200, 160, 74, 255));
-+    draw_text(f_title, L"VIDEO SETTINGS", px + pad + (int)(20 * s), py + (int)(24 * s), 0, 0xE8E2D0, 255);
++    MultiByteToWideChar(CP_UTF8, 0, video_menu_text("VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO"), -1, title, (int)(sizeof(title) / sizeof(title[0])));
++    draw_text(f_title, title, px + pad + (int)(20 * s), py + (int)(24 * s), 0, 0xE8E2D0, 255);
 +    fill_rect(px + pad, py + title_h - (int)(8 * s), pw - 2 * pad, 1, RGBA(92, 112, 108, 255));
 +    y = py + title_h;
 +    for (row = 0; row < R_COUNT; row++) {

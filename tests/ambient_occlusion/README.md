@@ -27,6 +27,8 @@ The workflow first compiles the production renderer, video and input libraries, 
   and history stay finite, and sky/temporal smoothing retain their intended behavior.
 - The actual launcher model and controls: all choices, file/JSON persistence, legacy and invalid
   inputs, culture independence, in-game editability, English labels and saved-choice reload.
+  Language switches preserve edited numeric and text settings in both the UI and saved JSON.
+  Synthetic language banks cover first-run English preservation and Portuguese/English switching.
 - The authored camera hook and guard regressions in `camera/`.
 - Focus timing across 30/60 Hz and interrupted scenes, alongside AO draw-order checks.
 - The extracted production autofocus coordinator across missing, invalid or incompatible

@@ -242,6 +242,7 @@ static uint64_t black_movie_skip_sync(uint32_t movie_va)
     movie_skip_playing = 1;
     if (identity.kind == PC_MOVIE_SKIP_CUTSCENE) black_movie_skip_font();
     pc_movie_skip_update(movie_skip_generation, identity.kind, 1);
+    pc_movie_skip_subtitle_target(movie_skip_generation, identity.stem);
     return movie_skip_generation;
 }
 

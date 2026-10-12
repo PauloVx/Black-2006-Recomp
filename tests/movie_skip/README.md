@@ -36,10 +36,13 @@ libraries, then runs all three regressions in Release and Debug.
   the production `pc_menu.c`. It checks safe margins, brightness, premultiplied
   alpha, letterboxing, ultrawide placement, resize, unchanged-pixel caching,
   invalidation, composition and exact restoration of cached page pixels.
+  A synthetic SRT exercises the real movie session and subtitle parser, caption
+  composition with the skip hint, and page restoration when the cue expires.
   Unrelated video settings and input services stay inactive through small
   harness stubs, without loading retail assets or writing settings files.
 - `movie-wrapper` uses synthetic guest memory and a pump stub to check logo and
-  cutscene classification, ownership, EOF, reopen, decoder replacement, looping
+  cutscene classification, subtitle session/stem forwarding, ownership, EOF,
+  reopen, decoder replacement, looping
   exclusion, the lab skip variable, stale requests, bounded names, guest registers,
   stack return and floating-point state. CMake derives the wrapper and font
   helper directly from the current production source into the build directory;

@@ -1,11 +1,13 @@
 /* Exercise the production hint/page renderer with an authored one-texel font.
  * No retail fonts, images, menu definitions or persisted settings are loaded. */
 #include "pc_menu.h"
+#include "pc_movie_skip.h"
 #include "pc_video_menu.h"
 #include "pc_input.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 static unsigned checks, failures;
 #define CHECK(c, ...) do { ++checks; if (!(c)) { ++failures; fprintf(stderr, "FAIL line %d: ", __LINE__); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } } while (0)
@@ -39,6 +41,95 @@ static void reset_page(void)
      * definition path to <test>; production local/menus.ini is never opened. */
     pc_menu_test_reset(page_definition);
     pc_menu_tick("", 1, &host);
+}
+
+static int prepare_subtitle_fixture(char previous[MAX_PATH])
+{
+    char module[MAX_PATH];
+    char *slash;
+    DWORD length = GetCurrentDirectoryA(MAX_PATH, previous);
+    if (!length || length >= MAX_PATH) return 0;
+    length = GetModuleFileNameA(NULL, module, MAX_PATH);
+    if (!length || length >= MAX_PATH) return 0;
+    slash = strrchr(module, '\\');
+    if (!slash) return 0;
+    *slash = 0;
+    if (!SetCurrentDirectoryA(module)) return 0;
+    if (!CreateDirectoryA("subtitle-fixture", NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        SetCurrentDirectoryA(previous); return 0;
+    }
+    if (!SetCurrentDirectoryA("subtitle-fixture")) { SetCurrentDirectoryA(previous); return 0; }
+    if (!CreateDirectoryA("subtitles", NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        SetCurrentDirectoryA(previous); return 0;
+    }
+    {
+        static const char srt[] =
+            "1\r\n00:00:00,000 --> 00:00:01,000\r\nCUTSCENE CAPTION\r\n\r\n";
+        FILE *file = fopen("subtitles\\03_N.srt", "wb");
+        if (!file) { SetCurrentDirectoryA(previous); return 0; }
+        if (fwrite(srt, 1, sizeof(srt) - 1, file) != sizeof(srt) - 1) {
+            fclose(file); SetCurrentDirectoryA(previous); return 0;
+        }
+        if (fclose(file) != 0) { SetCurrentDirectoryA(previous); return 0; }
+    }
+    return 1;
+}
+
+static void test_subtitle_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph,
+                                  uint32_t *base_copy, size_t bytes)
+{
+    char previous[MAX_PATH];
+    const uint32_t *pixels = NULL;
+    uint16_t caption[160];
+    uint32_t *caption_copy;
+    int changed = 0;
+
+    if (!prepare_subtitle_fixture(previous)) {
+        CHECK(0, "prepare isolated SRT fixture under test output");
+        return;
+    }
+    _putenv("RECOMP_LANGUAGE=en-US");
+    pc_movie_skip_test_reset();
+    reset_page();
+    CHECK(pc_menu_tick("TestPage", 1, &host), "open page under subtitle layer");
+    CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && pixels, "capture uncaptioned page pixels");
+    if (!pixels) { SetCurrentDirectoryA(previous); return; }
+    memcpy(base_copy, pixels, bytes);
+
+    pc_movie_skip_test_time(1000);
+    pc_movie_skip_update(42, PC_MOVIE_SKIP_CUTSCENE, 1);
+    pc_movie_skip_subtitle_target(42, "03_N");
+    pc_movie_skip_test_time(1200);
+    pc_movie_skip_update(42, PC_MOVIE_SKIP_CUTSCENE, 1);
+    CHECK(pc_movie_skip_subtitle(caption, 160) && caption[0] == 'C' && caption[15] == 'N' && caption[16] == 0,
+          "real movie session parses the active SRT cue");
+    changed = 0;
+    CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && changed && pixels &&
+          memcmp(base_copy, pixels, bytes) != 0, "subtitle cue overlays the native page");
+    if (!pixels) { SetCurrentDirectoryA(previous); return; }
+    caption_copy = (uint32_t *)malloc(bytes);
+    if (!caption_copy) { CHECK(0, "allocate subtitle comparison pixels"); SetCurrentDirectoryA(previous); return; }
+    memcpy(caption_copy, pixels, bytes);
+
+    /* The skip hint and caption share a layer: hiding the hint must preserve the caption. */
+    pc_menu_set_movie_skip_prompt(1);
+    changed = 0;
+    CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && changed &&
+          memcmp(caption_copy, pixels, bytes) != 0, "skip hint composes with subtitle");
+    pc_menu_set_movie_skip_prompt(0);
+    changed = 0;
+    CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && changed &&
+          !memcmp(caption_copy, pixels, bytes), "removing hint preserves subtitle over page");
+    free(caption_copy);
+
+    pc_movie_skip_test_time(1600);
+    pc_movie_skip_update(42, PC_MOVIE_SKIP_CUTSCENE, 1);
+    pc_movie_skip_test_time(2000);
+    pc_movie_skip_update(42, PC_MOVIE_SKIP_CUTSCENE, 1);
+    changed = 0;
+    CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && changed && pixels &&
+          !memcmp(base_copy, pixels, bytes), "caption expiry restores the exact underlying page");
+    SetCurrentDirectoryA(previous);
 }
 
 int main(void)
@@ -111,6 +202,8 @@ int main(void)
     CHECK(pc_menu_overlay(w,h,px,py,pw,ph,&pixels,&changed) && changed && !memcmp(before,pixels,(size_t)w*h*4),
           "hiding hint restores exact cached page");
     CHECK(pc_menu_overlay_dirty(box) && box[2] == w && box[3] == h, "page restoration replaces composed upload");
+    reset_page();
+    test_subtitle_overlay(w,h,px,py,pw,ph,before,(size_t)w*h*4);
     free(before); reset_page();
     printf("%s: %u movie overlay checks, %u failed\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;
