@@ -20,10 +20,24 @@ The workflow first compiles the production renderer, video and input libraries, 
 - The actual embedded pixel shaders on D3D11 WARP: all 16 enabled method/quality combinations,
   unoccluded flat/sky depth, an occluded corner, finite float masks, R8 masks, bilateral blur,
   alpha-preserving scene darkening, distinct kernels, quality differences and camera sensitivity.
-  Existing DOF, FXAA, sharpening and SSAA shader entry points also compile.
+  All 16 method/quality combinations also preserve unoccluded tilted planes at four depths,
+  including viewport boundaries. Existing DOF, FXAA, sharpening and SSAA shader entry points also compile. The actual 1x1
+  autofocus and CoC passes additionally verify that minority foreground silhouettes do not
+  pull focus from the background, deliberate foreground subjects acquire focus, invalid depth
+  and history stay finite, and sky/temporal smoothing retain their intended behavior.
 - The actual launcher model and controls: all choices, file/JSON persistence, legacy and invalid
   inputs, culture independence, in-game editability, English labels and saved-choice reload.
+  Language switches preserve edited numeric and text settings in both the UI and saved JSON.
+  Synthetic language banks cover first-run English preservation and Portuguese/English switching.
 - The authored camera hook and guard regressions in `camera/`.
+- Focus timing across 30/60 Hz and interrupted scenes, alongside AO draw-order checks.
+- The extracted production autofocus coordinator across missing, invalid or incompatible
+  depth, disabled DoF and unavailable resources: skipped observations retain their original
+  timestamp so long interruptions reacquire focus, while short gaps still smooth normally.
+- The extracted production AO draw trigger/coordinator against synthetic surfaces: an early
+  blended draw with absent or incompatible depth does not consume the frame's AO pass; later
+  valid depth retries exactly once. Invalid resources/camera and completed-pass deduplication
+  are checked without running the game.
 
 WARP uses synthetic depth and scene textures; it does not execute the complete guest game or
 prove HUD timing in gameplay. Camera/frame queue behavior and final scene appearance still need

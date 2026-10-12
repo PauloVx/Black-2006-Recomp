@@ -205,29 +205,38 @@ index 04c6b06..1d013fe 100644
          │             │           │
          └──────┬──────┘───────────┘
 diff --git a/src/apu/apu.h b/src/apu/apu.h
-index f7b9f8f..06754f2 100644
+index f7b9f8f..79b537b 100644
 --- a/src/apu/apu.h
 +++ b/src/apu/apu.h
 @@ -6,6 +6,7 @@
  #pragma once
- 
+
  #include <stdint.h>
 +#include <stddef.h>
- 
+
  #ifdef __cplusplus
  extern "C" {
-@@ -18,9 +19,30 @@ typedef struct MCPXAPUState MCPXAPUState;
+@@ -18,9 +19,39 @@ typedef struct MCPXAPUState MCPXAPUState;
   * Returns the APU state, or NULL on failure. */
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
- 
+
 +/* Initialize with the actual readable physical backing length. DSP bootstrap
 + * bounds every SGE and source-page read against this length and the decoded
 + * APU aperture. The original initializer retains its 64MB contract. */
 +MCPXAPUState *mcpx_apu_init_standalone_sized(uint8_t *ram_ptr, size_t ram_size);
 +
++/* Opt in to a title's custom stereo DSP input pair for dry fallback output.
++ * Bins must be distinct and in 10..31. Returns 1 on success, or 0 for invalid
++ * arguments without changing the existing pair. New instances have no pair.
++ * Native EP PCM takes precedence; RECOMP_APU_MIXDOWN_ALL=0 also excludes this
++ * pair. The caller must keep d alive while setting its pair. */
++int mcpx_apu_set_stereo_fallback_pair(MCPXAPUState *d,
++                                      unsigned int left_bin,
++                                      unsigned int right_bin);
++
  /* Shut down and free the APU state. */
  void mcpx_apu_shutdown(MCPXAPUState *d);
- 
+
 +/* Where the APU's interrupt goes. Called with 1 while an enabled interrupt is
 + * pending (NV_PAPU_ISTS GINTSTS) and 0 once it is not -- on hardware, the PCI
 + * INTA line. The runtime connects it to the kernel's vector for the APU
@@ -246,9 +255,9 @@ index f7b9f8f..06754f2 100644
 +
  /* MMIO read from APU register space (addr is offset from 0xFE800000). */
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
- 
+
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..687b74a 100644
+index 459be77..f249805 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -393,21 +402,48 @@ index 459be77..687b74a 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +331,97 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +331,139 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
 -    if ((d->ep_frame_div + 1) % 8) {
 -        return;
 +    if ((d->ep_frame_div + 1) % 8) return;
-+    d->monitor.ep_fifo_frame_valid = false;
-+
-+    /* EP FIFO writes can be split across DMA descriptors. Consume only a
-+     * complete block at the output boundary and discard any partial tail. */
-+    if (d->ep.dsp) {
-+        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
-+        d->ep.dsp->ep_fifo_frame_ready = false;
++    if (d->trace_output) {
++        int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
++        if (!d->output_started_us) {
++            d->output_started_us = now;
++            fprintf(stderr, "[AUDIO] start-us=%lld rate=48000 block-samples=%d\n",
++                    (long long)now, MIXER_FRAME_SAMPLES);
++        }
++        if (++d->output_blocks % 938 == 0) {
++            Xa2OutputStats stats;
++            xa2_get_output_stats(&stats);
++            fprintf(stderr, "[AUDIO] elapsed-us=%lld produced-samples=%llu native-ticks=%llu dry-ticks=%llu clipped=%llu source-nonzero=%llu silent-blocks=%llu muted=%d submitted=%llu played=%llu queued=%u queue-full=%llu submit-failed=%llu start-failed=%llu stop-failed=%llu empty-queue=%llu reprimes=%llu critical-errors=%u critical-status=%08X recovery-attempts=%llu recoveries=%llu recovery-failed=%llu discarded-samples=%llu rebases=%llu\n",
++                    (long long)(now - d->output_started_us),
++                    (unsigned long long)(d->output_blocks * MIXER_FRAME_SAMPLES),
++                    (unsigned long long)d->output_native_ticks,
++                    (unsigned long long)d->output_dry_ticks,
++                    (unsigned long long)d->output_clipped_samples,
++                    (unsigned long long)d->output_nonzero_samples,
++                    (unsigned long long)d->output_silent_blocks, g_audio_muted,
++                    (unsigned long long)stats.submitted_samples,
++                    (unsigned long long)stats.played_samples, stats.queued_buffers,
++                    (unsigned long long)stats.queue_full,
++                    (unsigned long long)stats.submit_failed,
++                    (unsigned long long)stats.start_failed,
++                    (unsigned long long)stats.stop_failed,
++                    (unsigned long long)stats.empty_queue,
++                    (unsigned long long)stats.reprimes,
++                    stats.critical_errors, (unsigned)stats.critical_error_status,
++                    (unsigned long long)stats.recovery_attempts,
++                    (unsigned long long)stats.recoveries,
++                    (unsigned long long)stats.recovery_failed,
++                    (unsigned long long)stats.discarded_samples,
++                    (unsigned long long)d->output_rebases);
++        }
      }
++    d->monitor.ep_fifo_frame_valid = false;
  
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
@@ -428,6 +464,21 @@ index 459be77..687b74a 100644
 -                    g_test_tone.phase += g_test_tone.phase_inc;
 -                    if (g_test_tone.phase >= 2.0 * M_PI)
 -                        g_test_tone.phase -= 2.0 * M_PI;
+-                }
+-            }
+-
+-            if (!g_audio_muted)
+-                mixer_render(d->monitor.frame_buf, chunk);
++    /* EP FIFO writes can be split across DMA descriptors. Consume only a
++     * complete block at the output boundary and discard any partial tail. */
++    if (d->ep.dsp) {
++        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
++        d->ep.dsp->ep_fifo_frame_ready = false;
++    }
+ 
+-            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
+-            out_offset += chunk;
+-            remaining -= chunk;
 +    /* The DSP has filled eight chronological 32-sample slices. Keep that
 +     * native 256-sample block, and advance software voices exactly once at
 +     * 48 kHz. Rendering an entire host packet here both discarded the EP
@@ -439,49 +490,11 @@ index 459be77..687b74a 100644
 +            d->monitor.frame_buf[i][1] = sample;
 +            g_test_tone.phase += g_test_tone.phase_inc;
 +            if (g_test_tone.phase >= 2.0 * M_PI) g_test_tone.phase -= 2.0 * M_PI;
-+        }
-+    }
-+    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
-+    if (g_audio_muted) {
-+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-+        /* Also silence earlier, not-yet-submitted slices of this packet. */
-+        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
-+    }
-+
-+    if (d->trace_dsp_state) {
-+        uint64_t block = ++d->dsp_trace_audio_blocks;
-+        if (mcpx_dsp_trace_audio_sample_due(block)) {
-+            unsigned int nonzero = 0, peak = 0;
-+            uint64_t square_sum = 0;
-+            for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i) {
-+                for (int channel = 0; channel < 2; ++channel) {
-+                    int sample = d->monitor.frame_buf[i][channel];
-+                    unsigned int magnitude = (unsigned int)(sample < 0 ? -sample : sample);
-+                    if (magnitude) nonzero++;
-+                    if (magnitude > peak) peak = magnitude;
-+                    square_sum += (uint64_t)magnitude * magnitude;
-                 }
-             }
--
--            if (!g_audio_muted)
--                mixer_render(d->monitor.frame_buf, chunk);
--
--            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
--            out_offset += chunk;
--            remaining -= chunk;
-+            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
-+                    (unsigned long long)block, nonzero,
-+                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
-+                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
-+                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
-+                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
-+                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
-+                    (unsigned int)d->monitor.point);
          }
 -
 -        xa2_submit_samples((const int16_t *)xa2_tmp, buf_size);
 -        return;
--    }
+     }
 -
 -    if (!g_waveout.initialized) return;
 -
@@ -495,6 +508,19 @@ index 459be77..687b74a 100644
 -        Sleep(1);
 -        qemu_mutex_lock(&d->lock);
 -        if (++wait_loops > 50) break;
++    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
++    if (g_audio_muted) {
++        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
++        /* Also silence earlier, not-yet-submitted slices of this packet. */
++        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
++    }
++    if (d->trace_output) {
++        unsigned nonzero = 0;
++        for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i)
++            for (int channel = 0; channel < 2; ++channel)
++                nonzero += d->monitor.frame_buf[i][channel] != 0;
++        d->output_nonzero_samples += nonzero;
++        if (!nonzero) ++d->output_silent_blocks;
      }
  
 -    /* Fill the large waveOut buffer by rendering multiple 256-sample frames */
@@ -504,7 +530,31 @@ index 459be77..687b74a 100644
 -
 -    while (remaining > 0) {
 -        int chunk = (remaining < MIXER_FRAME_SAMPLES) ? remaining : MIXER_FRAME_SAMPLES;
--
++    if (d->trace_dsp_state) {
++        uint64_t block = ++d->dsp_trace_audio_blocks;
++        if (mcpx_dsp_trace_audio_sample_due(block)) {
++            unsigned int nonzero = 0, peak = 0;
++            uint64_t square_sum = 0;
++            for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i) {
++                for (int channel = 0; channel < 2; ++channel) {
++                    int sample = d->monitor.frame_buf[i][channel];
++                    unsigned int magnitude = (unsigned int)(sample < 0 ? -sample : sample);
++                    if (magnitude) nonzero++;
++                    if (magnitude > peak) peak = magnitude;
++                    square_sum += (uint64_t)magnitude * magnitude;
++                }
++            }
++            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
++                    (unsigned long long)block, nonzero,
++                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
++                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
++                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
++                    (unsigned int)d->monitor.point);
++        }
++    }
+ 
 +    int packet_samples = xa2_is_active() ? xa2_get_buffer_size() : WAVEOUT_BUF_SAMPLES;
 +    if ((!xa2_is_active() && !g_waveout.initialized) ||
 +        packet_samples < MIXER_FRAME_SAMPLES || packet_samples > WAVEOUT_BUF_SAMPLES ||
@@ -569,7 +619,31 @@ index 459be77..687b74a 100644
  }
  
  /* ============================================================
-@@ -432,6 +494,21 @@ static void se_frame(MCPXAPUState *d)
+@@ -374,10 +478,9 @@ static void throttle(MCPXAPUState *d)
+ 
+     int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+ 
+-    if (d->next_frame_time_us == 0 ||
+-        now_us - d->next_frame_time_us > EP_FRAME_US) {
+-        d->next_frame_time_us = now_us;
+-    }
++    if (mcpx_apu_rebase_deadline(&d->next_frame_time_us,
++                               &d->next_frame_time_fraction, now_us))
++        ++d->output_rebases;
+ 
+     while (!d->pause_requested) {
+         now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+@@ -388,7 +491,8 @@ static void throttle(MCPXAPUState *d)
+             break;
+         }
+     }
+-    d->next_frame_time_us += EP_FRAME_US;
++    mcpx_apu_advance_deadline(&d->next_frame_time_us,
++                            &d->next_frame_time_fraction);
+ 
+     d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
+ }
+@@ -432,11 +536,34 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
  
@@ -591,7 +665,20 @@ index 459be77..687b74a 100644
  static void *mcpx_apu_frame_thread(void *arg)
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
-@@ -446,6 +523,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+     qemu_mutex_lock(&d->lock);
+ 
++    /* The submission thread owns the output graph and its COM apartment.
++     * Startup waits for this thread's idle signal after initialization. */
++    Error *local_err = NULL;
++    mcpx_apu_monitor_init(d, &local_err);
++    if (local_err) {
++        warn_reportf_err(local_err, "mcpx_apu_monitor_init failed: ");
++    }
++
+     while (!qatomic_read(&d->exiting)) {
+         if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count) {
+             d->is_idle = true;
+@@ -446,6 +573,25 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
  
@@ -617,7 +704,7 @@ index 459be77..687b74a 100644
          /* Always run the audio output loop — the software mixer and test tone
           * need continuous frame delivery regardless of APU register state.
           * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,8 +556,16 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -460,14 +606,23 @@ static void *mcpx_apu_frame_thread(void *arg)
  
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
@@ -634,7 +721,14 @@ index 459be77..687b74a 100644
              /* Lightweight: just monitor frame (test tone + software mixer) */
              mcpx_apu_monitor_frame(d);
              d->ep_frame_div++;
-@@ -499,6 +603,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+         }
+     }
+ 
++    mcpx_apu_monitor_finalize(d);
+     qemu_mutex_unlock(&d->lock);
+     return NULL;
+ }
+@@ -499,6 +654,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -642,7 +736,7 @@ index 459be77..687b74a 100644
  
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +621,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +672,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
  
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -654,7 +748,7 @@ index 459be77..687b74a 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +636,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +687,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -662,18 +756,37 @@ index 459be77..687b74a 100644
 +    /* Preserve the hook's presence semantics, including "0" and empty values.
 +     * Cache before publishing the initialized APU to the hook or frame thread. */
 +    d->trace_mmio = getenv("RECOMP_APU_TRACE") != NULL;
++    {
++        const char *trace = getenv("RECOMP_APU_TRACE_OUTPUT");
++        d->trace_output = trace && strcmp(trace, "1") == 0;
++    }
  
      d->set_irq = false;
      d->exiting = false;
-@@ -581,6 +695,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -546,13 +715,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+     /* Init software mixer for DirectSound bridge */
+     mixer_init();
+ 
+-    /* Init monitor (waveOut output) */
+-    Error *local_err = NULL;
+-    mcpx_apu_monitor_init(d, &local_err);
+-    if (local_err) {
+-        warn_reportf_err(local_err, "mcpx_apu_monitor_init failed: ");
+-    }
+-
+     /* Start background frame thread */
+     qemu_thread_create(&d->apu_thread, "mcpx.apu_thread",
+                        mcpx_apu_frame_thread, d, QEMU_THREAD_JOINABLE);
+@@ -581,7 +743,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
  
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
+-    mcpx_apu_monitor_finalize(d);
 +    mcpx_apu_dsp_finalize(d);
-     mcpx_apu_monitor_finalize(d);
  
      free(d);
-@@ -614,8 +729,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+     g_state = NULL;
+@@ -614,8 +776,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -687,7 +800,7 @@ index 459be77..687b74a 100644
  }
  
  /* ============================================================
-@@ -630,6 +749,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +796,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -1574,7 +1687,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..188e8e8 100644
+index de14f26..5d07f0f 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -1597,15 +1710,15 @@ index de14f26..188e8e8 100644
   * Copyright (c) 2012 espes
   * Copyright (c) 2019-2025 Matt Borgerson
 @@ -24,10 +13,548 @@
- 
+
  #include "apu_state.h"
  #include "fpconv.h"
 +#include "apu_dma_regs.h"
 +#include "apu_dsp_trace.h"
- 
+
  #include <stdlib.h>
  #include <string.h>
- 
+
 +#define DSP_FRAME_CYCLES 88875u
 +#define DSP_START_FRAME_INTERRUPT (1u << 1)
 +#define DSP_DMA_EOL_INTERRUPT (1u << 7)
@@ -2145,7 +2258,55 @@ index de14f26..188e8e8 100644
  /* ── DSP command doorbell acknowledgement ────────────────────────────────
   *
   * DirectSound does not stop at creating the device. It hands the audio DSP a
-@@ -103,7 +630,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -79,11 +606,9 @@ static void dsp_ack_init(void)
+                 s_dsp_ack_count, s_dsp_ack[0]);
+ }
+
+-/* SUM EVERY MIXBIN THE GUEST ROUTED TO, NOT JUST THE FIRST TWO.
+- *
+- * Default ON. RECOMP_APU_MIXDOWN_ALL=0 restores the previous two-bin read,
+- * because this changes audible output for every title and an escape hatch
+- * costs one branch. */
++/* Include the dry speaker and 3D submixes when native EP output is absent.
++ * RECOMP_APU_MIXDOWN_ALL=0 retains the diagnostic front-only fallback. The
++ * historical variable name does not make effect sends into speakers. */
+ static int mcpx_apu_mixdown_all(void)
+ {
+     static int on = -1;
+@@ -94,6 +619,32 @@ static int mcpx_apu_mixdown_all(void)
+     return on;
+ }
+
++int mcpx_apu_set_stereo_fallback_pair(MCPXAPUState *d,
++                                      unsigned int left_bin,
++                                      unsigned int right_bin)
++{
++    if (!d || left_bin < 10 || left_bin >= NUM_MIXBINS ||
++        right_bin < 10 || right_bin >= NUM_MIXBINS || left_bin == right_bin)
++        return 0;
++    uint32_t pair = (left_bin + 1u) | ((right_bin + 1u) << 8);
++#ifdef _MSC_VER
++    _InterlockedExchange((long volatile *)&d->stereo_fallback_pair, (long)pair);
++#else
++    __atomic_store_n(&d->stereo_fallback_pair, pair, __ATOMIC_RELAXED);
++#endif
++    return 1;
++}
++
++static uint32_t stereo_fallback_pair_read(MCPXAPUState *d)
++{
++#ifdef _MSC_VER
++    return (uint32_t)_InterlockedCompareExchange(
++        (long volatile *)&d->stereo_fallback_pair, 0, 0);
++#else
++    return __atomic_load_n(&d->stereo_fallback_pair, __ATOMIC_RELAXED);
++#endif
++}
++
+ static void dsp_ack_frame(MCPXAPUState *d)
+ {
+     int i;
+@@ -103,7 +654,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -2158,10 +2319,10 @@ index de14f26..188e8e8 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +645,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +669,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
- 
+
 +extern void xbox_SetAckTick(void (*fn)(void));
 +static MCPXAPUState *s_ack_state;
 +
@@ -2188,7 +2349,7 @@ index de14f26..188e8e8 100644
 +    /* GP and EP have independent registers, memories, and DSP engines. */
      d->gp.dsp = (DSPState *)calloc(1, sizeof(DSPState));
      d->ep.dsp = (DSPState *)calloc(1, sizeof(DSPState));
- 
+
      if (d->gp.dsp) d->gp.dsp->is_gp = true;
      if (d->ep.dsp) d->ep.dsp->is_gp = false;
 +    if (d->gp.dsp) {
@@ -2217,10 +2378,10 @@ index de14f26..188e8e8 100644
 +        d->ep.dsp->dma.fifo_rw = dsp_dma_fifo_rw;
 +        d->ep.dsp->dma.is_gp = false;
 +    }
- 
+
      d->gp.realtime = false;
      d->ep.realtime = false;
- 
+
 -    fprintf(stderr, "[APU] DSP GP/EP initialized (STUBBED - passthrough mode)\n");
 +    fprintf(stderr, "[APU] DSP GP/EP initialized (GP=%s EP=%s; "
 +                    "direct-mixdown output fallback active)\n",
@@ -2255,9 +2416,9 @@ index de14f26..188e8e8 100644
 +    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
 +    d->monitor.ep_fifo_frame_valid = false;
  }
- 
+
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,30 +745,44 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,66 +769,79 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2277,9 +2438,11 @@ index de14f26..188e8e8 100644
 +    /* Run GP effects and EP encoding for this 32-sample tick. A complete
 +     * native EP PCM block owns the eight-tick monitor epoch; otherwise
 +     * direct mixdown supplies each tick's fallback stereo slice. */
- 
+
      int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
- 
++    /* Both channels use one atomic configuration snapshot for this tick. */
++    uint32_t fallback_pair = stereo_fallback_pair_read(d);
++
 +    if (mixbins && d->gp.dsp && d->gp.dsp->engine_ready &&
 +        (d->gp.regs[NV_PAPU_GPRST] &
 +         (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
@@ -2290,7 +2453,7 @@ index de14f26..188e8e8 100644
 +                    float_to_24b(mixbins[b][i]);
 +            }
 +        }
-+
+
 +        dsp_run_frame(d->gp.dsp, true);
 +        g_dbg.gp.cycles = d->gp.dsp->core.cycle_count;
 +    }
@@ -2305,24 +2468,86 @@ index de14f26..188e8e8 100644
 +    /* Retain the compatibility handshake for command behavior beyond the
 +     * modeled DSP execution and DMA path. */
      dsp_ack_frame(d);
- 
+
 -    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
++    if (d->trace_output && d->monitor.ep_fifo_frame_valid)
++        ++d->output_native_ticks;
 +    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
 +        !d->monitor.ep_fifo_frame_valid) {
++        if (d->trace_output) ++d->output_dry_ticks;
++        bool wide = mcpx_apu_mixdown_all();
          for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
-             /* Bins 2..31 used to be computed and then dropped on the floor.
+-            /* Bins 2..31 used to be computed and then dropped on the floor.
 -             * On hardware the GP and EP mix the submixes down; here they are
 -             * stubs, so thirty of thirty-two bins were discarded every frame
 -             * with no counter anywhere to say so.
-+             * On hardware the GP and EP mix the submixes down. The fallback
-+             * includes all bins when native output is unavailable.
+-             *
+-             * Measured on Jet Set Radio Future, one 200 s gameplay run, with
+-             * a positive control moving beside it:
++            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
++             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
++             * and fold the two non-directional channels equally into stereo.
               *
-              * Measured on Jet Set Radio Future, one 200 s gameplay run, with
-              * a positive control moving beside it:
-@@ -213,6 +831,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+-             *     [APU-BIN] 2D heard=557466 lost=0
+-             *               3D heard=0      lost=377768
+-             *               lost by bin: 6,7,8,9,10
+-             *
+-             * 557,466 music voice-frames heard and none lost; 377,768 effect
+-             * voice-frames produced correctly and thrown away. The title's 3D
+-             * positional voices -- its sound effects -- are routed to bins 6
+-             * to 10 by the guest's own V0BIN..V3BIN, and music on 2D voices
+-             * lands in bins 0 and 1, which is why the music was always
+-             * audible and no effect ever was. Every instrument upstream of
+-             * this line read healthy.
+-             *
+-             * Gating the HRTF submix override was tried first and did not fix
+-             * it, so the defect is the width of this mixdown and nothing else.
+-             *
+-             * Even bins left, odd bins right, which preserves the stereo
+-             * pairing the guest set up -- bins 6/7 and 8/9 arrive with matched
+-             * counts. This is not what a real EP does; it is the cheapest
+-             * mixdown that stops discarding audio. */
++             * 10 is the I3DL2 reverb send, 11..30 are effect sends and 31 is
++             * a submix input. They are inputs to DSP processing, not extra
++             * speakers: summing them by parity made a right-hand source's
++             * reverb send play dry on the left, duplicated voices and caused
++             * premature clipping. A title can explicitly designate a custom
++             * stereo input pair for its dry fallback. Other DSP inputs stay
++             * excluded, and native EP PCM remains authoritative above. */
+             float left, right;
+-            if (mcpx_apu_mixdown_all()) {
+-                left = 0.0f;
+-                right = 0.0f;
+-                for (int b = 0; b < NUM_MIXBINS; ++b) {
+-                    if (b & 1) right += mixbins[b][i];
+-                    else       left  += mixbins[b][i];
++            if (wide) {
++                const float center_gain = 0.7071067811865476f;
++                float center = center_gain * (mixbins[2][i] + mixbins[3][i]);
++                left = mixbins[0][i] + mixbins[4][i] +
++                       mixbins[6][i] + mixbins[8][i] + center;
++                right = mixbins[1][i] + mixbins[5][i] +
++                        mixbins[7][i] + mixbins[9][i] + center;
++                if (fallback_pair) {
++                    left += mixbins[(fallback_pair & 0xffu) - 1u][i];
++                    right += mixbins[((fallback_pair >> 8) & 0xffu) - 1u][i];
+                 }
+             } else {
+                 left = mixbins[0][i];
+                 right = mixbins[1][i];
+             }
+             /* Clamp to [-1, 1] range */
++            if (d->trace_output) {
++                if (left > 1.0f || left < -1.0f) ++d->output_clipped_samples;
++                if (right > 1.0f || right < -1.0f) ++d->output_clipped_samples;
++            }
+             if (left > 1.0f) left = 1.0f;
+             if (left < -1.0f) left = -1.0f;
+             if (right > 1.0f) right = 1.0f;
+@@ -213,6 +854,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
- 
+
 -    g_dbg.gp.cycles = 0;
 -    g_dbg.ep.cycles = 0;
  }
@@ -2640,10 +2865,27 @@ index 2742fa2..8756189 100644
          if (n++ < 400) {
              /* The value as well as the offset: finding which register carries
 diff --git a/src/apu/apu_shim.h b/src/apu/apu_shim.h
-index dd6bec1..5718709 100644
+index dd6bec1..23502c4 100644
 --- a/src/apu/apu_shim.h
 +++ b/src/apu/apu_shim.h
-@@ -93,34 +93,41 @@ static inline void qemu_thread_join(QemuThread *t) {
+@@ -21,6 +21,7 @@
+ #include "../nv2a/qemu_shim.h"
+ 
+ #include <math.h>
++#include "apu_timing.h"
+ 
+ /* ============================================================
+  * Additional atomic ops needed by APU code
+@@ -48,7 +49,7 @@ static inline int64_t qemu_clock_get_us(int type) {
+     LARGE_INTEGER freq, count;
+     QueryPerformanceFrequency(&freq);
+     QueryPerformanceCounter(&count);
+-    return (int64_t)(count.QuadPart * 1000000LL / freq.QuadPart);
++    return mcpx_apu_clock_microseconds(count.QuadPart, freq.QuadPart);
+ }
+ #endif
+ 
+@@ -93,34 +94,41 @@ static inline void qemu_thread_join(QemuThread *t) {
   * We access Xbox RAM via a global pointer, same as NV2A.
   * ============================================================ */
  
@@ -2693,7 +2935,7 @@ index dd6bec1..5718709 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..9ea3a92 100644
+index 651b334..44226dd 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -2702,13 +2944,13 @@ index 651b334..9ea3a92 100644
  #include "apu_debug.h"
 +#include "apu_dsp_engine.h"
 +#include "apu_dma.h"
- 
+
  /* ============================================================
   * DSP CPU registers
 @@ -105,36 +107,28 @@ typedef struct dsp_core_s {
   * DSP DMA State (from dsp_dma.h)
   * ============================================================ */
- 
+
 -typedef void (*dsp_scratch_rw_func)(
 -    void *opaque, uint8_t *ptr, uint32_t addr, size_t len, bool dir);
 -typedef void (*dsp_fifo_rw_func)(
@@ -2733,7 +2975,7 @@ index 651b334..9ea3a92 100644
  /* ============================================================
   * DSP State (from dsp_state.h)
   * ============================================================ */
- 
+
  typedef struct DSPState {
 +    struct MCPXAPUState *apu;
      dsp_core_t core;
@@ -2754,7 +2996,7 @@ index 651b334..9ea3a92 100644
 +    bool ep_fifo_frame_ready;
      bool is_gp;
  } DSPState;
- 
+
 @@ -373,6 +367,14 @@ typedef struct MCPXAPUVoiceFilter {
      uint16_t voice;
      float resample_buf[NUM_SAMPLES_PER_FRAME * 2];
@@ -2770,22 +3012,37 @@ index 651b334..9ea3a92 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +469,14 @@ struct MCPXAPUState {
- 
+@@ -467,6 +469,21 @@ struct MCPXAPUState {
+
      MemoryRegion *ram;
      uint8_t *ram_ptr;
 +    size_t ram_size; /* Actual readable physical backing; not the VA aperture. */
 +    bool trace_mmio; /* Immutable per-instance presence of RECOMP_APU_TRACE. */
 +    bool trace_dsp_boot; /* Opt-in, initialized before the frame thread starts. */
 +    bool trace_dsp_state; /* Opt-in frame-boundary DSP state samples. */
++    bool trace_output; /* Opt-in loss/clipping/timing counters, device-thread owned. */
++    /* Atomic pair of (bin + 1) bytes, left then right; zero disables it. */
++    uint32_t stereo_fallback_pair;
++    uint64_t output_native_ticks, output_dry_ticks, output_clipped_samples;
++    uint64_t output_blocks, output_rebases;
++    uint64_t output_nonzero_samples, output_silent_blocks;
++    int64_t output_started_us;
 +    unsigned int dsp_boot_trace_events[2]; /* Protected by the device mutex. */
 +    uint64_t dsp_trace_audio_blocks, dsp_trace_ep_fifo_writes;
 +    uint64_t dsp_trace_ep_fifo_bytes;
 +    uint64_t dsp_trace_ep_fifo_captured;
      MemoryRegion mmio;
- 
+
      MCPXAPUVPState vp;
-@@ -498,6 +508,7 @@ struct MCPXAPUState {
+@@ -480,6 +497,7 @@ struct MCPXAPUState {
+     int frame_count;
+     int64_t frame_count_time_ms;
+     int64_t next_frame_time_us;
++    unsigned next_frame_time_fraction;
+
+     struct {
+         struct {
+@@ -498,6 +516,7 @@ struct MCPXAPUState {
      struct {
          McpxApuDebugMonitorPoint point;
          int16_t frame_buf[256][2];
@@ -2793,10 +3050,10 @@ index 651b334..9ea3a92 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +524,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -513,11 +532,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
- 
+
 -/* DSP functions (stubbed) */
 +/* DSP functions */
  void mcpx_apu_dsp_init(MCPXAPUState *d);
@@ -2804,7 +3061,7 @@ index 651b334..9ea3a92 100644
 +void mcpx_apu_dsp_reset(MCPXAPUState *d);
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d);
  void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
- 
+
 +/* Output consumes one completed eight-tick EP epoch. */
 +void mcpx_apu_monitor_frame(MCPXAPUState *d);
 +
@@ -3338,10 +3595,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..4ceb323
+index 0000000..11631b9
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1461 @@
+@@ -0,0 +1,1508 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -3354,6 +3611,7 @@ index 0000000..4ceb323
 +#include "pc_input.h"
 +
 +#include <ctype.h>
++#include <errno.h>
 +#include <math.h>
 +#include <stdarg.h>
 +#include <stdio.h>
@@ -3598,6 +3856,8 @@ index 0000000..4ceb323
 +static ScriptEvent s_script[SCRIPT_MAX];
 +static int s_script_n, s_script_next;
 +static uint64_t s_script_t0;
++/* Explicit laboratory isolation; a malformed or absent script cannot enable it. */
++static int s_script_background;
 +
 +static uint64_t now_ms(void)
 +{
@@ -3927,7 +4187,7 @@ index 0000000..4ceb323
 +static int gameplay_hold_gap_context(unsigned source, uint64_t now)
 +{
 +    const uint64_t tick = (uint64_t)s_gameplay_tick;
-+    if (!s_frame_authority || !s_focused || s_focus_pause_guard || !tick ||
++    if (!s_frame_authority || (!s_focused && !s_script_background) || s_focus_pause_guard || !tick ||
 +        now < tick || now - tick > PC_GAMEPLAY_MS || movie_active() ||
 +        (s_gameplay_blocked_query && s_gameplay_blocked_query())) return 0;
 +    return gameplay_hold_source(source);
@@ -4045,6 +4305,7 @@ index 0000000..4ceb323
 +void pc_input_key_event(unsigned scancode, int extended, int down, int repeat)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused) return;
 +    if (scancode == 0 || scancode > 0xFF) return;
 +    {
@@ -4087,6 +4348,7 @@ index 0000000..4ceb323
 +{
 +    uint64_t now;
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused && down) return;
 +    now = now_ms();
 +    observe_button_device(button, down, now);
@@ -4110,6 +4372,7 @@ index 0000000..4ceb323
 +void pc_input_wheel_event(int delta)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (s_focused) {
 +        observe_wheel_device(delta);
 +        if (filter_wheel(delta)) return;
@@ -4127,6 +4390,7 @@ index 0000000..4ceb323
 +void pc_input_mouse_motion(long dx, long dy)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused || !s_captured || !kbm_enabled()) return;
 +    motion_internal(dx, dy);
 +}
@@ -4137,6 +4401,13 @@ index 0000000..4ceb323
 +    pc_input_init();
 +    focused = focused ? 1 : 0;
 +    if (focused == s_focused) return;   /* minimise and WM_KILLFOCUS can describe the same loss */
++    if (s_script_background) {
++        /* The script owns virtual input. Record real window focus for the
++         * presenter, without cancelling script/filter state or injecting Start. */
++        InterlockedExchange(&s_focused, focused);
++        trace("laboratory window focus %s (script continues)", focused ? "gained" : "lost");
++        return;
++    }
 +    {
 +        int i;
 +        for (i = 0; i < 3; ++i) {
@@ -4169,13 +4440,13 @@ index 0000000..4ceb323
 +int pc_input_capture_wanted(void)
 +{
 +    pc_input_init();
-+    return s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
++    return !s_script_background && s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
 +}
 +
 +int pc_input_cursor_hidden_wanted(void)
 +{
 +    pc_input_init();
-+    return s_captured && s_focused && kbm_enabled() && !movie_active();
++    return !s_script_background && s_captured && s_focused && kbm_enabled() && !movie_active();
 +}
 +
 +void pc_input_capture_changed(int captured)
@@ -4185,6 +4456,7 @@ index 0000000..4ceb323
 +    captured = captured ? 1 : 0;
 +    if ((LONG)captured == s_captured) return;
 +    InterlockedExchange(&s_captured, captured);
++    if (s_script_background) return; /* physical pointer changes cannot cancel scripted look/holds */
 +    /* Counts gathered before capture are stale. Preserve only holds tied to
 +     * recent gameplay; a button already down in a menu remains a swallowed click. */
 +    InterlockedExchange(&s_dx, 0);
@@ -4678,53 +4950,84 @@ index 0000000..4ceb323
 + *   wheel:+1 | wheel:-1
 + *   focus:0 | focus:1
 + * e.g. "3000:down:W,5000:up:W,6000:move:400:0,7000:tap:Mouse1".
++ * RECOMP_INPUT_SCRIPT_BACKGROUND=1 additionally isolates a fully valid nonempty
++ * script from physical keyboard/mouse/focus and never requests pointer capture.
++ * Ordinary player input and default scripted focus testing retain their behavior.
 + */
 +static void load_script(void)
 +{
 +    const char *e = getenv("RECOMP_INPUT_SCRIPT");
++    const char *background = getenv("RECOMP_INPUT_SCRIPT_BACKGROUND");
++    int valid = 1;
 +    s_script_n = s_script_next = 0;
 +    s_script_t0 = 0;
++    s_script_background = 0;
 +    while (e && *e && s_script_n < SCRIPT_MAX) {
 +        ScriptEvent *ev = &s_script[s_script_n];
 +        char *end;
 +        char verb[16], arg[32];
 +        size_t n;
 +        memset(ev, 0, sizeof(*ev));
++        errno = 0;
 +        ev->at_ms = strtoull(e, &end, 10);
-+        if (*end != ':') break;
++        if (!isdigit((unsigned char)*e) || end == e || errno == ERANGE) valid = 0;
++        if (s_script_n && ev->at_ms < s_script[s_script_n - 1].at_ms) valid = 0;
++        if (*end != ':') { valid = 0; break; }
 +        e = end + 1;
 +        n = strcspn(e, ":,");
-+        if (n == 0 || n >= sizeof(verb)) break;
++        if (n == 0 || n >= sizeof(verb)) { valid = 0; break; }
 +        memcpy(verb, e, n); verb[n] = 0;
 +        e += n;
 +        arg[0] = 0;
 +        if (*e == ':') {
 +            e++;
 +            n = strcspn(e, ",");
-+            if (n >= sizeof(arg)) break;
++            if (n >= sizeof(arg)) { valid = 0; break; }
 +            memcpy(arg, e, n); arg[n] = 0;
 +            e += n;
 +        }
 +        if (!_stricmp(verb, "down") || !_stricmp(verb, "up") || !_stricmp(verb, "tap")) {
 +            const struct KeyName *k = key_by_name(arg);
 +            unsigned id = k ? k->id : (!_stricmp(arg, "Esc") || !_stricmp(arg, "Escape")) ? KEY_ESC : 0;
-+            if (!id) { fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown key '%s'\n", arg); break; }
++            if (!id) { fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown key '%s'\n", arg); valid = 0; break; }
 +            ev->verb = (char)tolower((unsigned char)verb[0]); ev->arg = id;
 +        } else if (!_stricmp(verb, "move")) {
++            char *check_end;
++            errno = 0;
++            (void)strtol(arg, &check_end, 10);
++            if (check_end == arg || errno == ERANGE) valid = 0;
++            if (*check_end == ':') {
++                const char *second = check_end + 1;
++                errno = 0;
++                (void)strtol(second, &check_end, 10);
++                if (check_end == second || errno == ERANGE) valid = 0;
++            }
++            if (*check_end) valid = 0;
 +            ev->verb = 'm'; ev->a = strtol(arg, &end, 10);
 +            ev->b = *end == ':' ? strtol(end + 1, NULL, 10) : 0;
 +        } else if (!_stricmp(verb, "wheel")) {
++            errno = 0;
++            (void)strtol(arg, &end, 10);
++            if (end == arg || *end || errno == ERANGE) valid = 0;
 +            ev->verb = 'w'; ev->a = strtol(arg, NULL, 10);
 +        } else if (!_stricmp(verb, "focus")) {
++            errno = 0;
++            (void)strtol(arg, &end, 10);
++            if (end == arg || *end || errno == ERANGE) valid = 0;
 +            ev->verb = 'f'; ev->a = strtol(arg, NULL, 10);
++            if (ev->a != 0 && ev->a != 1) valid = 0;
 +        } else {
 +            fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown verb '%s'\n", verb);
++            valid = 0;
 +            break;
 +        }
 +        s_script_n++;
-+        if (*e == ',') e++; else break;
++        if (*e == ',') { e++; if (!*e) valid = 0; } else break;
 +    }
++    if (s_script_n == SCRIPT_MAX && e && *e) valid = 0;
++    s_script_background = valid && s_script_n > 0 && background && !strcmp(background, "1");
 +    if (s_script_n) fprintf(stderr, "[INPUT] %d scripted event(s) from RECOMP_INPUT_SCRIPT\n", s_script_n);
++    if (s_script_background) fprintf(stderr, "[INPUT] laboratory background script isolated from physical input\n");
 +}
 +
 +static void script_key(unsigned id, int down, uint64_t now)
@@ -4797,6 +5100,7 @@ index 0000000..4ceb323
 +    s_mouse_ignore_until = 0;
 +    s_script_n = s_script_next = 0;
 +    s_script_t0 = 0;
++    s_script_background = 0;
 +    load_config();
 +    load_script();
 +}
@@ -7391,11 +7695,11 @@ index 0000000..5532be8
 +    }
 +}
 diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
-index 53d8c75..071d567 100644
+index 53d8c75..9d80b57 100644
 --- a/src/kernel/xbox_memory_layout.c
 +++ b/src/kernel/xbox_memory_layout.c
 @@ -14,6 +14,8 @@
- 
+
  #include "xbox_memory_layout.h"
  #include "kernel.h"
 +#include "../nv2a/kelvin/kelvin.h"
@@ -7406,7 +7710,7 @@ index 53d8c75..071d567 100644
 @@ -84,6 +86,11 @@ static void *g_tiled_view = NULL;
   * the same numbers for MmClaimGpuInstanceMemory. */
  static void *g_contig_memory = NULL;
- 
+
 +/* Low RAM as physical memory: the same section as the low guest addresses,
 + * viewed again right above the contiguous window (see MemoryLayoutInit). */
 +#define XBOX_LOWRAM_PHYS_VA  (XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)  /* 0x84000000 */
@@ -7418,7 +7722,7 @@ index 53d8c75..071d567 100644
 @@ -154,6 +161,17 @@ static size_t xbox_TiledApertureSize(void)
  static HANDLE g_nv2a_ack_thread = NULL;
  static volatile LONG g_nv2a_ack_stop = 0;
- 
+
 +static int nv2a_ack_stopped(void)
 +{
 +    /* Shutdown publishes the stop with InterlockedExchange. This is an
@@ -7434,13 +7738,13 @@ index 53d8c75..071d567 100644
   * NV2A busy-bit acknowledgement.
   *
 @@ -625,11 +643,12 @@ void xbox_Nv2aFrameCounterFlip(void)
- 
+
  static void frame_counters_tick(void)
  {
 -    DWORD now = GetTickCount();
 +    DWORD now;
      int i;
- 
+
      if (!g_frame_counter_count)
          return;
 +    now = GetTickCount();
@@ -7455,7 +7759,7 @@ index 53d8c75..071d567 100644
 +    DWORD now;
      uint32_t sum = 0, nonzero = 0, i, n;
      const uint32_t *p;
- 
+
      if (!s_nv2a_trace || !s_fb_va || !s_fb_pitch)
          return;
 +    now = GetTickCount();
@@ -7465,7 +7769,7 @@ index 53d8c75..071d567 100644
 @@ -744,13 +764,27 @@ static void framebuffer_probe_tick(void)
      fflush(stderr);
  }
- 
+
 +extern void xbox_PinThread(const char *role);
 +
 +/* Something else that wants a poll on every turn of the acknowledger's loop (the audio DSP's command doorbell, which the
@@ -7538,7 +7842,7 @@ index 53d8c75..071d567 100644
  static uint32_t *s_watchdog_regs[6];
 +static uint16_t *s_watchdog_fp_control;
  static unsigned  s_watchdog_secs;
- 
+
  /* Can RECOMP_PEEK dereference this guest address?
 @@ -1110,6 +1152,7 @@ static int peek_readable(uint32_t va)
          { g_nv2a_memory,   XBOX_NV2A_BASE,    XBOX_NV2A_SIZE },
@@ -7547,11 +7851,11 @@ index 53d8c75..071d567 100644
 +        { g_lowram_phys_view, XBOX_LOWRAM_PHYS_VA, (uint64_t)g_memory_size },
      };
      size_t i;
- 
+
 @@ -1154,6 +1197,23 @@ void xbox_PeekSample(const char *label)
      fflush(stderr);
  }
- 
+
 +/* What device models add to a hang report: the watchdog calls each before
 + * it exits, so a model can say what state it was left in -- the half of a
 + * hang the guest's registers and stacks cannot show. */
@@ -7612,17 +7916,17 @@ index 53d8c75..071d567 100644
 +        /* The main thread's id (ETHREAD.UniqueThread); see
 +         * xbox_AllocThreadObject for the others. */
 +        MEM32_INIT(FAKE_TLS_VA + 0x12C, xbox_NewThreadId());
- 
+
          /*
           * XBE TLS directory.
 @@ -2017,8 +2092,18 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
- 
+
      if (g_nv2a_memory) {
          xbox_Nv2aAckStart();
 +        /* RECOMP_NV2A_KELVIN: execute the title's pushbuffer on the CPU. */
 +        kelvin_start();
      }
- 
+
 +    /* RECOMP_USB: the USB host controllers inside the MCPX aperture, which
 +     * is how a title's own XAPI reaches its gamepad. */
 +    if (g_mcpx_memory)
@@ -7637,7 +7941,7 @@ index 53d8c75..071d567 100644
 @@ -2126,6 +2211,41 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
                  (int)((mirrors_ok + 1) * g_memory_size / (1024 * 1024)));
      }
- 
+
 +    /*
 +     * Low RAM as physical memory, at 0x84000000.
 +     *
@@ -7676,10 +7980,10 @@ index 53d8c75..071d567 100644
      /*
       * Tiled / write-combined aperture at 0xF0000000.
       *
-@@ -2367,6 +2487,39 @@ ptrdiff_t xbox_GetMemoryOffset(void)
+@@ -2367,6 +2487,54 @@ ptrdiff_t xbox_GetMemoryOffset(void)
      return g_memory_offset;
  }
- 
+
 +/* Physical address 0 as a device sees it: the contiguous window, where
 + * MmGetPhysicalAddress's answers point and where the GPU model resolves its
 + * DMA (KELVIN_PHYS_WINDOW). It is separate storage from the low guest
@@ -7688,6 +7992,21 @@ index 53d8c75..071d567 100644
 +void *xbox_GetPhysicalMemoryBase(void)
 +{
 +    return g_contig_memory;
++}
++
++/* The device aperture begins with the contiguous arena. Retail low RAM is
++ * mapped immediately after it at its own physical addresses, when that view
++ * was successfully created. A missing view must not be advertised as backing
++ * storage to devices that bounds-check their DMA transfers. */
++size_t xbox_GetPhysicalMemorySize(void)
++{
++    uintptr_t base = (uintptr_t)g_contig_memory;
++    if (!base) return 0;
++    if (base <= UINTPTR_MAX - XBOX_CONTIG_SIZE &&
++        (uintptr_t)g_lowram_phys_view == base + XBOX_CONTIG_SIZE &&
++        g_memory_size <= SIZE_MAX - XBOX_CONTIG_SIZE)
++        return XBOX_CONTIG_SIZE + g_memory_size;
++    return XBOX_CONTIG_SIZE;
 +}
 +
 +/* The physical address a device should be given for guest address va.
@@ -7716,10 +8035,10 @@ index 53d8c75..071d567 100644
  /* ── Dynamic heap allocator ────────────────────────────────
   *
   * Simple bump allocator for MmAllocateContiguousMemory and similar.
-@@ -2426,8 +2579,17 @@ uint32_t xbox_AllocThreadTib(void)
+@@ -2426,8 +2594,17 @@ uint32_t xbox_AllocThreadTib(void)
      const uint32_t tib_size = 0x40;
      uint32_t tib, block, thread_data, total;
- 
+
 -    if (!g_tls_total)
 -        return 0;                    /* image has no TLS; nothing to copy */
 +    /* An image without TLS still needs a TIB of its own per thread: fs:[0x28]
@@ -7733,13 +8052,13 @@ index 53d8c75..071d567 100644
 +        *(uint32_t *)TIB_VA(tib + 0x00) = 0xFFFFFFFFu;   /* own SEH chain */
 +        return tib;
 +    }
- 
+
      total = g_tls_total;
      tib = xbox_HeapAlloc(tib_size + total + g_tls_thread_size, 16);
-@@ -2450,6 +2612,53 @@ uint32_t xbox_AllocThreadTib(void)
+@@ -2450,6 +2627,53 @@ uint32_t xbox_AllocThreadTib(void)
      #undef TIB_VA
  }
- 
+
 +/* The current-thread object: what fs:[0x28] points at, the KTHREAD/ETHREAD a
 + * title reaches through PsGetCurrentThread() -- XAPI's GetCurrentThreadId() is
 + * [[fs:[0x28]] + 0x12C], ETHREAD.UniqueThread.
@@ -7791,10 +8110,10 @@ index 53d8c75..071d567 100644
  {
      uint32_t base;
 diff --git a/src/kernel/xbox_memory_layout.h b/src/kernel/xbox_memory_layout.h
-index 23df8b2..d0652fd 100644
+index 23df8b2..208f81e 100644
 --- a/src/kernel/xbox_memory_layout.h
 +++ b/src/kernel/xbox_memory_layout.h
-@@ -211,6 +211,23 @@ void *xbox_GetMemoryBase(void);
+@@ -211,6 +211,30 @@ void *xbox_GetMemoryBase(void);
   * Returns 0 if memory is mapped at original Xbox addresses (ideal case).
   */
  ptrdiff_t xbox_GetMemoryOffset(void);
@@ -7808,6 +8127,13 @@ index 23df8b2..d0652fd 100644
 +void *xbox_GetPhysicalMemoryBase(void);
 +
 +/**
++ * Bytes of mapped backing reachable from xbox_GetPhysicalMemoryBase().
++ * Includes the low-RAM physical view only when it is mapped immediately
++ * after the contiguous arena. Returns 0 if the arena is not mapped.
++ */
++size_t xbox_GetPhysicalMemorySize(void);
++
++/**
 + * The physical address a device should be given for a guest address: the
 + * contiguous window maps to 0..64 MB, low RAM (and its mirrors) to its own
 + * view at 64 MB + X. Adding 0x80000000 to the answer gives a guest address
@@ -7818,8 +8144,8 @@ index 23df8b2..d0652fd 100644
  /* Bytes of guest address space mapped, for bounds-checking a guest pointer
   * that came out of guest memory rather than from this side. */
  size_t xbox_GetMappedSize(void);
-@@ -312,12 +329,14 @@ typedef union RecompMmx {
- 
+@@ -312,12 +336,14 @@ typedef union RecompMmx {
+
  #ifndef RECOMP_XMM_DEFINED
  #define RECOMP_XMM_DEFINED
 +#include <emmintrin.h>
@@ -7832,11 +8158,11 @@ index 23df8b2..d0652fd 100644
 +    __m128   m;
  } RecompXmm;
  #endif
- 
-@@ -442,6 +461,20 @@ extern RECOMP_TLS uint32_t g_fs_base;
+
+@@ -442,6 +468,20 @@ extern RECOMP_TLS uint32_t g_fs_base;
   */
  uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
- 
+
 +/* RECOMP_WATCH=<addr>[,<bytes>]: log each access to a guest range with the
 + * function making it (memory_watch.c). Called once the memory is mapped. */
 +void xbox_MemoryWatchInit(void);
@@ -11957,10 +12283,10 @@ index 0000000..d00641c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_draw.inc b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 new file mode 100644
-index 0000000..ddeb110
+index 0000000..f1bf2f8
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_draw.inc
-@@ -0,0 +1,768 @@
+@@ -0,0 +1,773 @@
 +/* The draw, included by kelvin_gpu.c after feedback_copy.
 + *
 + * kgpu_draw_now draws one batch of triangles. Most of what a draw needs is the same as the draw before it: the
@@ -12274,6 +12600,11 @@ index 0000000..ddeb110
 +            (unsigned long long)s_dl.frame, s_dl.ord, d->gvs ? d->gvs->hash : 0, d->icount, d->topology, d->t->width, d->t->height,
 +            ps->depth_test, ps->depth_func, ps->depth_write, ps->blend, ps->blend_sfactor, ps->blend_dfactor, ps->alpha_test,
 +            d->cull_enable, ps->tex[0].width, ps->tex[0].height, (double)d->zbias, (double)ps->zmax);
++    fprintf(stderr, "[KDL]   targetva %08X depthva %08X depthclip %d zclip %g,%g cullctrl %d frontccw %d texturebase %08X,%08X,%08X,%08X texturevalid %d,%d,%d,%d\n",
++            d->t->color_va, d->t->zeta_va, (int)ps->depth_clip_cull, (double)ps->zclip_min, (double)ps->zclip_max,
++            d->cull_ctrl, (int)d->ccw_front,
++            ps->tex[0].base, ps->tex[1].base, ps->tex[2].base, ps->tex[3].base,
++            (int)ps->tex[0].valid, (int)ps->tex[1].valid, (int)ps->tex[2].valid, (int)ps->tex[3].valid);
 +    if (d->gvs && d->gvs->constants) {
 +        static float vp_last[8];
 +        const float *v = d->gvs->constants + 4 * 58;       /* c[-38] viewport scale, c[-37] offset */
@@ -13236,10 +13567,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..2bf5ce6
+index 0000000..8db4ff6
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,789 @@
+@@ -0,0 +1,823 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -13270,20 +13601,33 @@ index 0000000..2bf5ce6
 +"SamplerState LinSmp : register(s0);\n"
 +"SamplerState PtSmp  : register(s1);\n"
 +"\n"
-+"// The depth the picture is focused at: what is under the middle of the screen, smoothed over time. Sky (the cleared\n"
-+"// depth) does not count, so looking at the horizon keeps the last focus.\n"
++"// Focus on a surface represented by the central aperture. A mean between foreground foliage\n"
++"// and the aimed background describes neither surface and pumps the whole picture's blur.\n"
++"// The median rejects minority occluders; a foreground subject filling the aperture still wins.\n"
++"// Cleared/invalid depth is not a subject, and a sky-only aperture preserves the last focus.\n"
 +"float focus_ps(float4 p : SV_Position) : SV_Target {\n"
 +"    float prev = FocusTex.Load(int3(0, 0, 0));\n"
-+"    float sum = 0.0, n = 0.0;\n"
++"    float samples[25];\n"
++"    [unroll] for (int k = 0; k < 25; ++k) samples[k] = 1.0;\n"
++"    int n = 0;\n"
 +"    [unroll] for (int j = -2; j <= 2; j++) {\n"
 +"        [unroll] for (int i = -2; i <= 2; i++) {\n"
 +"            float2 uv = float2(0.5 + i * 0.010 * p0.w / p0.z, 0.5 + j * 0.010);\n"
 +"            float d = DepthTex.SampleLevel(PtSmp, uv, 0);\n"
-+"            if (d < 0.99999) { sum += d; n += 1.0; }\n"
++"            if (d >= 0.0 && d < 0.99999) {\n"
++"                int k = n;\n"
++"                [loop] while (k > 0) {\n"
++"                    if (samples[k - 1] <= d) break;\n"
++"                    samples[k] = samples[k - 1];\n"
++"                    --k;\n"
++"                }\n"
++"                samples[k] = d;\n"
++"                ++n;\n"
++"            }\n"
 +"        }\n"
 +"    }\n"
-+"    float target = n > 0.0 ? sum / n : prev;\n"
-+"    if (prev < 0.0) return n > 0.0 ? target : 1.0;\n"
++"    float target = n > 0 ? samples[n / 2] : prev;\n"
++"    if (!(prev >= 0.0 && prev <= 1.0)) return n > 0 ? target : 1.0;\n"
 +"    return lerp(prev, target, p1.z);\n"
 +"}\n"
 +"\n"
@@ -13374,8 +13718,11 @@ index 0000000..2bf5ce6
 +"// and p3.xy=the real camera half-frustum. All methods share depth/normal reconstruction, not their kernels.\n"
 +"float ao_hash(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }\n"
 +"float ao_depth(float2 uv) { return DepthTex.SampleLevel(PtSmp, uv, 0); }\n"
-+"float ao_view_z(float d) { return min(4096.0, d / max(0.00010, 1.0 - d)); }\n"
++"// Perspective depth is 1-near/z (infinite-far approximation); near is a common scale.\n"
++"float ao_view_z(float d) { return min(4096.0, 1.0 / max(0.00010, 1.0 - d)); }\n"
 +"float3 ao_pos(float2 uv) {\n"
++"    // Point-sampled depth belongs to this texel centre, not the unsnapped kernel coordinate.\n"
++"    uv = (clamp(floor(uv * p0.zw), float2(0, 0), p0.zw - 1.0) + 0.5) * p0.xy;\n"
 +"    float z = ao_view_z(ao_depth(uv));\n"
 +"    float2 n = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
 +"    return float3(n * p3.xy * z, z);\n"
@@ -13384,8 +13731,10 @@ index 0000000..2bf5ce6
 +"    float3 l = ao_pos(uv - float2(p0.x, 0)), r = ao_pos(uv + float2(p0.x, 0));\n"
 +"    float3 u = ao_pos(uv - float2(0, p0.y)), d = ao_pos(uv + float2(0, p0.y));\n"
 +"    // Choose the derivative on the same surface at depth discontinuities.\n"
-+"    float3 dx = abs(r.z - c.z) < abs(l.z - c.z) ? r - c : c - l;\n"
-+"    float3 dy = abs(u.z - c.z) < abs(d.z - c.z) ? u - c : c - d;\n"
++"    float3 dx = uv.x <= 0.5 * p0.x ? r - c : uv.x >= 1.0 - 0.5 * p0.x ? c - l :\n"
++"                abs(r.z - c.z) < abs(l.z - c.z) ? r - c : c - l;\n"
++"    float3 dy = uv.y <= 0.5 * p0.y ? c - d : uv.y >= 1.0 - 0.5 * p0.y ? u - c :\n"
++"                abs(u.z - c.z) < abs(d.z - c.z) ? u - c : c - d;\n"
 +"    float3 n = cross(dx, dy);\n"
 +"    float n2 = dot(n, n);\n"
 +"    if (n2 < 1e-12) return float3(0, 0, -1);\n"
@@ -13537,11 +13886,12 @@ index 0000000..2bf5ce6
 +    uint64_t ao_camera;                                     /* first world draw's queued camera, fixed for this frame */
 +    bool ao_done;
 +    bool done;
-+    long long last_qpc;
++    long long last_qpc;                                     /* last successful autofocus update, not merely a scene pass */
++    long long focus_trace_qpc;                              /* opt-in successful-observation trace, at most once per five seconds */
 +    int depth_stats;                                        /* RECOMP_KGPU_DEPTH_STATS=n: depth percentiles every n frames */
 +    char ao_dump[MAX_PATH], ao_scene_prefix[MAX_PATH];
 +    uint64_t ao_dump_frame, ao_scene_frame;
-+    bool ao_dump_done, ao_scene_done, post_trace, ao_skip_traced;
++    bool ao_dump_done, ao_scene_done, post_trace, ao_skip_traced, focus_skipped;
 +} s_post;
 +
 +static void kg_post_free(void)
@@ -13839,7 +14189,6 @@ index 0000000..2bf5ce6
 +static void kg_post_ao_scene(KGpuSurf *cs, KGpuSurf *zs)
 +{
 +    if (s_post.ao_done) return;
-+    s_post.ao_done = true;
 +    if (s_post.ao_method == PCV_AO_OFF || !cs || cs->bpp != 4 || cs->dxfmt != DXGI_FORMAT_B8G8R8A8_UNORM ||
 +        !post_init() || !post_scene_resources(cs->hw, cs->hh)) return;
 +    if (s_post.ao_method != PCV_AO_OFF && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh && post_ao_init() &&
@@ -13850,6 +14199,8 @@ index 0000000..2bf5ce6
 +        bool mask_capture = !s_post.ao_dump_done && *s_post.ao_dump && frame >= s_post.ao_dump_frame;
 +        uint8_t *before = NULL;
 +        char before_path[MAX_PATH + 16], after_path[MAX_PATH + 16];
++        /* A failed early attempt must allow a later draw with valid scene depth. */
++        s_post.ao_done = true;
 +        before_path[0] = after_path[0] = 0;
 +        if (s_post.ao_method == PCV_AO_HBAO) ps = s_post.ps_ao_hbao;
 +        else if (s_post.ao_method == PCV_AO_HBAO_PLUS) ps = s_post.ps_ao_hbaop;
@@ -13896,13 +14247,21 @@ index 0000000..2bf5ce6
 +        fprintf(stderr, "[KAO] frame %llu ambient occlusion skipped: no valid queued world camera\n", (unsigned long long)(G.frames + 1));
 +    }
 +    kg_post_ao_scene(cs, zs);
-+    if (s_post.dof && zs && zs->depth) {
++    if (s_post.dof && (!zs || !zs->depth || !zs->real || !zs->srv || zs->hw != cs->hw || zs->hh != cs->hh)) {
++        if (s_post.post_trace && !s_post.focus_skipped)
++            fprintf(stderr, "[KPOST] frame %llu autofocus skipped: depth present=%d depth=%d real=%d sampleable=%d size=%ux%u scene=%ux%u\n",
++                    (unsigned long long)(G.frames + 1), zs != NULL, zs ? (int)zs->depth : 0,
++                    zs ? (int)zs->real : 0, zs && zs->srv != NULL, zs ? zs->hw : 0, zs ? zs->hh : 0, cs->hw, cs->hh);
++        s_post.focus_skipped = true;
++    }
++    if (s_post.dof && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh) {
 +        const unsigned int next = s_post.focus_cur ^ 1u;
-+        double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : 0.016;
-+        float alpha;
-+        if (dt < 0.001) dt = 0.001;
-+        if (dt > 0.1) dt = 0.1;
-+        alpha = (float)(1.0 - exp(-dt / 0.25));
++        const double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : -1.0;
++        const float alpha = kg_post_focus_blend(dt);
++        if (s_post.post_trace && (s_post.focus_skipped || !s_post.last_qpc))
++            fprintf(stderr, "[KPOST] frame %llu autofocus acquired: observation gap %.9g alpha %.9g\n",
++                    (unsigned long long)(G.frames + 1), dt, (double)alpha);
++        s_post.focus_skipped = false;
 +        post_dof_preset(s_post.dof, &taps, &radius);
 +        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
 +        post_cb((float)cs->hw, (float)cs->hh, taps, radius * (float)cs->hh, alpha, depth_scale, 0.002f, 0.0f, 0.0f, 1.0f, 1.0f);
@@ -13910,8 +14269,17 @@ index 0000000..2bf5ce6
 +        s_post.focus_cur = next;
 +        post_pass(s_post.ps_coc, s_post.coc_rtv, cs->hw, cs->hh, NULL, NULL, zs->srv, s_post.focus_srv[next]);
 +        post_pass(s_post.ps_dof, cs->rtv, cs->hw, cs->hh, s_post.copy_srv, s_post.coc_srv, NULL, NULL);
++        /* A frame without usable depth did not observe a focus surface. Keep
++         * the last observation time so a long interruption actually triggers
++         * kg_post_focus_blend's immediate reacquisition when depth returns. */
++        s_post.last_qpc = now;
++        if (s_post.post_trace && (!s_post.focus_trace_qpc ||
++            (double)(now - s_post.focus_trace_qpc) / (double)G.qpf >= 5.0)) {
++            fprintf(stderr, "[KPOST] frame %llu autofocus updated: observation gap %.9g alpha %.9g depth=%ux%u scene=%ux%u\n",
++                    (unsigned long long)(G.frames + 1), dt, (double)alpha, zs->hw, zs->hh, cs->hw, cs->hh);
++            s_post.focus_trace_qpc = now;
++        }
 +    }
-+    s_post.last_qpc = now;
 +    if (s_post.aa == PCV_AA_FXAA) {
 +        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
 +        post_cb((float)cs->hw, (float)cs->hh, 0, 0, 0, 0, 0, 0, 0, 1.0f, 1.0f);
@@ -13940,11 +14308,8 @@ index 0000000..2bf5ce6
 +        s_post.world++;
 +        return;
 +    }
-+    {
-+        bool already_done = s_post.ao_done;
-+        if (kg_post_order_should_apply_ao_before_blend(s_post.world, ps->depth_write, ps->blend, &already_done))
-+            kg_post_ao_scene((KGpuSurf *)cs, zs);
-+    }
++    if (kg_post_order_should_apply_ao_before_blend(s_post.world, ps->depth_write, ps->blend, &s_post.ao_done))
++        kg_post_ao_scene((KGpuSurf *)cs, zs);
 +    /* The HUD and menus: depth test on, always passing, nothing written. */
 +    if (!s_post.done && s_post.world >= 4 && ps->depth_test && ps->depth_func == 7 && !ps->depth_write)
 +        kg_post_scene((KGpuSurf *)cs, zs);
@@ -35953,10 +36318,9 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..1b65387
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2338 @@
+@@ -0,0 +1,2484 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -35968,6 +36332,7 @@ index 0000000..1b65387
 + */
 +#include "pc_menu.h"
 +#include "pc_video_menu.h"
++#include "pc_movie_skip.h"
 +#include "../input/pc_input.h"
 +#include <ctype.h>
 +#include <math.h>
@@ -37142,6 +37507,55 @@ index 0000000..1b65387
 +    out[n] = 0;
 +}
 +
++static int pc_menu_locale(void)
++{
++    const char *language = getenv("RECOMP_LANGUAGE");
++    if (!language || !_stricmp(language, "en-US")) return 0;
++    if (!_stricmp(language, "pt-BR")) return 1;
++    if (!_stricmp(language, "es")) return 2;
++    if (!_stricmp(language, "fr")) return 3;
++    if (!_stricmp(language, "de")) return 4;
++    if (!_stricmp(language, "it")) return 5;
++    return 0;
++}
++
++static const char *localized_video_literal(const char *text)
++{
++    const char *active_page = m_page >= 0 && m_doc ? m_doc->page[m_page].name : m_page_name;
++    int locale = pc_menu_locale();
++    static const struct { const char *english, *pt, *es, *fr, *de, *it; } words[] = {
++        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO", "AJUSTES DE VÍDEO", "PARAMÈTRES VIDÉO", "VIDEOEINSTELLUNGEN", "IMPOSTAZIONI VIDEO" },
++        { "DISPLAY", "TELA", "PANTALLA", "AFFICHAGE", "ANZEIGE", "SCHERMO" },
++        { "GRAPHICS", "GRÁFICOS", "GRÁFICOS", "GRAPHIQUES", "GRAFIK", "GRAFICA" },
++        { "RESET TO DEFAULTS", "RESTAURAR PADRÕES", "RESTABLECER VALORES", "RÉINITIALISER", "ZURÜCKSETZEN", "RIPRISTINA PREDEFINITI" },
++        { "BACK", "VOLTAR", "ATRÁS", "RETOUR", "ZURÜCK", "INDIETRO" },
++        { "WINDOW MODE", "MODO DE JANELA", "MODO DE VENTANA", "MODE FENÊTRÉ", "FENSTERMODUS", "MODALITÀ FINESTRA" },
++        { "WINDOW SIZE", "RESOLUÇÃO", "RESOLUCIÓN", "RÉSOLUTION", "AUFLÖSUNG", "RISOLUZIONE" },
++        { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA", "RESOLUCIÓN INTERNA", "RÉSOLUTION INTERNE", "INTERNE AUFLÖSUNG", "RISOLUZIONE INTERNA" },
++        { "ASPECT RATIO", "PROPORÇÃO", "RELACIÓN DE ASPECTO", "FORMAT D’IMAGE", "BILDFORMAT", "PROPORZIONI" },
++        { "SCALING", "ESCALA DA IMAGEM", "ESCALADO", "MISE À L’ÉCHELLE", "SKALIERUNG", "RIDIMENSIONAMENTO" },
++        { "SCALING FILTER", "FILTRO DE ESCALA", "FILTRO DE ESCALADO", "FILTRE DE MISE À L’ÉCHELLE", "SKALIERUNGSFILTER", "FILTRO DI RIDIMENSIONAMENTO" },
++        { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL", "SINCRONIZACIÓN VERTICAL", "SYNCHRONISATION VERTICALE", "VERTIKALE SYNCHRONISIERUNG", "SINCRONIZZAZIONE VERTICALE" },
++        { "FRAME LIMIT", "LIMITE DE QUADROS", "LÍMITE DE FPS", "LIMITE D’IMAGES/S", "BILDERLIMIT", "LIMITE FPS" },
++        { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO", "SUAVIZADO", "ANTICRÉNELAGE", "ANTIALIASING", "ANTIALIASING" },
++        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA", "FILTRADO ANISOTRÓPICO", "FILTRAGE ANISOTROPE", "ANISOTROPE FILTERUNG", "FILTRO ANISOTROPICO" },
++        { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO", "PROFUNDIDAD DE CAMPO", "PROFONDEUR DE CHAMP", "SCHÄRFENTIEFE", "PROFONDITÀ DI CAMPO" },
++        { "SHARPENING", "NITIDEZ", "NITIDEZ", "NETTETÉ", "SCHÄRFEN", "NITIDEZZA" },
++        { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE", "OCLUSIÓN AMBIENTAL", "OCCLUSION AMBIANTE", "UMGEBUNGSVERDECKUNG", "OCCLUSIONE AMBIENTALE" },
++        { "AO QUALITY", "QUALIDADE DA OCLUSÃO", "CALIDAD DE OCLUSIÓN", "QUALITÉ DE L’OCCLUSION", "AO-QUALITÄT", "QUALITÀ AO" },
++        { "FIELD OF VIEW", "FOV", "CAMPO DE VISIÓN", "CHAMP DE VISION", "SICHTFELD", "CAMPO VISIVO" },
++        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" }
++    };
++    int i;
++    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
++    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
++        if (!strcmp(text, words[i].english)) {
++            const char *values[] = { words[i].english, words[i].pt, words[i].es, words[i].fr, words[i].de, words[i].it };
++            return values[locale];
++        }
++    return text;
++}
++
 +/* Resolves a text spec to UTF-16. Returns 0 when there is nothing to show. */
 +static int spec_text(const PcMenuHost *host, const char *spec, uint16_t *out, unsigned cap)
 +{
@@ -37151,7 +37565,7 @@ index 0000000..1b65387
 +        size_t n = strlen(spec);
 +        copy(tmp, sizeof(tmp), spec + 1);
 +        if (n >= 2) tmp[n - 2] = 0;
-+        utf8_to_utf16(tmp, out, cap);
++        utf8_to_utf16(localized_video_literal(tmp), out, cap);
 +    } else if (!strcmp(spec, "&VIDEO_HELP")) {
 +        const Item *it = m_page >= 0 && m_focus >= 0 && m_focus < m_doc->page[m_page].nitem ? &m_doc->page[m_page].item[m_focus] : NULL;
 +        utf8_to_utf16(it && it->kind == IT_VIDEO ? pc_video_menu_row_help(it->video_row) : "", out, cap);
@@ -38139,51 +38553,147 @@ index 0000000..1b65387
 +/* The hint is a separate layer: its pixels never enter the cached page pixels, so hiding it
 + * restores exactly the page underneath. A change to this layer invalidates the whole upload;
 + * ordinary pages retain their existing small dirty regions while the hint is hidden. */
++#define PCM_CAPTION_ROWS 5
++
++/* Wrap at the last fitting space; split an overlong word without losing characters. */
++static unsigned caption_rows(const uint16_t *text, uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP], float limit)
++{
++    unsigned count = 0, at = 0;
++    memset(rows, 0, sizeof(uint16_t) * PCM_CAPTION_ROWS * PCM_TEXT_CAP);
++    while (text[at] && count < PCM_CAPTION_ROWS) {
++        unsigned start, n = 0, space = 0;
++        while (text[at] == ' ' || text[at] == '\t') ++at;
++        if (!text[at]) break;
++        start = at;
++        while (text[at] && text[at] != '\n' && text[at] != '\r' && n + 1 < PCM_TEXT_CAP) {
++            rows[count][n++] = text[at];
++            rows[count][n] = 0;
++            if (n > 1 && text_width(PCM_FONT_SMALL, rows[count], 17.0f) > limit) {
++                rows[count][--n] = 0;
++                if (space) { n = space; at = start + space + 1; }
++                break;
++            }
++            if (text[at] == ' ' || text[at] == '\t') space = n - 1;
++            ++at;
++        }
++        while (n && (rows[count][n - 1] == ' ' || rows[count][n - 1] == '\t')) --n;
++        rows[count][n] = 0;
++        if (text[at] == '\r') ++at;
++        if (text[at] == '\n') ++at;
++        ++count;
++    }
++    return count;
++}
++
 +int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
 +{
 +    static uint32_t *hint, *composed;
++    static uint16_t previous_caption[PC_MOVIE_SUBTITLE_CHARS];
++    static int caption_rect[4];
 +    static unsigned hw, hh;
-+    static int hint_was_on, base_was_on;
++    static int overlay_was_on, hint_was_on, base_was_on, caption_was_on;
 +    const uint32_t *base = NULL;
-+    int base_changed = 0, hint_changed = 0;
++    uint16_t caption[PC_MOVIE_SUBTITLE_CHARS];
++    int base_changed = 0, overlay_changed = 0, caption_changed;
 +    const int base_on = page_overlay(w, h, px, py, pw, ph, &base, &base_changed);
 +    int hint_on = InterlockedCompareExchange(&m_movie_skip_prompt, 0, 0) && w && h && pw && ph &&
 +                  m_font[PCM_FONT_SMALL].pixels;
-+    if (hint_on && (hw != w || hh != h || !hint || !composed)) {
++    int subtitle_on;
++    memset(caption, 0, sizeof(caption));
++    subtitle_on = w && h && pw && ph && m_font[PCM_FONT_SMALL].pixels &&
++                  pc_movie_skip_subtitle(caption, PC_MOVIE_SUBTITLE_CHARS);
++    caption_changed = subtitle_on != caption_was_on || memcmp(caption, previous_caption, sizeof(caption)) != 0;
++    if (subtitle_on && (caption_rect[0] != px || caption_rect[1] != py ||
++                        caption_rect[2] != (int)pw || caption_rect[3] != (int)ph)) {
++        overlay_changed = 1;
++        caption_rect[0] = px; caption_rect[1] = py; caption_rect[2] = (int)pw; caption_rect[3] = (int)ph;
++    }
++    if (caption_changed) memcpy(previous_caption, caption, sizeof(caption));
++    caption_was_on = subtitle_on;
++    if ((hint_on || subtitle_on) && (hw != w || hh != h || !hint || !composed)) {
 +        uint32_t *next_hint = (uint32_t *)malloc((size_t)w * h * 4);
 +        uint32_t *next_composed = (uint32_t *)malloc((size_t)w * h * 4);
-+        if (!next_hint || !next_composed) { free(next_hint); free(next_composed); hint_on = 0; }
++        if (!next_hint || !next_composed) { free(next_hint); free(next_composed); hint_on = subtitle_on = 0; }
 +        else {
 +            free(hint); free(composed);
 +            hint = next_hint; composed = next_composed; hw = w; hh = h;
-+            hint_changed = 1;
++            overlay_changed = 1;
 +        }
 +    }
-+    if (!hint_on) {
-+        *changed = base_changed || hint_was_on;
-+        if (hint_was_on && base_on) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
-+        hint_was_on = 0; base_was_on = base_on;
++    if (!hint_on && !subtitle_on) {
++        *changed = base_changed || overlay_was_on;
++        if (overlay_was_on && base_on) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
++        overlay_was_on = hint_was_on = 0; base_was_on = base_on;
 +        if (base_on) *pixels = base;
 +        return base_on;
 +    }
-+    hint_changed |= !hint_was_on;
-+    if (hint_changed) {
++    overlay_changed |= !overlay_was_on || caption_changed || hint_on != hint_was_on;
++    if (overlay_changed) {
 +        static Display d;
-+        static const uint16_t text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
++        static const uint16_t english_skip_text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
++        const char *language = getenv("RECOMP_LANGUAGE");
++        const char *skip_text = "Press again to skip";
++        uint16_t localized_skip_text[64];
++        const uint16_t *text = english_skip_text;
++        if (language && !_stricmp(language, "pt-BR")) skip_text = "PRESSIONE NOVAMENTE PARA PULAR";
++        else if (language && !_stricmp(language, "es")) skip_text = "PULSA DE NUEVO PARA OMITIR";
++        else if (language && !_stricmp(language, "fr")) skip_text = "APPUYEZ À NOUVEAU POUR PASSER";
++        else if (language && !_stricmp(language, "de")) skip_text = "ZUM ÜBERSPRINGEN ERNEUT DRÜCKEN";
++        else if (language && !_stricmp(language, "it")) skip_text = "PREMI DI NUOVO PER SALTARE";
++        if (language && (_stricmp(language, "pt-BR") == 0 || _stricmp(language, "es") == 0 ||
++                         _stricmp(language, "fr") == 0 || _stricmp(language, "de") == 0 || _stricmp(language, "it") == 0)) {
++            if (MultiByteToWideChar(CP_UTF8, 0, skip_text, -1, (WCHAR *)localized_skip_text, 64) > 0)
++                text = localized_skip_text;
++        }
 +        Canvas c;
 +        float right, bottom, tw;
 +        d.n = 0; d.slide = 0;
-+        /* Movie aspect/letterboxing must not pull the prompt into the middle of
-+         * an ultrawide window. Its safe margin belongs to the client area. */
-+        canvas_for(&c, hint, w, h, 0, 0, w, h);
-+        right = ((float)w - c.ox) / c.s - 20.0f;
-+        bottom = ((float)h - c.oy) / c.s - 20.0f;
-+        tw = text_width(PCM_FONT_SMALL, text, 16.0f);
-+        rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
-+        text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
++        if (hint_on) {
++            /* The skip prompt belongs to the client area, including letterbox bars. */
++            canvas_for(&c, hint, w, h, 0, 0, w, h);
++            right = ((float)w - c.ox) / c.s - 20.0f;
++            bottom = ((float)h - c.oy) / c.s - 20.0f;
++            tw = text_width(PCM_FONT_SMALL, text, 16.0f);
++            rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
++            text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
++        }
 +        render(&d, hint, w, h, 0, 0, w, h);
++        if (subtitle_on) {
++            uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP];
++            float widths[PCM_CAPTION_ROWS], box_w = 0, box_y, centre, limit, caption_bottom;
++            unsigned count, i;
++            /* Captions belong to the displayed picture; the hint keeps its client anchor. */
++            canvas_for(&c, hint, w, h, px, py, pw, ph);
++            limit = ((float)(c.cr - c.cl) / c.s) - 68.0f;
++            if (limit < 1.0f) limit = 1.0f;
++            count = caption_rows(caption, rows, limit);
++            centre = (((float)c.cl + (float)c.cr) * 0.5f - c.ox) / c.s;
++            for (i = 0; i < count; ++i) {
++                widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
++                box_w = fmaxf(box_w, widths[i]);
++            }
++            box_w += 28.0f;
++            caption_bottom = (float)c.cb - 14.0f * c.s;
++            if (hint_on) {
++                Canvas client;
++                canvas_for(&client, hint, w, h, 0, 0, w, h);
++                caption_bottom = fminf(caption_bottom, (float)h - 50.0f * client.s - 8.0f * c.s);
++            }
++            box_y = (caption_bottom - c.oy) / c.s - (22.0f * count + 14.0f);
++            d.n = 0;
++            rect(&d, centre - box_w * 0.5f, box_y, box_w, 22.0f * count + 14.0f, 0xB8000000u, 0);
++            for (i = 0; i < count; ++i)
++                text_prim(&d, PCM_FONT_SMALL, centre - widths[i] * 0.5f, box_y + 7.0f + 22.0f * i,
++                          17.0f, 1.0f, 0xFFFFFFFFu, rows[i]);
++            /* Draw onto the hint layer without render_region's clearing pass. */
++            for (i = 0; i < (unsigned)d.n; ++i) {
++                const Prim *p = &d.prim[i];
++                if (p->type == PR_RECT) draw_rect(&c, p, 0);
++                else draw_text(&c, p, 0);
++            }
++        }
 +    }
-+    *changed = base_changed || hint_changed || base_on != base_was_on;
++    *changed = base_changed || overlay_changed || base_on != base_was_on;
 +    if (base_on) {
 +        if (*changed) {
 +            const size_t n = (size_t)w * h;
@@ -38194,7 +38704,7 @@ index 0000000..1b65387
 +        *pixels = composed;
 +    } else *pixels = hint;
 +    if (*changed) { m_dirty.x0 = m_dirty.y0 = 0; m_dirty.x1 = (int)w; m_dirty.y1 = (int)h; }
-+    hint_was_on = 1; base_was_on = base_on;
++    overlay_was_on = 1; hint_was_on = hint_on; base_was_on = base_on;
 +    return 1;
 +}
 +
@@ -38616,16 +39126,16 @@ index 0000000..6affd56
 +}
 diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
 new file mode 100644
-index 0000000..e4a5da3
 --- /dev/null
 +++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,370 @@
 +/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
 +#include "pc_movie_skip.h"
 +#include "pc_menu.h"
 +#include "../input/pc_input.h"
 +#include <stdio.h>
 +#include <string.h>
++#include <stdlib.h>
 +#ifndef WIN32_LEAN_AND_MEAN
 +#define WIN32_LEAN_AND_MEAN
 +#endif
@@ -38641,8 +39151,16 @@ index 0000000..e4a5da3
 +
 +static SRWLOCK m_lock = SRWLOCK_INIT;
 +static uint64_t m_session, m_seen, m_confirm;
++static uint64_t m_started;
 +static int m_kind, m_request, m_release;
++static int m_subtitle_target, m_subtitle_loaded;
++static char m_subtitle_stem[16];
 +static int m_focused = 1;
++#define PC_MOVIE_CAPTIONS 64
++#define PC_MOVIE_CAPTION_CHARS PC_MOVIE_SUBTITLE_CHARS
++typedef struct MovieCaption { uint64_t start, end; uint16_t text[PC_MOVIE_CAPTION_CHARS]; } MovieCaption;
++static MovieCaption m_captions[PC_MOVIE_CAPTIONS];
++static unsigned m_caption_count;
 +/* Physical state survives movie transitions, so a held button cannot affect the
 + * next movie. Consumed releases also stay consumed after the movie ends. */
 +static unsigned m_keys, m_pad, m_mouse;
@@ -38660,8 +39178,12 @@ index 0000000..e4a5da3
 +static void retire_locked(void)
 +{
 +    m_session = m_seen = m_confirm = 0;
++    m_started = 0;
 +    m_kind = PC_MOVIE_SKIP_NONE;
 +    m_request = 0;
++    m_subtitle_target = m_subtitle_loaded = 0;
++    m_subtitle_stem[0] = 0;
++    m_caption_count = 0;
 +    m_release = (m_keys | m_pad | m_mouse) != 0;
 +    pc_menu_set_movie_skip_prompt(0);
 +}
@@ -38710,10 +39232,131 @@ index 0000000..e4a5da3
 +            retire_locked();
 +            m_session = session;
 +            m_kind = kind;
++            m_started = now;
 +        }
 +        m_seen = now;
 +    }
 +    ReleaseSRWLockExclusive(&m_lock);
++}
++
++static int srt_time_ms(const char *s, uint64_t *out)
++{
++    int h, m, sec, ms;
++    if (sscanf(s, "%d:%d:%d,%d", &h, &m, &sec, &ms) != 4 ||
++        h < 0 || m < 0 || m > 59 || sec < 0 || sec > 59 || ms < 0 || ms > 999) return 0;
++    *out = (((uint64_t)h * 60u + (unsigned)m) * 60u + (unsigned)sec) * 1000u + (unsigned)ms;
++    return 1;
++}
++
++static int subtitle_supported_stem(const char *stem)
++{
++    static const char *const supported[] = {
++        "03_N", "05_N", "07_N", "09_N", "11_N", "13_N", "15_N", "17_N", "18_N"
++    };
++    unsigned i;
++    if (!stem || !*stem) return 0;
++    for (i = 0; i < sizeof(supported) / sizeof(supported[0]); ++i)
++        if (!_stricmp(stem, supported[i])) return 1;
++    return 0;
++}
++
++static void subtitle_load_locked(void)
++{
++    FILE *f;
++    char line[1024];
++    char subtitle_path[MAX_PATH];
++    const char *language = getenv("RECOMP_LANGUAGE");
++    const char *directory = language && !_stricmp(language, "pt-BR") ? "subtitles\\pt-BR\\" :
++        language && !_stricmp(language, "es") ? "subtitles\\es\\" :
++        language && !_stricmp(language, "fr") ? "subtitles\\fr\\" :
++        language && !_stricmp(language, "de") ? "subtitles\\de\\" :
++        language && !_stricmp(language, "it") ? "subtitles\\it\\" : "subtitles\\";
++    m_subtitle_loaded = 1;
++    m_caption_count = 0;
++    if (!m_subtitle_target || !m_subtitle_stem[0] ||
++        _snprintf_s(subtitle_path, sizeof(subtitle_path), _TRUNCATE,
++                    "%s%s.srt", directory, m_subtitle_stem) < 0) return;
++    f = fopen(subtitle_path, "rb");
++    if (!f) {
++        fprintf(stderr, "[SUBTITLE] %s not found\n", subtitle_path);
++        return;
++    }
++    while (m_caption_count < PC_MOVIE_CAPTIONS && fgets(line, sizeof(line), f)) {
++        uint64_t start, end;
++        char *arrow, joined[PC_MOVIE_CAPTION_CHARS * 4];
++        size_t used = 0;
++        int wide_count;
++        while (fgets(line, sizeof(line), f)) {
++            char *p = line;
++            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
++            if (*p) break;
++        }
++        if (!line[0]) break;
++        arrow = strstr(line, " --> ");
++        if (!arrow) continue;
++        *arrow = 0;
++        if (!srt_time_ms(line, &start) || !srt_time_ms(arrow + 5, &end) || end <= start) continue;
++        joined[0] = 0;
++        while (fgets(line, sizeof(line), f)) {
++            size_t n = strlen(line);
++            while (n && (line[n - 1] == '\r' || line[n - 1] == '\n')) line[--n] = 0;
++            if (!n) break;
++            if (used && used + 1 < sizeof(joined)) joined[used++] = '\n';
++            if (n > sizeof(joined) - used - 1) n = sizeof(joined) - used - 1;
++            memcpy(joined + used, line, n); used += n; joined[used] = 0;
++        }
++        if (!used) continue;
++        wide_count = MultiByteToWideChar(CP_UTF8, 0, joined, -1,
++            (wchar_t *)m_captions[m_caption_count].text, PC_MOVIE_CAPTION_CHARS);
++        if (!wide_count) continue;
++        m_captions[m_caption_count].start = start;
++        m_captions[m_caption_count].end = end;
++        m_caption_count++;
++    }
++    fclose(f);
++    fprintf(stderr, "[SUBTITLE] loaded %u cues for %s\n", m_caption_count, m_subtitle_stem);
++}
++
++void pc_movie_skip_subtitle_target(uint64_t session, const char *stem)
++{
++    AcquireSRWLockExclusive(&m_lock);
++    if (active_locked(now_ms()) && session == m_session) {
++        const int target = subtitle_supported_stem(stem);
++        if (target != m_subtitle_target ||
++            (target && _stricmp(stem, m_subtitle_stem) != 0)) {
++            m_subtitle_target = target;
++            if (target) strncpy_s(m_subtitle_stem, sizeof(m_subtitle_stem), stem, _TRUNCATE);
++            else m_subtitle_stem[0] = 0;
++            m_subtitle_loaded = 0;
++            m_caption_count = 0;
++        }
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity)
++{
++    uint64_t elapsed;
++    unsigned i;
++    int found = 0;
++    if (!out || !capacity) return 0;
++    out[0] = 0;
++    AcquireSRWLockExclusive(&m_lock);
++    if (active_locked(now_ms()) && m_subtitle_target && m_started) {
++        if (!m_subtitle_loaded) subtitle_load_locked();
++        elapsed = now_ms() - m_started;
++        for (i = 0; i < m_caption_count; ++i) {
++            if (elapsed >= m_captions[i].start && elapsed < m_captions[i].end) {
++                unsigned n = 0;
++                while (m_captions[i].text[n] && n + 1 < capacity) { out[n] = m_captions[i].text[n]; n++; }
++                out[n] = 0;
++                found = n != 0;
++                break;
++            }
++        }
++    }
++    ReleaseSRWLockExclusive(&m_lock);
++    return found;
 +}
 +
 +int pc_movie_skip_take_request(uint64_t session)
@@ -38858,19 +39501,23 @@ index 0000000..e4a5da3
 +#endif
 diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
 new file mode 100644
-index 0000000..725072f
 --- /dev/null
 +++ b/src/video/pc_movie_skip.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,26 @@
 +#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
 +#define XBOXRECOMP_PC_MOVIE_SKIP_H
 +#include <stdint.h>
 +
 +enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
++#define PC_MOVIE_SUBTITLE_CHARS 256
 +
 +/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
 + * retires it. A new identity always starts with an unarmed confirmation. */
 +void pc_movie_skip_update(uint64_t session, int kind, int playing);
++/* Selects the one movie stem that owns the current subtitle track. Call on the game thread. */
++void pc_movie_skip_subtitle_target(uint64_t session, const char *stem);
++/* Presenter thread: copies the active UTF-16 caption and returns 1 while a cue is visible. */
++int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity);
 +int pc_movie_skip_take_request(uint64_t session);
 +void pc_movie_skip_clear(void);
 +/* Input/presenter threads: a fresh native movie currently owns input. */
@@ -39632,10 +40279,10 @@ index 0000000..5610b01
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..db9c143
+index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
-@@ -0,0 +1,788 @@
+@@ -0,0 +1,835 @@
 +/* The native Video Settings page. See pc_video_menu.h. */
 +#include "pc_video_menu.h"
 +#include "pc_video.h"
@@ -40139,9 +40786,44 @@ index 0000000..db9c143
 +    "MOTION BLUR", "RESET TO DEFAULTS", "DONE"
 +};
 +
++static const char *const k_row_label_pt[R_COUNT] = {
++    "MODO DE JANELA", "RESOLUÇÃO", "RESOLUÇÃO INTERNA", "SUAVIZAÇÃO DE SERRILHADO", "FILTRAGEM ANISOTRÓPICA", "PROFUNDIDADE DE CAMPO",
++    "NITIDEZ", "MÉTODO DE OCLUSÃO", "QUALIDADE DA OCLUSÃO", "PROPORÇÃO", "FOV", "ESCALA DA IMAGEM", "FILTRO DE ESCALA", "SINCRONIZAÇÃO VERTICAL", "LIMITE DE QUADROS",
++    "DESFOQUE DE MOVIMENTO", "RESTAURAR PADRÕES", "CONCLUÍDO"
++};
++
++static int video_menu_portuguese(void)
++{
++    const char *language = getenv("RECOMP_LANGUAGE");
++    return language && !_stricmp(language, "pt-BR");
++}
++
++static const char *localized_video_value(const char *value)
++{
++    static const struct { const char *english, *portuguese; } words[] = {
++        { "BORDERLESS", "SEM BORDAS" }, { "WINDOWED", "EM JANELA" },
++        { "OFF", "DESATIVADO" }, { "ON", "ATIVADO" }, { "LOW", "BAIXA" },
++        { "MEDIUM", "MÉDIA" }, { "HIGH", "ALTA" }, { "ULTRA", "MÁXIMA" },
++        { "SSAO CLASSIC", "SSAO CLÁSSICO" }, { "ORIGINAL", "ORIGINAL" },
++        { "STRETCH", "ESTICAR" }, { "INTEGER", "INTEIRA" }, { "FIT", "AJUSTAR" },
++        { "NEAREST", "VIZINHO PRÓXIMO" }, { "LINEAR", "LINEAR" }, { "UNLIMITED", "ILIMITADO" },
++        { "32:9", "SUPER ULTRA-WIDE (32:9)" }
++    };
++    int i;
++    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
++        if (!strcmp(value, words[i].english)) return words[i].portuguese;
++    return value;
++}
++
++static const char *video_menu_text(const char *english, const char *portuguese)
++{
++    return video_menu_portuguese() ? portuguese : english;
++}
++
 +const char *pc_video_menu_row_label(int row)
 +{
-+    return row >= 0 && row < R_COUNT ? k_row_label[row] : "";
++    if (row < 0 || row >= R_COUNT) return "";
++    return video_menu_portuguese() ? k_row_label_pt[row] : k_row_label[row];
 +}
 +
 +/* Values are deliberately compact so the game's 640 x 480 native pages retain their normal row
@@ -40199,6 +40881,12 @@ index 0000000..db9c143
 +    case R_BLUR: strcpy(value, s->motion_blur_off ? "OFF" : "ORIGINAL"); break;
 +    default: break;
 +    }
++    if (video_menu_portuguese()) {
++        const char *localized = localized_video_value(value);
++        if (localized != value) snprintf(value, sizeof(value), "%s", localized);
++        else if (!strcmp(value, "SSAA 4X")) strcpy(value, "SSAA 4X");
++        else if (!strcmp(value, "SSAO CLASSIC")) strcpy(value, "SSAO CLÁSSICO");
++    }
 +    len = strlen(value);
 +    n = len < cap - 1 ? len : cap - 1;
 +    /* A small caller buffer must not receive half of a UTF-8 degree symbol. */
@@ -40211,36 +40899,36 @@ index 0000000..db9c143
 +{
 +    PcVideoSettings cur;
 +    int live = pc_video_live_resize();
-+    if (pc_video_menu_row_locked(row)) return "This setting is fixed by an environment variable for this run.";
++    if (pc_video_menu_row_locked(row)) return video_menu_text("This setting is fixed by an environment variable for this run.", "Esta opção está fixada por uma variável de ambiente nesta partida.");
 +    pc_video_get(&cur);
 +    switch (row) {
-+    case R_MODE: return "Borderless fills the screen. F11 switches at any time.";
-+    case R_WINDOW: return "The size of the window when windowed.";
-+    case R_INTERNAL: return live ? "Resolution of the rendered scene. Higher is sharper and slower. Changes apply immediately."
-+                                 : "Resolution of the rendered scene. Changes require a restart.";
++    case R_MODE: return video_menu_text("Borderless fills the screen. F11 switches at any time.", "O modo sem bordas preenche a tela. F11 alterna o modo a qualquer momento.");
++    case R_WINDOW: return video_menu_text("The size of the window when windowed.", "O tamanho da janela no modo em janela.");
++    case R_INTERNAL: return live ? video_menu_text("Resolution of the rendered scene. Higher is sharper and slower. Changes apply immediately.", "Resolução da cena renderizada. Valores maiores deixam a imagem mais nítida e lenta. As alterações são aplicadas na hora.")
++                                 : video_menu_text("Resolution of the rendered scene. Changes require a restart.", "Resolução da cena renderizada. As alterações exigem reiniciar o jogo.");
 +    case R_AA:
-+        if (!live) return "Anti-aliasing is available with the GPU renderer only.";
++        if (!live) return video_menu_text("Anti-aliasing is available with the GPU renderer only.", "A suavização de serrilhado só está disponível no renderizador GPU.");
 +        if (cur.aa == PCV_AA_SSAA && pc_video_ssaa_factor_for(&cur) == 1)
-+            return "SSAA 4X is unavailable at this resolution. Lower the internal resolution to enable it.";
-+        return "FXAA smooths edges. SSAA 4X renders twice as wide and high for a cleaner picture.";
-+    case R_AF: return live ? "Keeps textures sharp on floors and walls seen at a slant." : "Anisotropic filtering is available with the GPU renderer only.";
-+    case R_DOF: return live ? "Blurs the background. Higher is a wider, stronger blur." : "Depth of field is available with the GPU renderer only.";
-+    case R_SHARPEN: return live ? "Brings back fine detail softened by filters and scaling." : "Sharpening is available with the GPU renderer only.";
-+    case R_AO_METHOD: return live ? "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO."
-+                                    : "Ambient occlusion is available with the GPU renderer only.";
++            return video_menu_text("SSAA 4X is unavailable at this resolution. Lower the internal resolution to enable it.", "SSAA 4X não está disponível nesta resolução. Reduza a resolução interna para ativá-lo.");
++        return video_menu_text("FXAA smooths edges. SSAA 4X renders twice as wide and high for a cleaner picture.", "FXAA suaviza as bordas. SSAA 4X renderiza com o dobro da largura e da altura para uma imagem mais limpa.");
++    case R_AF: return live ? video_menu_text("Keeps textures sharp on floors and walls seen at a slant.", "Mantém nítidas as texturas de pisos e paredes vistas de lado.") : video_menu_text("Anisotropic filtering is available with the GPU renderer only.", "A filtragem anisotrópica só está disponível no renderizador GPU.");
++    case R_DOF: return live ? video_menu_text("Blurs the background. Higher is a wider, stronger blur.", "Desfoca o fundo. Valores maiores ampliam e intensificam o desfoque.") : video_menu_text("Depth of field is available with the GPU renderer only.", "A profundidade de campo só está disponível no renderizador GPU.");
++    case R_SHARPEN: return live ? video_menu_text("Brings back fine detail softened by filters and scaling.", "Recupera detalhes finos suavizados pelos filtros e pela escala.") : video_menu_text("Sharpening is available with the GPU renderer only.", "A nitidez só está disponível no renderizador GPU.");
++    case R_AO_METHOD: return live ? video_menu_text("Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO.", "A oclusão de ambiente adiciona sombras de contato usando a profundidade da cena. Escolha SSAO clássico, HBAO, HBAO+ ou GTAO.")
++                                    : video_menu_text("Ambient occlusion is available with the GPU renderer only.", "A oclusão de ambiente só está disponível no renderizador GPU.");
 +    case R_AO_QUALITY:
-+        if (!live) return "Ambient occlusion is available with the GPU renderer only.";
-+        if (cur.ao_method == PCV_AO_OFF) return "Quality changes AO sampling density and radius. Choose an AO method to enable the effect.";
-+        return "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.";
-+    case R_ASPECT: return "The shape of the camera. Original is the game's 4:3 camera.";
-+    case R_FOV: return "Vertical field of view during gameplay, in degrees.";
-+    case R_SCALE: return "Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.";
-+    case R_FILTER: return "Linear smooths the scaled picture. Nearest keeps its pixels sharp.";
-+    case R_VSYNC: return "Waits for the display to refresh before showing a frame.";
-+    case R_FPS: return "Caps how often the picture is shown.";
-+    case R_BLUR: return "The game's own camera motion blur.";
-+    case R_RESET: return "Restores every video setting to its default. Locked settings keep their values.";
-+    case R_DONE: return "Back to the Options page.";
++        if (!live) return video_menu_text("Ambient occlusion is available with the GPU renderer only.", "A oclusão de ambiente só está disponível no renderizador GPU.");
++        if (cur.ao_method == PCV_AO_OFF) return video_menu_text("Quality changes AO sampling density and radius. Choose an AO method to enable the effect.", "A qualidade altera a amostragem e o alcance da oclusão. Escolha um método para ativar o efeito.");
++        return video_menu_text("Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.", "Qualidades maiores aumentam a amostragem e o alcance da oclusão, exigindo mais da GPU. Todos os níveis usam a resolução da cena e desfoque sensível à profundidade.");
++    case R_ASPECT: return video_menu_text("The shape of the camera. Original is the game's 4:3 camera.", "Proporção da câmera. Original usa a proporção 4:3 do jogo.");
++    case R_FOV: return video_menu_text("Vertical field of view during gameplay, in degrees.", "Campo de visão vertical durante o jogo, em graus.");
++    case R_SCALE: return video_menu_text("Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.", "Ajustar mantém a proporção da imagem. Esticar preenche a janela. Inteira usa múltiplos sem fração.");
++    case R_FILTER: return video_menu_text("Linear smooths the scaled picture. Nearest keeps its pixels sharp.", "Linear suaviza a imagem redimensionada. Vizinho próximo preserva os pixels nítidos.");
++    case R_VSYNC: return video_menu_text("Waits for the display to refresh before showing a frame.", "Aguarda a atualização da tela antes de exibir cada quadro.");
++    case R_FPS: return video_menu_text("Caps how often the picture is shown.", "Limita a frequência de exibição da imagem.");
++    case R_BLUR: return video_menu_text("The game's own camera motion blur.", "Desfoque de movimento original da câmera do jogo.");
++    case R_RESET: return video_menu_text("Restores every video setting to its default. Locked settings keep their values.", "Restaura as configurações de vídeo para os valores padrão. Opções fixadas mantêm seus valores.");
++    case R_DONE: return video_menu_text("Back to the Options page.", "Volta à página de opções.");
 +    default: return "";
 +    }
 +}
@@ -40283,7 +40971,11 @@ index 0000000..db9c143
 +
 +static void draw_hint(double s, int keyboard)
 +{
-+    const wchar_t *text = keyboard ? L"[V]  VIDEO SETTINGS" : L"[RB]  VIDEO SETTINGS";
++    wchar_t text[96];
++    const char *suffix = video_menu_text("VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO");
++    char hint[112];
++    snprintf(hint, sizeof(hint), keyboard ? "[V]  %s" : "[RB]  %s", suffix);
++    MultiByteToWideChar(CP_UTF8, 0, hint, -1, text, (int)(sizeof(text) / sizeof(text[0])));
 +    HFONT font = make_font((int)(21 * s + 0.5), FW_NORMAL);
 +    const int tw = text_width(font, text), pad = (int)(18 * s), h = (int)(44 * s);
 +    const int w = tw + 2 * pad, x = ((int)m_buf_w - w) / 2, y = (int)m_buf_h - h - (int)(34 * s);
@@ -40309,6 +41001,7 @@ index 0000000..db9c143
 +    const int vw = (int)(400 * s), vx = px + pw - pad - vw;
 +    HFONT f_title = make_font((int)(44 * s + 0.5), FW_BOLD), f_row = make_font((int)(24 * s + 0.5), FW_NORMAL);
 +    HFONT f_sel = make_font((int)(24 * s + 0.5), FW_BOLD), f_small = make_font((int)(19 * s + 0.5), FW_NORMAL);
++    wchar_t title[64];
 +    int row, y;
 +    pc_video_get(&cur);
 +    {   /* dim the page underneath: a plain store, the buffer holds nothing yet (a blend over 3440x1440 would be a stutter) */
@@ -40318,7 +41011,8 @@ index 0000000..db9c143
 +    fill_rect(px, py, pw, ph, RGBA(8, 14, 15, 238));
 +    frame_rect(px, py, pw, ph, 1, RGBA(92, 112, 108, 255));
 +    fill_rect(px + pad, py + (int)(28 * s), (int)(6 * s) + 1, (int)(48 * s), RGBA(200, 160, 74, 255));
-+    draw_text(f_title, L"VIDEO SETTINGS", px + pad + (int)(20 * s), py + (int)(24 * s), 0, 0xE8E2D0, 255);
++    MultiByteToWideChar(CP_UTF8, 0, video_menu_text("VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO"), -1, title, (int)(sizeof(title) / sizeof(title[0])));
++    draw_text(f_title, title, px + pad + (int)(20 * s), py + (int)(24 * s), 0, 0xE8E2D0, 255);
 +    fill_rect(px + pad, py + title_h - (int)(8 * s), pw - 2 * pad, 1, RGBA(92, 112, 108, 255));
 +    y = py + title_h;
 +    for (row = 0; row < R_COUNT; row++) {
@@ -44314,23 +45008,459 @@ index 4c840a1..0cf3c14 100644
 
 diff --git a/src/nv2a/kelvin/kelvin_post_order.h b/src/nv2a/kelvin/kelvin_post_order.h
 new file mode 100644
-index 0000000..ce042b0
+index 0000000..e2153bc
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_post_order.h
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,24 @@
 +#ifndef XBOXRECOMP_KELVIN_POST_ORDER_H
 +#define XBOXRECOMP_KELVIN_POST_ORDER_H
 +
 +#include <stdbool.h>
++#include <math.h>
 +
 +static inline bool kg_post_order_should_apply_ao_before_blend(unsigned int world_draws,
 +                                                               bool depth_write,
 +                                                               bool blend,
-+                                                               bool *ao_done)
++                                                               const bool *ao_done)
 +{
 +    if (!ao_done || *ao_done || world_draws < 4 || depth_write || !blend) return false;
-+    *ao_done = true;
 +    return true;
++}
++
++/* Frame-rate-independent focus response. A loading/pause gap invalidates the
++ * old scene's focus instead of slowly blending it into an unrelated view. */
++static inline float kg_post_focus_blend(double elapsed_seconds)
++{
++    if (!(elapsed_seconds > 0.0) || elapsed_seconds >= 0.5) return 1.0f;
++    return (float)(1.0 - exp(-elapsed_seconds / 0.25));
++}
++
++#endif
+diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
+index cd69e57..afa81f6 100644
+--- a/src/apu/apu_xaudio2.c
++++ b/src/apu/apu_xaudio2.c
+@@ -26,6 +26,7 @@
+ #define XA2_CHANNELS      2
+ #define XA2_BUF_SAMPLES   1024   /* ~21ms per submission */
+ #define XA2_NUM_BUFS      3
++#define XA2_RECOVERY_RETRY_MS 1000
+ 
+ static IXAudio2               *g_xa2 = NULL;
+ static IXAudio2MasteringVoice *g_xa2_master = NULL;
+@@ -33,22 +34,78 @@ static IXAudio2SourceVoice    *g_xa2_source = NULL;
+ static int16_t                 g_xa2_bufs[XA2_NUM_BUFS][XA2_BUF_SAMPLES][2];
+ static int                     g_xa2_next_buf = 0;
+ static int                     g_xa2_initialized = 0;
++static int                     g_xa2_started = 0;
+ static int                     g_xa2_frames_written = 0;
++static Xa2OutputStats           g_xa2_stats;
++static volatile LONG           g_xa2_critical_errors;
++static volatile LONG           g_xa2_critical_status;
++static volatile LONG           g_xa2_critical_pending;
++static int                     g_xa2_callback_registered;
++static DWORD                   g_xa2_owner_thread;
++static int                     g_xa2_com_initialized;
++static ULONGLONG               g_xa2_retry_at;
++static uint64_t                g_xa2_played_base;
++static uint64_t                g_xa2_generation_submitted;
++static uint64_t                g_xa2_generation_played;
+ 
+-int xa2_init(void)
++/* Audio callbacks must not log, wait or take the APU lock. The submission
++ * thread reports these atomic observations with the other output counters. */
++static void STDMETHODCALLTYPE xa2_pass_start(IXAudio2EngineCallback *callback)
++{ (void)callback; }
++static void STDMETHODCALLTYPE xa2_pass_end(IXAudio2EngineCallback *callback)
++{ (void)callback; }
++static void STDMETHODCALLTYPE xa2_critical_error(IXAudio2EngineCallback *callback, HRESULT error)
+ {
+-    HRESULT hr;
+-    int com_initialized;
+-    WAVEFORMATEX wfx = { 0 };
+-
+-    if (g_xa2_initialized) return 1;
++    (void)callback;
++    InterlockedExchange(&g_xa2_critical_status, (LONG)error);
++    InterlockedIncrement(&g_xa2_critical_errors);
++    InterlockedExchange(&g_xa2_critical_pending, 1);
++}
++static IXAudio2EngineCallbackVtbl g_xa2_callback_vtable = {
++    xa2_pass_start, xa2_pass_end, xa2_critical_error
++};
++static IXAudio2EngineCallback g_xa2_callback = { &g_xa2_callback_vtable };
+ 
+-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+-    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+-        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
+-        return 0;
++/* DestroyVoice waits until the voice can no longer read its PCM buffers.
++ * Release the whole old graph before any ring slot can be reused. */
++static void xa2_release_graph(void)
++{
++    if (g_xa2 && g_xa2_callback_registered) {
++        IXAudio2_UnregisterForCallbacks(g_xa2, &g_xa2_callback);
++        g_xa2_callback_registered = 0;
++    }
++    if (g_xa2_source) {
++        XAUDIO2_VOICE_STATE state;
++        IXAudio2SourceVoice_GetState(g_xa2_source, &state, 0);
++        if (state.SamplesPlayed > g_xa2_generation_played)
++            g_xa2_generation_played = state.SamplesPlayed;
++        g_xa2_source->lpVtbl->DestroyVoice(g_xa2_source);
++        g_xa2_source = NULL;
++    }
++    if (g_xa2_master) {
++        g_xa2_master->lpVtbl->DestroyVoice(g_xa2_master);
++        g_xa2_master = NULL;
+     }
+-    com_initialized = SUCCEEDED(hr);
++    if (g_xa2) {
++        IXAudio2_Release(g_xa2);
++        g_xa2 = NULL;
++    }
++    g_xa2_played_base += g_xa2_generation_played;
++    if (g_xa2_generation_submitted > g_xa2_generation_played)
++        g_xa2_stats.discarded_samples +=
++            g_xa2_generation_submitted - g_xa2_generation_played;
++    g_xa2_stats.played_samples = g_xa2_played_base;
++    g_xa2_stats.queued_buffers = 0;
++    g_xa2_generation_submitted = g_xa2_generation_played = 0;
++    g_xa2_started = 0;
++}
++
++/* Graph creation reuses the owner's existing COM lease. Failed stages release
++ * every resource they acquired, without ending that apartment. */
++static int xa2_create_graph(void)
++{
++    HRESULT hr;
++    WAVEFORMATEX wfx = { 0 };
+ 
+     hr = XAudio2Create(&g_xa2, 0, XAUDIO2_DEFAULT_PROCESSOR);
+     if (FAILED(hr) || !g_xa2) {
+@@ -56,6 +113,13 @@ int xa2_init(void)
+         goto fail;
+     }
+ 
++    hr = IXAudio2_RegisterForCallbacks(g_xa2, &g_xa2_callback);
++    if (FAILED(hr)) {
++        fprintf(stderr, "[XA2] RegisterForCallbacks failed: 0x%08lX\n", hr);
++        goto fail;
++    }
++    g_xa2_callback_registered = 1;
++
+     hr = IXAudio2_CreateMasteringVoice(g_xa2, &g_xa2_master,
+         XA2_CHANNELS, XA2_SAMPLE_RATE, 0, NULL, NULL, 0);
+     if (FAILED(hr)) {
+@@ -77,47 +141,58 @@ int xa2_init(void)
+         goto fail;
+     }
+ 
+-    hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+-    if (FAILED(hr)) {
+-        fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
+-        goto fail;
+-    }
+-
+     g_xa2_next_buf = 0;
+-    g_xa2_initialized = 1;
+-    g_xa2_frames_written = 0;
+-
+-    fprintf(stderr, "[XA2] XAudio2 initialized (%d Hz stereo 16-bit, %d x %d-sample buffers)\n",
+-            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
++    g_xa2_started = 0;
+     return 1;
+ 
+ fail:
+-    xa2_shutdown();
+-    /* Failed initialization still runs on the COM-initializing thread. */
+-    if (com_initialized) CoUninitialize();
++    xa2_release_graph();
+     return 0;
+ }
+ 
+-void xa2_shutdown(void)
++int xa2_init(void)
+ {
+-    if (g_xa2_source) {
+-        IXAudio2SourceVoice_Stop(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+-        IXAudio2SourceVoice_FlushSourceBuffers(g_xa2_source);
+-        g_xa2_source->lpVtbl->DestroyVoice(g_xa2_source);
+-        g_xa2_source = NULL;
+-    }
+-    if (g_xa2_master) {
+-        g_xa2_master->lpVtbl->DestroyVoice(g_xa2_master);
+-        g_xa2_master = NULL;
++    HRESULT hr;
++    if (g_xa2_initialized)
++        return g_xa2_owner_thread == GetCurrentThreadId();
++    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
++    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
++        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
++        return 0;
+     }
+-    if (g_xa2) {
+-        IXAudio2_Release(g_xa2);
+-        g_xa2 = NULL;
++    g_xa2_owner_thread = GetCurrentThreadId();
++    g_xa2_com_initialized = SUCCEEDED(hr);
++    g_xa2_frames_written = 0;
++    g_xa2_played_base = 0;
++    g_xa2_generation_submitted = g_xa2_generation_played = 0;
++    g_xa2_retry_at = 0;
++    memset(&g_xa2_stats, 0, sizeof(g_xa2_stats));
++    InterlockedExchange(&g_xa2_critical_errors, 0);
++    InterlockedExchange(&g_xa2_critical_status, 0);
++    InterlockedExchange(&g_xa2_critical_pending, 0);
++    if (!xa2_create_graph()) {
++        if (g_xa2_com_initialized) CoUninitialize();
++        g_xa2_com_initialized = 0;
++        g_xa2_owner_thread = 0;
++        return 0;
+     }
++    g_xa2_initialized = 1;
++    fprintf(stderr, "[XA2] XAudio2 initialized (%d Hz stereo 16-bit, %d x %d-sample buffers)\n",
++            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
++    return 1;
++}
+ 
++void xa2_shutdown(void)
++{
++    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId()) return;
++    xa2_release_graph();
++    InterlockedExchange(&g_xa2_critical_pending, 0);
+     if (g_xa2_initialized)
+         fprintf(stderr, "[XA2] Shut down (%d frames written)\n", g_xa2_frames_written);
+     g_xa2_initialized = 0;
++    if (g_xa2_com_initialized) CoUninitialize();
++    g_xa2_com_initialized = 0;
++    g_xa2_owner_thread = 0;
+ }
+ 
+ int xa2_is_active(void)
+@@ -125,6 +200,52 @@ int xa2_is_active(void)
+     return g_xa2_initialized;
+ }
+ 
++static int xa2_recover_if_needed(void)
++{
++    if (InterlockedCompareExchange(&g_xa2_critical_pending, 0, 0)) {
++        fprintf(stderr, "[XA2] Critical error: 0x%08lX; recreating output graph\n",
++                (unsigned long)InterlockedCompareExchange(&g_xa2_critical_status, 0, 0));
++        xa2_release_graph();
++        /* Old engine callbacks have ended before clearing their signal. A
++         * critical error from the newly created engine remains pending. */
++        InterlockedExchange(&g_xa2_critical_pending, 0);
++    }
++    if (g_xa2_source) return 1;
++    ULONGLONG now = GetTickCount64();
++    if (now < g_xa2_retry_at) return 0;
++    ++g_xa2_stats.recovery_attempts;
++    if (!xa2_create_graph() ||
++        InterlockedCompareExchange(&g_xa2_critical_pending, 0, 0)) {
++        /* A replacement can fail critically during creation too. Its signal
++         * belongs to the graph just released, so preserve the retry delay. */
++        xa2_release_graph();
++        InterlockedExchange(&g_xa2_critical_pending, 0);
++        ++g_xa2_stats.recovery_failed;
++        g_xa2_retry_at = GetTickCount64() + XA2_RECOVERY_RETRY_MS;
++        return 0;
++    }
++    ++g_xa2_stats.recoveries;
++    /* Also bound repeated asynchronous failures of newly created voices.
++     * The initial graph's first critical error has no retry deadline. */
++    g_xa2_retry_at = GetTickCount64() + XA2_RECOVERY_RETRY_MS;
++    fprintf(stderr, "[XA2] Output graph recovered; priming fresh PCM\n");
++    return 1;
++}
++
++static int xa2_start_if_primed(unsigned queued)
++{
++    if (g_xa2_started || queued < 2) return 1;
++    HRESULT hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++    if (FAILED(hr)) {
++        if (!g_xa2_stats.start_failed)
++            fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
++        ++g_xa2_stats.start_failed;
++        return 0;
++    }
++    g_xa2_started = 1;
++    return 1;
++}
++
+ /* Submit a buffer of mixed samples to XAudio2.
+  * Called from APU frame thread. Returns 1 if buffer was submitted. */
+ int xa2_submit_samples(const int16_t *samples, int num_samples)
+@@ -135,11 +256,33 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+     int copy_samples;
+     HRESULT hr;
+ 
+-    if (!g_xa2_initialized || !g_xa2_source) return 0;
++    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId() ||
++        !samples || num_samples <= 0) return 0;
++    if (!xa2_recover_if_needed()) return 0;
+ 
+     IXAudio2SourceVoice_GetState(g_xa2_source, &state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+-    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) return 0;
+-
++    if (!state.BuffersQueued && g_xa2_generation_submitted) {
++        ++g_xa2_stats.empty_queue;
++        if (g_xa2_started) {
++            /* No packet is owned by the voice. Restore startup headroom after
++             * an underrun instead of chasing a single packet indefinitely. */
++            hr = IXAudio2SourceVoice_Stop(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++            if (SUCCEEDED(hr)) {
++                g_xa2_started = 0;
++                ++g_xa2_stats.reprimes;
++            } else {
++                if (!g_xa2_stats.stop_failed)
++                    fprintf(stderr, "[XA2] Stop failed: 0x%08lX\n", hr);
++                ++g_xa2_stats.stop_failed;
++            }
++        }
++    }
++    /* Retry a failed start even if all retained packets fill the ring. */
++    if (!xa2_start_if_primed(state.BuffersQueued)) return 0;
++    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) {
++        ++g_xa2_stats.queue_full;
++        return 0;
++    }
+     idx = g_xa2_next_buf;
+     copy_samples = (num_samples > XA2_BUF_SAMPLES) ? XA2_BUF_SAMPLES : num_samples;
+     memcpy(g_xa2_bufs[idx], samples, copy_samples * XA2_CHANNELS * sizeof(int16_t));
+@@ -149,11 +292,20 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+     xbuf.pAudioData = (const BYTE *)g_xa2_bufs[idx];
+ 
+     hr = IXAudio2SourceVoice_SubmitSourceBuffer(g_xa2_source, &xbuf, NULL);
+-    if (FAILED(hr)) return 0;
++    if (FAILED(hr)) {
++        ++g_xa2_stats.submit_failed;
++        return 0;
++    }
+ 
+     g_xa2_next_buf = (idx + 1) % XA2_NUM_BUFS;
+     g_xa2_frames_written++;
+-    return 1;
++    g_xa2_stats.submitted_samples += copy_samples;
++    g_xa2_generation_submitted += copy_samples;
++    /* Starting an empty voice made the producer chase the very last samples
++     * of a single packet. Ordinary scheduling jitter could exhaust it even
++     * when no packets were rejected. Prime two packets (42.7 ms capacity)
++     * before playback, preserving one packet of scheduling headroom. */
++    return xa2_start_if_primed(state.BuffersQueued + 1);
+ }
+ 
+ int xa2_get_buffer_size(void)
+@@ -161,6 +313,21 @@ int xa2_get_buffer_size(void)
+     return XA2_BUF_SAMPLES;
+ }
+ 
++void xa2_get_output_stats(Xa2OutputStats *stats)
++{
++    *stats = g_xa2_stats;
++    stats->critical_errors = (unsigned)InterlockedCompareExchange(&g_xa2_critical_errors, 0, 0);
++    stats->critical_error_status = (int32_t)InterlockedCompareExchange(&g_xa2_critical_status, 0, 0);
++    if (g_xa2_initialized && g_xa2_source) {
++        XAUDIO2_VOICE_STATE state;
++        IXAudio2SourceVoice_GetState(g_xa2_source, &state, 0);
++        if (state.SamplesPlayed > g_xa2_generation_played)
++            g_xa2_generation_played = state.SamplesPlayed;
++        stats->played_samples = g_xa2_played_base + g_xa2_generation_played;
++        stats->queued_buffers = state.BuffersQueued;
++    }
++}
++
+ #else /* !_WIN32 -- POSIX stubs (no audio output yet) */
+ 
+ int  xa2_init(void)                                   { return 0; }
+@@ -168,5 +335,6 @@ void xa2_shutdown(void)                               {}
+ int  xa2_is_active(void)                              { return 0; }
+ int  xa2_submit_samples(const int16_t *s, int n)      { (void)s; (void)n; return 0; }
+ int  xa2_get_buffer_size(void)                        { return 0; }
++void xa2_get_output_stats(Xa2OutputStats *s)           { memset(s, 0, sizeof(*s)); }
+ 
+ #endif /* _WIN32 */
+diff --git a/src/apu/apu_xaudio2.h b/src/apu/apu_xaudio2.h
+index 83e652d..1b637cb 100644
+--- a/src/apu/apu_xaudio2.h
++++ b/src/apu/apu_xaudio2.h
+@@ -6,19 +6,32 @@
+ 
+ #include <stdint.h>
+ 
+-/* Initialize XAudio2. Returns 1 on success, 0 on failure. */
++/* Initialize and shut down on the APU submission thread. Returns 1 on success,
++ * 0 on failure. That thread owns the COM apartment and all graph resources. */
+ int xa2_init(void);
+ 
+ /* Shut down XAudio2 and release all resources. */
+ void xa2_shutdown(void);
+ 
+-/* Returns 1 if XAudio2 is active. */
++/* Returns 1 while selected, including a confirmed device-error recovery. */
+ int xa2_is_active(void);
+ 
+-/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted. */
++/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted and started
++ * when primed. A failed Start may leave accepted PCM queued: do not replay it. */
+ int xa2_submit_samples(const int16_t *samples, int num_samples);
+ 
+ /* Get the preferred buffer size in samples. */
+ int xa2_get_buffer_size(void);
+ 
++typedef struct Xa2OutputStats {
++    uint64_t submitted_samples, played_samples, queue_full, submit_failed;
++    uint64_t start_failed, stop_failed, empty_queue, reprimes;
++    uint64_t recovery_attempts, recoveries, recovery_failed, discarded_samples;
++    unsigned critical_errors;
++    int32_t critical_error_status;
++    unsigned queued_buffers;
++} Xa2OutputStats;
++/* Read only on the APU submission thread (or after that thread has joined). */
++void xa2_get_output_stats(Xa2OutputStats *stats);
++
+ #endif /* APU_XAUDIO2_H */
+diff --git a/src/apu/apu_timing.h b/src/apu/apu_timing.h
+new file mode 100644
+index 0000000..6e6b4cc
+--- /dev/null
++++ b/src/apu/apu_timing.h
+@@ -0,0 +1,38 @@
++#ifndef MCPX_APU_TIMING_H
++#define MCPX_APU_TIMING_H
++
++#include <stdint.h>
++
++/* Scale QPC without overflowing after long Windows uptime. */
++static inline int64_t mcpx_apu_clock_microseconds(int64_t count, int64_t frequency)
++{
++    return (count / frequency) * INT64_C(1000000) +
++           (count % frequency) * INT64_C(1000000) / frequency;
++}
++
++/* Keep ordinary scheduling jitter as sample debt. Reset only after a long
++ * interruption: catching up unbounded old audio would delay current gameplay.
++ * 64 ms is the capacity of the three 1024-sample XAudio2 packets. */
++static inline int mcpx_apu_rebase_deadline(int64_t *deadline, unsigned *fraction,
++                                          int64_t now)
++{
++    if (!*deadline || (now > *deadline && now - *deadline > 64000)) {
++        *deadline = now;
++        *fraction = 0;
++        return 1;
++    }
++    return 0;
++}
++
++/* 256 samples at 48 kHz: 5333 + 1/3 microseconds. Truncating every period
++ * made the producer outrun the device by 337.5 ms over a 90-minute session. */
++static inline void mcpx_apu_advance_deadline(int64_t *deadline, unsigned *fraction)
++{
++    *deadline += 5333;
++    if (++*fraction == 3) {
++        ++*deadline;
++        *fraction = 0;
++    }
 +}
 +
 +#endif

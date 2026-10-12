@@ -17,6 +17,7 @@ static void reset(void)
 {
     _putenv_s("RECOMP_BLACK_INPUT_MODE", "auto");
     _putenv_s("RECOMP_INPUT_SCRIPT", "");
+    _putenv_s("RECOMP_INPUT_SCRIPT_BACKGROUND", "");
     _putenv_s("RECOMP_PAD_SCRIPT", "");
     pc_input_test_reset(); pc_input_set_control_resolver(no_gameplay_control);
     pc_input_set_filter_slot(0,NULL); pc_input_set_filter_slot(1,NULL);
@@ -114,6 +115,136 @@ static void test_unfocused_pad(void)
     }
 }
 
+/* These IDs are a synthetic action-map contract, not retail table bytes. */
+static int background_control(int slot)
+{
+    return slot == 1 ? 4 : slot == 9 ? 23 : slot == 16 ? 22 : slot == 14 ? 19 : -1;
+}
+static unsigned audited_keys, audited_buttons, audited_wheels, audited_focus;
+static int audit_key(unsigned id,int down,int repeat)
+{ (void)id;(void)down;(void)repeat;++audited_keys;return 0; }
+static int audit_button(int button,int down)
+{ (void)button;(void)down;++audited_buttons;return 0; }
+static int audit_wheel(int delta) { (void)delta;++audited_wheels;return 0; }
+static void audit_focus(int focused) { (void)focused;++audited_focus; }
+static const PcInputFilter audit = {audit_key,audit_button,audit_wheel,NULL,audit_focus};
+static void configure_background(const char *script,const char *flag)
+{
+    reset();
+    _putenv_s("RECOMP_INPUT_SCRIPT",script ? script : "");
+    _putenv_s("RECOMP_INPUT_SCRIPT_BACKGROUND",flag ? flag : "");
+    pc_input_test_reset();
+    pc_input_set_control_resolver(background_control);
+    time_at(100000);
+}
+static void clear_report(uint8_t out[20]) { memset(out,0,20);out[1]=20; }
+static void test_background_script_isolation(void)
+{
+    uint8_t out[20];
+    double yaw,pitch;
+    const char *script="0:down:W,0:down:Mouse1,0:move:10:20,100:up:W,100:up:Mouse1,"
+        "150:tap:Enter,180:wheel:1,200:down:W,220:focus:1,240:focus:0,300:up:W";
+    configure_background(script,"1");
+    audited_keys=audited_buttons=audited_wheels=audited_focus=0;
+    pc_input_set_filter_slot(0,&audit);
+    pc_input_gameplay_tick();
+    CHECK(pc_input_gameplay_active());
+    CHECK(!pc_input_capture_wanted());
+    clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0xFF && out[15]==0x7F && out[11]==255);
+    CHECK(audited_keys==1 && audited_buttons==1 && audited_wheels==0);
+
+    pc_input_capture_changed(1); /* a physical notification must preserve script look */
+    CHECK(!pc_input_cursor_hidden_wanted());
+    pc_input_focus_event(0);
+    CHECK(pc_input_gameplay_active());
+    CHECK(!pc_input_capture_wanted() && !pc_input_cursor_hidden_wanted());
+    CHECK(audited_focus==0);
+    pc_input_key_event(0x1C,0,1,0);pc_input_key_event(0x11,0,0,0);
+    pc_input_mouse_button_event(0,0);pc_input_mouse_button_event(1,1);
+    pc_input_wheel_event(1);pc_input_mouse_motion(1000,1000);
+    CHECK(audited_keys==1 && audited_buttons==1 && audited_wheels==0);
+    CHECK(pc_input_consume_look(&yaw,&pitch));
+    CHECK(yaw < -0.599999 && yaw > -0.600001);
+    CHECK(pitch > 1.199999 && pitch < 1.200001);
+    CHECK(!pc_input_consume_look(&yaw,&pitch));
+    pc_input_frame_complete();pc_input_frame_complete(); /* asynchronous camera gap */
+    clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0xFF && out[15]==0x7F && out[11]==255);
+    CHECK(out[4]==0 && out[10]==0 && !(out[2]&0x10));
+    pc_input_capture_changed(0);
+    pc_input_focus_event(1); /* focus return must not discard the same script holds */
+    CHECK(audited_focus==0 && !pc_input_capture_wanted());
+    pc_input_key_event(0x1C,0,1,0);pc_input_mouse_button_event(1,1);
+    pc_input_wheel_event(-1);pc_input_mouse_motion(1000,1000);
+    CHECK(audited_keys==1 && audited_buttons==1 && audited_wheels==0);
+    CHECK(!pc_input_consume_look(&yaw,&pitch));
+    pc_input_focus_event(0);pc_input_gameplay_tick();
+    time_at(100100);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0 && out[15]==0 && out[11]==0);
+    time_at(100150);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[4]==255); /* virtual confirmation still passes through the filters */
+    time_at(100180);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[7]==255 && audited_wheels==1);
+    time_at(100200);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0xFF && out[15]==0x7F);
+    time_at(100220);clear_report(out);pc_input_apply_report(out,0);
+    time_at(100240);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0xFF && out[15]==0x7F && !(out[2]&0x10));
+    CHECK(audited_focus==0 && !pc_input_capture_wanted());
+    time_at(100300);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[14]==0 && out[15]==0);
+    reset();
+}
+static void test_background_setting_fail_closed(void)
+{
+    uint8_t out[20];
+    static const struct {const char *script,*flag;} cases[]={
+        {"0:down:W",NULL},{"0:down:W","0"},{"0:down:W","true"},
+        {"0:down:W","01"},{"0:down:W","1junk"},{"0:down:W","1 "},
+        {NULL,"1"},{"","1"},{"not-a-script","1"},{"0:unknown:W","1"},
+        {"0:down:NoSuchKey","1"},{"0:down:W,10:unknown:W","1"},
+        {":down:W","1"},{"-1:down:W","1"},{"10:down:W,0:up:W","1"},
+        {"0:move:bad:2","1"},{"0:move:1:bad","1"},{"0:wheel:bad","1"},
+        {"0:focus:2","1"},{"0:down:W,","1"},
+        {"18446744073709551616:down:W","1"},
+        {"0:move:9999999999999999999999999999:2","1"}
+    };
+    unsigned i;
+    for(i=0;i<sizeof(cases)/sizeof(cases[0]);++i) {
+        configure_background(cases[i].script,cases[i].flag);
+        audited_focus=0;pc_input_set_filter_slot(0,&audit);
+        pc_input_gameplay_tick();
+        CHECK(pc_input_capture_wanted());
+        clear_report(out);pc_input_apply_report(out,0);
+        pc_input_focus_event(0);
+        CHECK(audited_focus==1);
+        pc_input_focus_event(0);CHECK(audited_focus==1);
+        CHECK(!pc_input_gameplay_active() && !pc_input_capture_wanted());
+        clear_report(out);pc_input_apply_report(out,0);
+        CHECK((out[2]&0x10)!=0 && out[11]==0 && out[14]==0 && out[15]==0);
+    }
+    /* Reset must remove the prior lab exception and restore physical input. */
+    configure_background("0:down:W","1");
+    reset();tap(0x1C);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(out[4]==255);
+    reset();
+}
+static void test_background_movie_filter(void)
+{
+    uint8_t out[20];
+    configure_background("0:tap:Enter,100:tap:Enter","1");
+    pc_movie_skip_update(1,PC_MOVIE_SKIP_CUTSCENE,1);
+    pc_input_focus_event(0);
+    clear_report(out);pc_input_apply_report(out,0);
+    CHECK(prompt && !pc_movie_skip_take_request(1));
+    pc_input_key_event(0x1C,0,1,0);pc_input_key_event(0x1C,0,0,0);
+    CHECK(prompt && !pc_movie_skip_take_request(1));
+    time_at(100100);clear_report(out);pc_input_apply_report(out,0);
+    CHECK(pc_movie_skip_take_request(1));
+    reset();
+}
+
 int main(void)
 {
     unsigned eligible[] = {0x01,0x1c,0x39}; unsigned i;
@@ -172,5 +303,8 @@ int main(void)
     test_enter_maps_to_xbox_a();
     test_filtered_mouse_release();
     test_unfocused_pad();
+    test_background_script_isolation();
+    test_background_setting_fail_closed();
+    test_background_movie_filter();
     printf("PASS: %u movie skip checks\n",checks); return 0;
 }

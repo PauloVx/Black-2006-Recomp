@@ -1,0 +1,292 @@
+{"id": "0000", "text": "Anzeige", "review_status": "reviewed-ui-term"}
+{"id": "0001", "text": "Grafik", "review_status": "reviewed-ui-term"}
+{"id": "0002", "text": "Eingabe", "review_status": "reviewed-ui-term"}
+{"id": "0003", "text": "Spiel", "review_status": "reviewed-ui-term"}
+{"id": "0004", "text": "BLACK | PC-Launcher", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0005", "text": "BLACK / FÜR PC NEU KOMPILIERT", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0006", "text": "Entwicklungsversion", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0007", "text": "Das Spiel funktioniert mit Tastatur, Maus und Controller.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0008", "text": "Ausgabeauflösung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0009", "text": "Fenstermodus", "review_status": "reviewed-ui-term"}
+{"id": "0010", "text": "Fenstermodus", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0011", "text": "Randlos", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0012", "text": "Vollbild", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0013", "text": "Interne Auflösung", "review_status": "reviewed-ui-term"}
+{"id": "0014", "text": "Skalierung", "review_status": "reviewed-ui-term"}
+{"id": "0015", "text": "Einpassen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0016", "text": "Dehnen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0017", "text": "Ganzzahlige Skalierung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0018", "text": "Skalierungsfilter", "review_status": "reviewed-ui-term"}
+{"id": "0019", "text": "Weich", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0020", "text": "Scharf", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0021", "text": "Vertikale Synchronisierung", "review_status": "reviewed-ui-term"}
+{"id": "0022", "text": "FPS-Begrenzung", "review_status": "reviewed-ui-term"}
+{"id": "0023", "text": "Seitenverhältnis", "review_status": "reviewed-ui-term"}
+{"id": "0024", "text": "Original", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0025", "text": "Bewegungsunschärfe", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0026", "text": "Vertikales Sichtfeld", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0027", "text": "Behält das ursprüngliche Sichtfeld und den Zielzoom von BLACK bei. Deaktiviere das Kontrollkästchen, um einen vertikalen Winkel in Grad festzulegen.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0028", "text": "Vertikales Sichtfeld in Grad. Höhere Werte zeigen mehr oberhalb und unterhalb; das Seitenverhältnis der Kamera bestimmt die Breite des Sichtfelds.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0029", "text": "Legt fest, wie das Bild in ein angepasstes Fenster oder Video passt. Seitenverhältnis beibehalten fügt Balken hinzu; Strecken füllt das Fenster.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0030", "text": "Größe des Spielfensters im Fenstermodus. Gespeicherte benutzerdefinierte Größen bleiben verfügbar.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0031", "text": "Anzahl der vom Spiel gerenderten Zeilen. Die Breite richtet sich nach dem Seitenverhältnis der Kamera, das Bild wird an das Fenster angepasst. Ein höherer Wert ist schärfer, kostet aber Leistung. Auch die spielinterne Seite „Videoeinstellungen“ (Optionen) ändert diesen Wert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0032", "text": "Skalierung und Filterung sind unabhängig. Weich mischt benachbarte Pixel; Scharf erhält klare Pixelkanten.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0033", "text": "Begrenzt die Aktualisierungen der Anzeige. Die Simulationsgeschwindigkeit des Spiels bleibt unverändert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0034", "text": "Ändert die Breite des Kamerabilds. Die Auflösung bestimmt die Bilddetails; das Sichtfeld bestimmt den vertikalen Blickwinkel.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0035", "text": "Anti-Aliasing", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0036", "text": "Anisotrope Filterung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0037", "text": "Schärfentiefe", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0038", "text": "Schärfung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0039", "text": "Umgebungsokklusion", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0040", "text": "AO-Qualität", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0041", "text": "Aus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0042", "text": "Niedrig", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0043", "text": "Mittel", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0044", "text": "Hoch", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0045", "text": "Ultra", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0046", "text": "FXAA", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0047", "text": "SSAA 4x", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0048", "text": "SSAO Classic", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0049", "text": "GPU-Renderereffekte, die vor der Spieloberfläche auf das Bild angewendet werden. Die spielinterne Seite „Videoeinstellungen“", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0050", "text": "(Optionen > V) ändert diese Werte ebenfalls während des Spiels. Die interne Auflösung befindet sich im Tab „Anzeige“.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0051", "text": "FXAA glättet gezackte Kanten mit kaum messbarem Aufwand. SSAA 4x rendert mit doppelter Breite und Höhe und verkleinert das Bild anschließend: das sauberste Ergebnis, aber auch die höchste GPU-Last. Benötigt den GPU-Renderer.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0052", "text": "Hält Texturen auf schräg betrachteten Böden und Wänden scharf. Kostet kaum Leistung. Benötigt den GPU-Renderer.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0053", "text": "Verwischt den Bereich hinter dem anvisierten Punkt; Waffe und Spieloberfläche bleiben scharf. Benötigt den GPU-Renderer.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0054", "text": "Stellt feine Details wieder her, die durch Filterung und Skalierung verloren gehen. Benötigt den GPU-Renderer.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0055", "text": "Umgebungsverdeckung erzeugt Kontaktschatten anhand der Szenentiefe. Wähle SSAO Classic, HBAO, HBAO+ oder GTAO. Benötigt den GPU-Renderer.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0056", "text": "Höhere Qualität erhöht die AO-Abtastdichte und den Radius und belastet damit die GPU stärker. Alle Stufen verwenden Szenenauflösung und tiefenabhängige Unschärfe. Wähle eine AO-Methode, um den Effekt zu aktivieren.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0057", "text": "Nur Controller deaktiviert Tastatur und Maus im Spiel; nur Tastatur und Maus deaktiviert den Controller.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0058", "text": "Rohe Mauseingabe ohne Beschleunigung. 1,00 entspricht 0,06 Grad pro Mausbewegungseinheit.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0059", "text": "Gibt an, wie oft die Spieluhr weiterschaltet. Die ausgegebenen Bilder folgen diesem Takt; für 240 FPS braucht man einen schnellen PC und einen 240-Hz-Bildschirm.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0060", "text": "Zeichnet das Spiel auf der Grafikkarte und hält bei 3440x1440 60 FPS. Aus verwendet den CPU-Renderer, der bei hohen Auflösungen deutlich langsamer ist.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0061", "text": "Beschleunigt die Spielzeit, sodass jeder angezeigte Frame auch simuliert wird. Aus behält den ursprünglichen 30-Hz-Takt bei.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0062", "text": "Spielsprache", "review_status": "reviewed-ui-term"}
+{"id": "0063", "text": "Menüsprache", "review_status": "reviewed-ui-term"}
+{"id": "0064", "text": "Wählt die Textbank des Spiels aus. Der Launcher setzt diese Auswahl vor jedem Start; Englisch ist standardmäßig ausgewählt.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0065", "text": "Englisch", "review_status": "reviewed-ui-term"}
+{"id": "0066", "text": "Portugiesisch (Brasilien)", "review_status": "reviewed-ui-term"}
+{"id": "0067", "text": "Videos überspringen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0068", "text": "Startmenüs automatisch fortsetzen (erste 65 Sekunden)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0069", "text": "Detaillierter Grafik-Trace", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0070", "text": "Bilder (Start-Ende/Schritt)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0071", "text": "Detaillierter DSP-Status-Trace (GP/EP-Stack)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0072", "text": "GPU-Zeichenprotokoll (Frame, Anzahl)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0073", "text": "Zeichnet detaillierte [KTRACE]-Zeichnungsdaten in reports\\...\\visual-trace.log auf (max. 1 MB). Erfordert eine Kelvin-CPU; deaktiviere für diese Diagnose den GPU-Renderer. Während der Erfassung synchronisiert der Renderer die Arbeit, wodurch sich das Frame-Timing ändern kann. Vergleiche die Leistung mit einem Lauf ohne Trace.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0074", "text": "Beispiele: 120, 120-180 oder 120-240/30. Erfordert eine Kelvin-CPU und kann das Frame-Timing ändern; vergleiche die Leistung mit einem normalen Lauf.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0075", "text": "Zeichnet den GP/EP-Status, die Aktivität der EP-Ausgabe-FIFO und die endgültigen PCM-Pegel etwa einmal pro Sekunde in reports\\...\\audio-dsp-trace.log auf (max. 1 MB). Es wird kein Audio gespeichert; kurze Stack-Ereignisse können fehlen.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0076", "text": "Lass das Feld leer, um diese Diagnose deaktiviert zu lassen. Beispiel: 2400,2 zeichnet höchstens 2 Frames in reports\\...\\kgpu-draw-trace.log auf (max. 1 MB). Erfordert eine Kelvin-GPU und verursacht während dieser Frames zusätzlichen Aufwand.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0077", "text": "Renderer-Threads", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0078", "text": "Tastenbelegungen...", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0079", "text": "Vertikale Mausachse umkehren", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0080", "text": "Anzeigemodus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0081", "text": "FPS-Limit", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0082", "text": "Auflösung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0083", "text": "Spielbereit", "review_status": "reviewed-ui-term"}
+{"id": "0084", "text": "PC-Release-Version fehlt", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0085", "text": "Spiel läuft", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0086", "text": "Spiel kann nicht gestartet werden", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0087", "text": "Spiel wird gestoppt...", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0088", "text": "Spiel gestoppt", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0089", "text": "Spiel geschlossen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0090", "text": "Protokolle öffnen", "review_status": "reviewed-ui-term"}
+{"id": "0091", "text": "Steuerung", "review_status": "reviewed-ui-term"}
+{"id": "0092", "text": "Spiel beenden", "review_status": "reviewed-ui-term"}
+{"id": "0093", "text": "SPIELEN", "review_status": "reviewed-ui-term"}
+{"id": "0094", "text": "Fehler melden", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0095", "text": "Fehlerbericht senden", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0096", "text": "Beschreibe, was passiert ist", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0097", "text": "Hänge die aufgeführten Protokolle vor dem Absenden auf GitHub an. Verwende „Dateien anhängen“ oder ziehe sie in das Beschreibungsfeld. Prüfe den Bericht und sende ihn anschließend ab.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0098", "text": "Der GitHub-Bericht wird auf Englisch erstellt. Die Protokolle bleiben auf diesem PC; Dateien werden nicht automatisch angehängt. Ergänze weitere Angaben unter „Additional notes“ auf GitHub.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0099", "text": "Protokolle aus der letzten Sitzung zum Anhängen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0100", "text": "Ein lokaler Markdown-Entwurf wird gespeichert und kopiert. Der Launcher lädt keine Dateien hoch.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0101", "text": "Protokollordner öffnen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0102", "text": "Der Protokollordner konnte nicht geöffnet werden", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0103", "text": "Dieses Protokoll anhängen:", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0104", "text": "Falls verfügbar, auch anhängen:", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0105", "text": "Optionales Diagnoseprotokoll:", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0106", "text": "Es wurde kein Launcher-Sitzungsordner gefunden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0107", "text": "Das Hauptprotokoll der Sitzung wurde nicht gefunden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0108", "text": "Erkannte Informationen aus der letzten Sitzung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0109", "text": "Ein lokaler Markdown-Entwurf wird gespeichert und kopiert. Die Protokolle bleiben auf diesem PC; hänge sie bei Bedarf manuell an.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0110", "text": "Bericht vorbereiten und GitHub öffnen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0111", "text": "Beschreibe vor dem Erstellen des Berichts, was passiert ist.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0112", "text": "Der Bericht wurde gespeichert und kopiert. Prüfe das vorausgefüllte GitHub-Issue und klicke auf Submit. Falls der Browser den Text gekürzt hat, enthält die Zwischenablage den vollständigen Bericht.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0113", "text": "Bericht bereit", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0114", "text": "Bericht konnte nicht erstellt werden: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0115", "text": "# BLACK-Fehlerbericht für PC", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0116", "text": "## Beschreibung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0117", "text": "## Erkannte Diagnosedaten", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0118", "text": "Der Launcher lädt keine Protokolle hoch. Hänge die relevanten Dateien über das GitHub-Issue-Formular an.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0119", "text": "Es wurden keine Launcher-Sitzungsdaten gefunden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0120", "text": "Sitzungsordner: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0121", "text": "Exit-Code des Prozesses: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0122", "text": "Gestartet (UTC): ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0123", "text": "Spielsprache: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0124", "text": "SHA-256 der Spieldatei: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0125", "text": "SHA-256 des Originalspiels: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0126", "text": "Klassifizierung: Der Prozess wurde mit einem von null verschiedenen Code beendet.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0127", "text": "Klassifizierung: Es wurde kein Exitcode ungleich null erkannt. Bitte beschreiben Sie das gemeldete Symptom.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0128", "text": "In session.log wurden keine Zeilen mit den Begriffen error, failure oder exception gefunden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0129", "text": "Neueste Zeilen aus session.log, die auf einen Fehler hindeuten:", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0130", "text": "Neueste Zeilen aus kernel.log, die auf einen Fehler hindeuten:", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0131", "text": "In kernel.log wurden keine Zeilen gefunden, die auf einen Fehler hindeuten.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0132", "text": "Diagnosedateien dieser Sitzung: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0133", "text": "Sitzungsdiagnose konnte nicht gelesen werden: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0134", "text": "keine", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0135", "text": "Einstellungen konnten nicht gespeichert werden: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0136", "text": "Protokolle konnten nicht geöffnet werden", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0137", "text": "BLACK-Steuerung für PC", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0138", "text": "Schließen Sie ein bereits laufendes Spiel, bevor Sie auf „Spielen“ klicken. Dieser Launcher kann Spielsitzungen beenden, die er gestartet hat.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0139", "text": "Tastatur und Maus sind einsatzbereit; ein Controller ist optional. Der Start kann eine Minute dauern.\nSpielstände bleiben im lokalen Speicherordner.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0140", "text": "Die visuelle Aufzeichnung kann das Frame-Timing beeinflussen. Vergleichen Sie die Leistung mit einem normalen Spielstart.\nDetaillierte Daten: visual-trace.log (max. 1 MB).", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0141", "text": "Der DSP-Trace erfasst GP/EP und die endgültigen PCM-Pegel etwa einmal pro Sekunde; das Timing kann sich leicht verschieben.\nDetaillierte Daten: audio-dsp-trace.log (max. 1 MB).", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0142", "text": "Die Protokollierung der GPU-Zeichnungen verursacht bei ausgewählten Frames zusätzlichen Aufwand.\nDetaillierte Daten: kgpu-draw-trace.log (max. 1 MB).", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0143", "text": "Spiele über das BLACK-Fenster.\n„Spiel beenden“ schließt den Spielprozess; speichere vorher.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0144", "text": "Öffnen Sie die Protokolle mit den Ausgaben und Starteinstellungen dieser Sitzung.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0145", "text": "Fehler beim Schreiben des Sitzungsprotokolls: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0146", "text": "Schließen Sie das Spielfenster oder klicken Sie auf „Spiel stoppen“, um die Sitzung zu beenden. Warten Sie den Speichervorgang ab, bevor Sie das Spiel schließen.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0147", "text": "Belegen ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0148", "text": "Drücke eine Taste, klicke eine Maustaste oder drehe das Mausrad, um\n", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0149", "text": "Diese Tastenbelegung löschen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0150", "text": "Abbrechen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0151", "text": "F11 schaltet den Vollbildmodus ein und aus und kann nicht belegt werden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0152", "text": "Diese Taste kann nicht belegt werden.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0153", "text": "Tastatur- und Mausbelegungen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0154", "text": "Doppelklicken Sie auf ein Feld (oder wählen Sie es aus und drücken Sie die Eingabetaste). Drücken Sie anschließend die gewünschte Taste oder Maustaste.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0155", "text": "Aktion", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0156", "text": "Tastenbelegung 1", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0157", "text": "Tastenbelegung 2", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0158", "text": "Tastenbelegung 3", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0159", "text": "Auf Standardeinstellungen zurücksetzen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0160", "text": "OK", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0161", "text": "Escape (Pause / Zurück) und F11 (Vollbild) sind fest belegt. Enter bestätigt immer; mit Pfeiltasten und Mausrad navigierst du durch die Menüs.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0162", "text": "Gemeinsam belegte Tasten: ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0163", "text": ". Beide Aktionen werden ausgelöst.", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0164", "text": "BLACK-PC-Launcher", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0165", "text": "BLACK für PC", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0166", "text": "PC-Spiel läuft bereits (PID ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0167", "text": "Schließen Sie ein bereits laufendes Spiel, bevor Sie auf „Spielen“ klicken.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0168", "text": "BLACK für PC / Lokale Spielstände", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0169", "text": "hochskaliert", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0170", "text": "gespeichert", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0171", "text": "Benutzerdefiniert", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0172", "text": "Original", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0173", "text": "Standard", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0174", "text": "Automatisch", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0175", "text": "Tastatur und Maus", "review_status": "reviewed-ui-term"}
+{"id": "0176", "text": "Controller", "review_status": "reviewed-ui-term"}
+{"id": "0177", "text": "Mausempfindlichkeit", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0178", "text": "Gerät für die Tastenhinweise", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0179", "text": "Eingabemodus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0180", "text": "Videoeinstellungen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0181", "text": "Das Spiel funktioniert mit Tastatur, Maus und Controller.\nDiese Version ist experimentell; Abstürze und Ungenauigkeiten sind weiterhin möglich.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0182", "text": "Fenster", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0183", "text": "Filter", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0184", "text": "Randloser Vollbildmodus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0185", "text": "Seitenverhältnis beibehalten", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0186", "text": "Zum Füllen dehnen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0187", "text": "Ganzzahlige Skalierung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0188", "text": "Unbegrenzt", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0189", "text": "Standard (4:3)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0190", "text": "Breitbild (16:9)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0191", "text": "Ultraweit (21:9)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0192", "text": "Super-Ultrawide (32:9)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0193", "text": "Intern", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0194", "text": "720p (Standard)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0195", "text": "SSAA 4x (2 × 2)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0196", "text": "Eingabegeräte", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0197", "text": "Tastenhinweise", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0198", "text": "Empfindlichkeit", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0199", "text": "0,06° pro Bewegungseinheit", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0200", "text": "Tastatur, Maus und Controller", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0201", "text": "Nur Tastatur und Maus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0202", "text": "Zuletzt verwendetes Eingabegerät folgen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0203", "text": "Sichtfeld", "review_status": "reviewed-ui-term"}
+{"id": "0204", "text": "Limit angezeigter Bilder", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0205", "text": "Skalierungsmodus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0206", "text": "Taktfrequenz der Spielsimulation", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0207", "text": "Eingabegeräte", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0208", "text": "Tastenhinweise", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0209", "text": "Ursprüngliches Sichtfeld", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0210", "text": "Vertikales Sichtfeld in Grad", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0211", "text": "Vorwärts bewegen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0212", "text": "Rückwärts bewegen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0213", "text": "Nach links bewegen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0214", "text": "Nach rechts bewegen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0215", "text": "Nach links blicken (Tasten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0216", "text": "Nach rechts blicken (Tasten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0217", "text": "Nach oben blicken (Tasten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0218", "text": "Nach unten blicken (Tasten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0219", "text": "Nicht belegt", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0220", "text": "Linke Strg-Taste", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0221", "text": "Rechte Strg-Taste", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0222", "text": "Strg (beide Seiten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0223", "text": "Umschalttaste links", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0224", "text": "Umschalttaste rechts", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0225", "text": "Umschalttaste (beide Seiten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0226", "text": "Alt links", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0227", "text": "Alt rechts", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0228", "text": "Alt (beide Seiten)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0229", "text": "Linke Maustaste", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0230", "text": "Rechte Maustaste", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0231", "text": "Mittlere Maustaste", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0232", "text": "Maustaste 4", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0233", "text": "Maustaste 5", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0234", "text": "Mausrad nach oben", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0235", "text": "Mausrad nach unten", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0236", "text": "Feuern", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0237", "text": "Zielen / Zoomen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0238", "text": "Nachladen", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0239", "text": "Ducken", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0240", "text": "Benutzen / Aufheben", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0241", "text": "Waffe wechseln", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0242", "text": "Waffe wechseln (in die andere Richtung)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0243", "text": "Granate werfen", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0244", "text": "Feuermodus", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0245", "text": "Schalldämpfer", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0246", "text": "Nahkampfangriff", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0247", "text": "Medikit verwenden", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0248", "text": "Gegenstand wechseln (weiß)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0249", "text": "Zurück / Missionsziele", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0250", "text": "Start (Pause)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0251", "text": "TASTATUR UND MAUS (kein Controller erforderlich)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0252", "text": "Blick: Bewege die Maus (Rohdaten, keine Beschleunigung).", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0253", "text": "Menüs: Mit Pfeiltasten oder Mausrad navigieren; mit Enter, Leertaste oder linker Maustaste auswählen,", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0254", "text": "Mit Rücktaste, rechter Maustaste oder Escape zurückgehen. Enter bestätigt auch „Zum Fortfahren“ angezeigte Hinweise.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0255", "text": "Escape pausiert eine Mission.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0256", "text": "NUR CONTROLLER", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0257", "text": "CONTROLLER (optional)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0258", "text": "Jeder XInput-Controller funktioniert wie bisher.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0259", "text": "Spiel- und Menüsteuerung per Tastatur und Maus ist deaktiviert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0260", "text": "Die Controller-Eingabe ist deaktiviert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0261", "text": "Tastenhinweise folgen dem zuletzt verwendeten Gerät.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0262", "text": "Tastenhinweise zeigen Controller-Tasten.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0263", "text": "Tastenhinweise zeigen Tastatur- und Mausbelegungen.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0264", "text": "Wenn Sie das Spielfenster verlassen, wird die Mission pausiert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0265", "text": "F11 schaltet den Vollbildmodus um. Videos: Escape überspringt das aktuelle Video.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0266", "text": "Größe des Spielfensters", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0267", "text": "480p", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0268", "text": "720p", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0269", "text": "1080p", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0270", "text": "1440p", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0271", "text": "2160p", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0272", "text": "60 Simulationsschritte pro Sekunde", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0273", "text": "120 Simulationsschritte pro Sekunde", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0274", "text": "240 Simulationsschritte pro Sekunde", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0275", "text": "Erhöhter Takt (das Originalspiel lief mit 30)", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0276", "text": "GPU-Renderer (Direct3D 11)", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0277", "text": "FPS", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0278", "text": "Original behält die Bewegungsunschärfe von BLACK bei. Aus deaktiviert diesen Effekt, lässt die übrigen Bildeffekte aber aktiv.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0279", "text": "Tastenbelegung", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0280", "text": "Anisotrope Filterung", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0281", "text": "Umgebungsokklusionsmethode", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0282", "text": "Qualität der Umgebungsokklusion", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0283", "text": "Seitenverhältnis", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0284", "text": "Sprache auswählen", "review_status": "reviewed-ui-term"}
+{"id": "0285", "text": "PC-Spiel läuft bereits", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0286", "text": "Spielstatus", "review_status": "editorial-reviewed-needs-native-review"}
+{"id": "0287", "text": "Mit WASD bewegst du dich; die Maus steuert den Blick und die linke Maustaste feuert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0288", "text": "Escape pausiert eine Mission und kehrt in Menüs zurück. Auch beim Verlassen des Fensters wird das Spiel pausiert.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0289", "text": "F11 schaltet den Vollbildmodus um. Die Hinweise im Spiel zeigen deine tatsächlichen Tastenbelegungen.", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0290", "text": " standardmäßig auf diesem PC mit ", "review_status": "editorial-revised-needs-native-review"}
+{"id": "0291", "text": " Threads", "review_status": "editorial-revised-needs-native-review"}

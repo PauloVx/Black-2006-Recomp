@@ -15,9 +15,14 @@
 #include <stdint.h>
 #include <ctype.h>
 #include "pc_menu.h"
+#include "pc_movie_skip.h"
 #include "pc_input.h"
 #include "pc_video.h"
 #include "pc_video_menu.h"
+
+/* The menu regression never runs a movie, so keep the subtitle service inactive. */
+int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity)
+{ if (out && capacity) out[0] = 0; return 0; }
 
 static int g_fail, g_pass, g_have_files;
 #define CHECK(c, ...) do { if (c) g_pass++; else { g_fail++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
