@@ -62,12 +62,25 @@ target_include_directories(ao-scene-retry-test PRIVATE "${CMAKE_CURRENT_BINARY_D
 set_property(TARGET ao-scene-retry-test PROPERTY C_STANDARD 11)
 set_property(TARGET ao-scene-retry-test PROPERTY C_STANDARD_REQUIRED ON)
 
+set(focus_gap_extracted "${CMAKE_CURRENT_BINARY_DIR}/focus_gap.extracted.inc")
+add_custom_command(OUTPUT "${focus_gap_extracted}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_focus_gap.py"
+        --source "${runtime_post}" --output "${focus_gap_extracted}"
+    DEPENDS "${runtime_post}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_focus_gap.py"
+    COMMENT "Extracting the production autofocus coordinator" VERBATIM)
+set_source_files_properties("${focus_gap_extracted}" PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+add_executable(ao-focus-gap-test test_focus_gap.c "${focus_gap_extracted}")
+target_include_directories(ao-focus-gap-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${XBOXRECOMP_DIR}/src/nv2a/kelvin")
+set_property(TARGET ao-focus-gap-test PROPERTY C_STANDARD 11)
+set_property(TARGET ao-focus-gap-test PROPERTY C_STANDARD_REQUIRED ON)
+
 enable_testing()
 add_test(NAME ao-video COMMAND ao-video-test)
 add_test(NAME ao-menu COMMAND ao-menu-test)
 add_test(NAME ao-warp COMMAND ao-warp-test "${runtime_post}")
 add_test(NAME ao-post-order COMMAND ao-post-order-test)
 add_test(NAME ao-scene-retry COMMAND ao-scene-retry-test)
+add_test(NAME ao-focus-gap COMMAND ao-focus-gap-test)
 set_tests_properties(ao-video ao-menu ao-warp ao-post-order PROPERTIES TIMEOUT 120)
 # Retail files are optional for local visual checks. CI exercises the source-only page model.
 set_tests_properties(ao-menu PROPERTIES ENVIRONMENT "BLACK_GAME_DIR=")

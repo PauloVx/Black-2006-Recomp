@@ -58,6 +58,28 @@ jobs:
             ctest --test-dir build-apu-pitch -C $configuration --output-on-failure
             if ($LASTEXITCODE -ne 0) { throw "$configuration regression failed" }
           }
+      - name: Build and run audio clock and pacing regression
+        shell: pwsh
+        run: |
+          cmake -S tests/apu_timing -B build-apu-timing -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Timing test configure failed' }
+          foreach ($configuration in 'Release', 'Debug') {
+            cmake --build build-apu-timing --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw "$configuration timing build failed" }
+            ctest --test-dir build-apu-timing -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$configuration timing regression failed" }
+          }
+      - name: Build and run audio output queue regression
+        shell: pwsh
+        run: |
+          cmake -S tests/apu_output -B build-apu-output -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Output test configure failed' }
+          foreach ($configuration in 'Release', 'Debug') {
+            cmake --build build-apu-output --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw "$configuration output build failed" }
+            ctest --test-dir build-apu-output -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$configuration output regression failed" }
+          }
       - name: Build and run spatial fallback regression
         shell: pwsh
         run: |

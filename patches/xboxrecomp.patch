@@ -248,7 +248,7 @@ index f7b9f8f..06754f2 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
  
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..687b74a 100644
+index 459be77..f249805 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -393,21 +393,48 @@ index 459be77..687b74a 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +331,97 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +331,139 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
 -    if ((d->ep_frame_div + 1) % 8) {
 -        return;
 +    if ((d->ep_frame_div + 1) % 8) return;
-+    d->monitor.ep_fifo_frame_valid = false;
-+
-+    /* EP FIFO writes can be split across DMA descriptors. Consume only a
-+     * complete block at the output boundary and discard any partial tail. */
-+    if (d->ep.dsp) {
-+        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
-+        d->ep.dsp->ep_fifo_frame_ready = false;
++    if (d->trace_output) {
++        int64_t now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
++        if (!d->output_started_us) {
++            d->output_started_us = now;
++            fprintf(stderr, "[AUDIO] start-us=%lld rate=48000 block-samples=%d\n",
++                    (long long)now, MIXER_FRAME_SAMPLES);
++        }
++        if (++d->output_blocks % 938 == 0) {
++            Xa2OutputStats stats;
++            xa2_get_output_stats(&stats);
++            fprintf(stderr, "[AUDIO] elapsed-us=%lld produced-samples=%llu native-ticks=%llu dry-ticks=%llu clipped=%llu source-nonzero=%llu silent-blocks=%llu muted=%d submitted=%llu played=%llu queued=%u queue-full=%llu submit-failed=%llu start-failed=%llu stop-failed=%llu empty-queue=%llu reprimes=%llu critical-errors=%u critical-status=%08X recovery-attempts=%llu recoveries=%llu recovery-failed=%llu discarded-samples=%llu rebases=%llu\n",
++                    (long long)(now - d->output_started_us),
++                    (unsigned long long)(d->output_blocks * MIXER_FRAME_SAMPLES),
++                    (unsigned long long)d->output_native_ticks,
++                    (unsigned long long)d->output_dry_ticks,
++                    (unsigned long long)d->output_clipped_samples,
++                    (unsigned long long)d->output_nonzero_samples,
++                    (unsigned long long)d->output_silent_blocks, g_audio_muted,
++                    (unsigned long long)stats.submitted_samples,
++                    (unsigned long long)stats.played_samples, stats.queued_buffers,
++                    (unsigned long long)stats.queue_full,
++                    (unsigned long long)stats.submit_failed,
++                    (unsigned long long)stats.start_failed,
++                    (unsigned long long)stats.stop_failed,
++                    (unsigned long long)stats.empty_queue,
++                    (unsigned long long)stats.reprimes,
++                    stats.critical_errors, (unsigned)stats.critical_error_status,
++                    (unsigned long long)stats.recovery_attempts,
++                    (unsigned long long)stats.recoveries,
++                    (unsigned long long)stats.recovery_failed,
++                    (unsigned long long)stats.discarded_samples,
++                    (unsigned long long)d->output_rebases);
++        }
      }
++    d->monitor.ep_fifo_frame_valid = false;
  
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
@@ -428,6 +455,21 @@ index 459be77..687b74a 100644
 -                    g_test_tone.phase += g_test_tone.phase_inc;
 -                    if (g_test_tone.phase >= 2.0 * M_PI)
 -                        g_test_tone.phase -= 2.0 * M_PI;
+-                }
+-            }
+-
+-            if (!g_audio_muted)
+-                mixer_render(d->monitor.frame_buf, chunk);
++    /* EP FIFO writes can be split across DMA descriptors. Consume only a
++     * complete block at the output boundary and discard any partial tail. */
++    if (d->ep.dsp) {
++        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
++        d->ep.dsp->ep_fifo_frame_ready = false;
++    }
+ 
+-            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
+-            out_offset += chunk;
+-            remaining -= chunk;
 +    /* The DSP has filled eight chronological 32-sample slices. Keep that
 +     * native 256-sample block, and advance software voices exactly once at
 +     * 48 kHz. Rendering an entire host packet here both discarded the EP
@@ -439,49 +481,11 @@ index 459be77..687b74a 100644
 +            d->monitor.frame_buf[i][1] = sample;
 +            g_test_tone.phase += g_test_tone.phase_inc;
 +            if (g_test_tone.phase >= 2.0 * M_PI) g_test_tone.phase -= 2.0 * M_PI;
-+        }
-+    }
-+    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
-+    if (g_audio_muted) {
-+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-+        /* Also silence earlier, not-yet-submitted slices of this packet. */
-+        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
-+    }
-+
-+    if (d->trace_dsp_state) {
-+        uint64_t block = ++d->dsp_trace_audio_blocks;
-+        if (mcpx_dsp_trace_audio_sample_due(block)) {
-+            unsigned int nonzero = 0, peak = 0;
-+            uint64_t square_sum = 0;
-+            for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i) {
-+                for (int channel = 0; channel < 2; ++channel) {
-+                    int sample = d->monitor.frame_buf[i][channel];
-+                    unsigned int magnitude = (unsigned int)(sample < 0 ? -sample : sample);
-+                    if (magnitude) nonzero++;
-+                    if (magnitude > peak) peak = magnitude;
-+                    square_sum += (uint64_t)magnitude * magnitude;
-                 }
-             }
--
--            if (!g_audio_muted)
--                mixer_render(d->monitor.frame_buf, chunk);
--
--            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
--            out_offset += chunk;
--            remaining -= chunk;
-+            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
-+                    (unsigned long long)block, nonzero,
-+                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
-+                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
-+                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
-+                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
-+                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
-+                    (unsigned int)d->monitor.point);
          }
 -
 -        xa2_submit_samples((const int16_t *)xa2_tmp, buf_size);
 -        return;
--    }
+     }
 -
 -    if (!g_waveout.initialized) return;
 -
@@ -495,6 +499,19 @@ index 459be77..687b74a 100644
 -        Sleep(1);
 -        qemu_mutex_lock(&d->lock);
 -        if (++wait_loops > 50) break;
++    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
++    if (g_audio_muted) {
++        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
++        /* Also silence earlier, not-yet-submitted slices of this packet. */
++        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
++    }
++    if (d->trace_output) {
++        unsigned nonzero = 0;
++        for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i)
++            for (int channel = 0; channel < 2; ++channel)
++                nonzero += d->monitor.frame_buf[i][channel] != 0;
++        d->output_nonzero_samples += nonzero;
++        if (!nonzero) ++d->output_silent_blocks;
      }
  
 -    /* Fill the large waveOut buffer by rendering multiple 256-sample frames */
@@ -504,7 +521,31 @@ index 459be77..687b74a 100644
 -
 -    while (remaining > 0) {
 -        int chunk = (remaining < MIXER_FRAME_SAMPLES) ? remaining : MIXER_FRAME_SAMPLES;
--
++    if (d->trace_dsp_state) {
++        uint64_t block = ++d->dsp_trace_audio_blocks;
++        if (mcpx_dsp_trace_audio_sample_due(block)) {
++            unsigned int nonzero = 0, peak = 0;
++            uint64_t square_sum = 0;
++            for (int i = 0; i < MIXER_FRAME_SAMPLES; ++i) {
++                for (int channel = 0; channel < 2; ++channel) {
++                    int sample = d->monitor.frame_buf[i][channel];
++                    unsigned int magnitude = (unsigned int)(sample < 0 ? -sample : sample);
++                    if (magnitude) nonzero++;
++                    if (magnitude > peak) peak = magnitude;
++                    square_sum += (uint64_t)magnitude * magnitude;
++                }
++            }
++            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
++                    (unsigned long long)block, nonzero,
++                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
++                    (unsigned long long)(square_sum / (MIXER_FRAME_SAMPLES * 2)),
++                    (unsigned long long)d->dsp_trace_ep_fifo_writes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
++                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
++                    (unsigned int)d->monitor.point);
++        }
++    }
+ 
 +    int packet_samples = xa2_is_active() ? xa2_get_buffer_size() : WAVEOUT_BUF_SAMPLES;
 +    if ((!xa2_is_active() && !g_waveout.initialized) ||
 +        packet_samples < MIXER_FRAME_SAMPLES || packet_samples > WAVEOUT_BUF_SAMPLES ||
@@ -569,7 +610,31 @@ index 459be77..687b74a 100644
  }
  
  /* ============================================================
-@@ -432,6 +494,21 @@ static void se_frame(MCPXAPUState *d)
+@@ -374,10 +478,9 @@ static void throttle(MCPXAPUState *d)
+ 
+     int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+ 
+-    if (d->next_frame_time_us == 0 ||
+-        now_us - d->next_frame_time_us > EP_FRAME_US) {
+-        d->next_frame_time_us = now_us;
+-    }
++    if (mcpx_apu_rebase_deadline(&d->next_frame_time_us,
++                               &d->next_frame_time_fraction, now_us))
++        ++d->output_rebases;
+ 
+     while (!d->pause_requested) {
+         now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+@@ -388,7 +491,8 @@ static void throttle(MCPXAPUState *d)
+             break;
+         }
+     }
+-    d->next_frame_time_us += EP_FRAME_US;
++    mcpx_apu_advance_deadline(&d->next_frame_time_us,
++                            &d->next_frame_time_fraction);
+ 
+     d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
+ }
+@@ -432,11 +536,34 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
  
@@ -591,7 +656,20 @@ index 459be77..687b74a 100644
  static void *mcpx_apu_frame_thread(void *arg)
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
-@@ -446,6 +523,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+     qemu_mutex_lock(&d->lock);
+ 
++    /* The submission thread owns the output graph and its COM apartment.
++     * Startup waits for this thread's idle signal after initialization. */
++    Error *local_err = NULL;
++    mcpx_apu_monitor_init(d, &local_err);
++    if (local_err) {
++        warn_reportf_err(local_err, "mcpx_apu_monitor_init failed: ");
++    }
++
+     while (!qatomic_read(&d->exiting)) {
+         if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count) {
+             d->is_idle = true;
+@@ -446,6 +573,25 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
  
@@ -617,7 +695,7 @@ index 459be77..687b74a 100644
          /* Always run the audio output loop — the software mixer and test tone
           * need continuous frame delivery regardless of APU register state.
           * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,8 +556,16 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -460,14 +606,23 @@ static void *mcpx_apu_frame_thread(void *arg)
  
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
@@ -634,7 +712,14 @@ index 459be77..687b74a 100644
              /* Lightweight: just monitor frame (test tone + software mixer) */
              mcpx_apu_monitor_frame(d);
              d->ep_frame_div++;
-@@ -499,6 +603,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+         }
+     }
+ 
++    mcpx_apu_monitor_finalize(d);
+     qemu_mutex_unlock(&d->lock);
+     return NULL;
+ }
+@@ -499,6 +654,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -642,7 +727,7 @@ index 459be77..687b74a 100644
  
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +621,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +672,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
  
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -654,7 +739,7 @@ index 459be77..687b74a 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +636,10 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +687,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -662,18 +747,37 @@ index 459be77..687b74a 100644
 +    /* Preserve the hook's presence semantics, including "0" and empty values.
 +     * Cache before publishing the initialized APU to the hook or frame thread. */
 +    d->trace_mmio = getenv("RECOMP_APU_TRACE") != NULL;
++    {
++        const char *trace = getenv("RECOMP_APU_TRACE_OUTPUT");
++        d->trace_output = trace && strcmp(trace, "1") == 0;
++    }
  
      d->set_irq = false;
      d->exiting = false;
-@@ -581,6 +695,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -546,13 +715,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+     /* Init software mixer for DirectSound bridge */
+     mixer_init();
+ 
+-    /* Init monitor (waveOut output) */
+-    Error *local_err = NULL;
+-    mcpx_apu_monitor_init(d, &local_err);
+-    if (local_err) {
+-        warn_reportf_err(local_err, "mcpx_apu_monitor_init failed: ");
+-    }
+-
+     /* Start background frame thread */
+     qemu_thread_create(&d->apu_thread, "mcpx.apu_thread",
+                        mcpx_apu_frame_thread, d, QEMU_THREAD_JOINABLE);
+@@ -581,7 +743,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
  
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
+-    mcpx_apu_monitor_finalize(d);
 +    mcpx_apu_dsp_finalize(d);
-     mcpx_apu_monitor_finalize(d);
  
      free(d);
-@@ -614,8 +729,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+     g_state = NULL;
+@@ -614,8 +776,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -687,7 +791,7 @@ index 459be77..687b74a 100644
  }
  
  /* ============================================================
-@@ -630,6 +749,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +796,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -1574,7 +1678,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..5bcfa6b 100644
+index de14f26..a62fab7 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -2272,7 +2376,7 @@ index de14f26..5bcfa6b 100644
  }
  
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,61 +743,60 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,66 +743,72 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2322,8 +2426,11 @@ index de14f26..5bcfa6b 100644
      dsp_ack_frame(d);
  
 -    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
++    if (d->trace_output && d->monitor.ep_fifo_frame_valid)
++        ++d->output_native_ticks;
 +    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
 +        !d->monitor.ep_fifo_frame_valid) {
++        if (d->trace_output) ++d->output_dry_ticks;
          for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
 -            /* Bins 2..31 used to be computed and then dropped on the floor.
 -             * On hardware the GP and EP mix the submixes down; here they are
@@ -2332,7 +2439,10 @@ index de14f26..5bcfa6b 100644
 -             *
 -             * Measured on Jet Set Radio Future, one 200 s gameplay run, with
 -             * a positive control moving beside it:
--             *
++            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
++             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
++             * and fold the two non-directional channels equally into stereo.
+              *
 -             *     [APU-BIN] 2D heard=557466 lost=0
 -             *               3D heard=0      lost=377768
 -             *               lost by bin: 6,7,8,9,10
@@ -2347,10 +2457,7 @@ index de14f26..5bcfa6b 100644
 -             *
 -             * Gating the HRTF submix override was tried first and did not fix
 -             * it, so the defect is the width of this mixdown and nothing else.
-+            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
-+             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
-+             * and fold the two non-directional channels equally into stereo.
-              *
+-             *
 -             * Even bins left, odd bins right, which preserves the stereo
 -             * pairing the guest set up -- bins 6/7 and 8/9 arrive with matched
 -             * counts. This is not what a real EP does; it is the cheapest
@@ -2379,7 +2486,16 @@ index de14f26..5bcfa6b 100644
              } else {
                  left = mixbins[0][i];
                  right = mixbins[1][i];
-@@ -213,6 +814,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+             }
+             /* Clamp to [-1, 1] range */
++            if (d->trace_output) {
++                if (left > 1.0f || left < -1.0f) ++d->output_clipped_samples;
++                if (right > 1.0f || right < -1.0f) ++d->output_clipped_samples;
++            }
+             if (left > 1.0f) left = 1.0f;
+             if (left < -1.0f) left = -1.0f;
+             if (right > 1.0f) right = 1.0f;
+@@ -213,6 +821,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
  
@@ -2700,10 +2816,27 @@ index 2742fa2..8756189 100644
          if (n++ < 400) {
              /* The value as well as the offset: finding which register carries
 diff --git a/src/apu/apu_shim.h b/src/apu/apu_shim.h
-index dd6bec1..5718709 100644
+index dd6bec1..23502c4 100644
 --- a/src/apu/apu_shim.h
 +++ b/src/apu/apu_shim.h
-@@ -93,34 +93,41 @@ static inline void qemu_thread_join(QemuThread *t) {
+@@ -21,6 +21,7 @@
+ #include "../nv2a/qemu_shim.h"
+ 
+ #include <math.h>
++#include "apu_timing.h"
+ 
+ /* ============================================================
+  * Additional atomic ops needed by APU code
+@@ -48,7 +49,7 @@ static inline int64_t qemu_clock_get_us(int type) {
+     LARGE_INTEGER freq, count;
+     QueryPerformanceFrequency(&freq);
+     QueryPerformanceCounter(&count);
+-    return (int64_t)(count.QuadPart * 1000000LL / freq.QuadPart);
++    return mcpx_apu_clock_microseconds(count.QuadPart, freq.QuadPart);
+ }
+ #endif
+ 
+@@ -93,34 +94,41 @@ static inline void qemu_thread_join(QemuThread *t) {
   * We access Xbox RAM via a global pointer, same as NV2A.
   * ============================================================ */
  
@@ -2753,7 +2886,7 @@ index dd6bec1..5718709 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..9ea3a92 100644
+index 651b334..8c56324 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -2830,7 +2963,7 @@ index 651b334..9ea3a92 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +469,14 @@ struct MCPXAPUState {
+@@ -467,6 +469,19 @@ struct MCPXAPUState {
  
      MemoryRegion *ram;
      uint8_t *ram_ptr;
@@ -2838,6 +2971,11 @@ index 651b334..9ea3a92 100644
 +    bool trace_mmio; /* Immutable per-instance presence of RECOMP_APU_TRACE. */
 +    bool trace_dsp_boot; /* Opt-in, initialized before the frame thread starts. */
 +    bool trace_dsp_state; /* Opt-in frame-boundary DSP state samples. */
++    bool trace_output; /* Opt-in loss/clipping/timing counters, device-thread owned. */
++    uint64_t output_native_ticks, output_dry_ticks, output_clipped_samples;
++    uint64_t output_blocks, output_rebases;
++    uint64_t output_nonzero_samples, output_silent_blocks;
++    int64_t output_started_us;
 +    unsigned int dsp_boot_trace_events[2]; /* Protected by the device mutex. */
 +    uint64_t dsp_trace_audio_blocks, dsp_trace_ep_fifo_writes;
 +    uint64_t dsp_trace_ep_fifo_bytes;
@@ -2845,7 +2983,15 @@ index 651b334..9ea3a92 100644
      MemoryRegion mmio;
  
      MCPXAPUVPState vp;
-@@ -498,6 +508,7 @@ struct MCPXAPUState {
+@@ -480,6 +495,7 @@ struct MCPXAPUState {
+     int frame_count;
+     int64_t frame_count_time_ms;
+     int64_t next_frame_time_us;
++    unsigned next_frame_time_fraction;
+ 
+     struct {
+         struct {
+@@ -498,6 +514,7 @@ struct MCPXAPUState {
      struct {
          McpxApuDebugMonitorPoint point;
          int16_t frame_buf[256][2];
@@ -2853,7 +2999,7 @@ index 651b334..9ea3a92 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +524,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -513,11 +530,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
  
@@ -3398,10 +3544,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..4ceb323
+index 0000000..11631b9
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1461 @@
+@@ -0,0 +1,1508 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -3414,6 +3560,7 @@ index 0000000..4ceb323
 +#include "pc_input.h"
 +
 +#include <ctype.h>
++#include <errno.h>
 +#include <math.h>
 +#include <stdarg.h>
 +#include <stdio.h>
@@ -3658,6 +3805,8 @@ index 0000000..4ceb323
 +static ScriptEvent s_script[SCRIPT_MAX];
 +static int s_script_n, s_script_next;
 +static uint64_t s_script_t0;
++/* Explicit laboratory isolation; a malformed or absent script cannot enable it. */
++static int s_script_background;
 +
 +static uint64_t now_ms(void)
 +{
@@ -3987,7 +4136,7 @@ index 0000000..4ceb323
 +static int gameplay_hold_gap_context(unsigned source, uint64_t now)
 +{
 +    const uint64_t tick = (uint64_t)s_gameplay_tick;
-+    if (!s_frame_authority || !s_focused || s_focus_pause_guard || !tick ||
++    if (!s_frame_authority || (!s_focused && !s_script_background) || s_focus_pause_guard || !tick ||
 +        now < tick || now - tick > PC_GAMEPLAY_MS || movie_active() ||
 +        (s_gameplay_blocked_query && s_gameplay_blocked_query())) return 0;
 +    return gameplay_hold_source(source);
@@ -4105,6 +4254,7 @@ index 0000000..4ceb323
 +void pc_input_key_event(unsigned scancode, int extended, int down, int repeat)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused) return;
 +    if (scancode == 0 || scancode > 0xFF) return;
 +    {
@@ -4147,6 +4297,7 @@ index 0000000..4ceb323
 +{
 +    uint64_t now;
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused && down) return;
 +    now = now_ms();
 +    observe_button_device(button, down, now);
@@ -4170,6 +4321,7 @@ index 0000000..4ceb323
 +void pc_input_wheel_event(int delta)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (s_focused) {
 +        observe_wheel_device(delta);
 +        if (filter_wheel(delta)) return;
@@ -4187,6 +4339,7 @@ index 0000000..4ceb323
 +void pc_input_mouse_motion(long dx, long dy)
 +{
 +    pc_input_init();
++    if (s_script_background) return;
 +    if (!s_focused || !s_captured || !kbm_enabled()) return;
 +    motion_internal(dx, dy);
 +}
@@ -4197,6 +4350,13 @@ index 0000000..4ceb323
 +    pc_input_init();
 +    focused = focused ? 1 : 0;
 +    if (focused == s_focused) return;   /* minimise and WM_KILLFOCUS can describe the same loss */
++    if (s_script_background) {
++        /* The script owns virtual input. Record real window focus for the
++         * presenter, without cancelling script/filter state or injecting Start. */
++        InterlockedExchange(&s_focused, focused);
++        trace("laboratory window focus %s (script continues)", focused ? "gained" : "lost");
++        return;
++    }
 +    {
 +        int i;
 +        for (i = 0; i < 3; ++i) {
@@ -4229,13 +4389,13 @@ index 0000000..4ceb323
 +int pc_input_capture_wanted(void)
 +{
 +    pc_input_init();
-+    return s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
++    return !s_script_background && s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
 +}
 +
 +int pc_input_cursor_hidden_wanted(void)
 +{
 +    pc_input_init();
-+    return s_captured && s_focused && kbm_enabled() && !movie_active();
++    return !s_script_background && s_captured && s_focused && kbm_enabled() && !movie_active();
 +}
 +
 +void pc_input_capture_changed(int captured)
@@ -4245,6 +4405,7 @@ index 0000000..4ceb323
 +    captured = captured ? 1 : 0;
 +    if ((LONG)captured == s_captured) return;
 +    InterlockedExchange(&s_captured, captured);
++    if (s_script_background) return; /* physical pointer changes cannot cancel scripted look/holds */
 +    /* Counts gathered before capture are stale. Preserve only holds tied to
 +     * recent gameplay; a button already down in a menu remains a swallowed click. */
 +    InterlockedExchange(&s_dx, 0);
@@ -4738,53 +4899,84 @@ index 0000000..4ceb323
 + *   wheel:+1 | wheel:-1
 + *   focus:0 | focus:1
 + * e.g. "3000:down:W,5000:up:W,6000:move:400:0,7000:tap:Mouse1".
++ * RECOMP_INPUT_SCRIPT_BACKGROUND=1 additionally isolates a fully valid nonempty
++ * script from physical keyboard/mouse/focus and never requests pointer capture.
++ * Ordinary player input and default scripted focus testing retain their behavior.
 + */
 +static void load_script(void)
 +{
 +    const char *e = getenv("RECOMP_INPUT_SCRIPT");
++    const char *background = getenv("RECOMP_INPUT_SCRIPT_BACKGROUND");
++    int valid = 1;
 +    s_script_n = s_script_next = 0;
 +    s_script_t0 = 0;
++    s_script_background = 0;
 +    while (e && *e && s_script_n < SCRIPT_MAX) {
 +        ScriptEvent *ev = &s_script[s_script_n];
 +        char *end;
 +        char verb[16], arg[32];
 +        size_t n;
 +        memset(ev, 0, sizeof(*ev));
++        errno = 0;
 +        ev->at_ms = strtoull(e, &end, 10);
-+        if (*end != ':') break;
++        if (!isdigit((unsigned char)*e) || end == e || errno == ERANGE) valid = 0;
++        if (s_script_n && ev->at_ms < s_script[s_script_n - 1].at_ms) valid = 0;
++        if (*end != ':') { valid = 0; break; }
 +        e = end + 1;
 +        n = strcspn(e, ":,");
-+        if (n == 0 || n >= sizeof(verb)) break;
++        if (n == 0 || n >= sizeof(verb)) { valid = 0; break; }
 +        memcpy(verb, e, n); verb[n] = 0;
 +        e += n;
 +        arg[0] = 0;
 +        if (*e == ':') {
 +            e++;
 +            n = strcspn(e, ",");
-+            if (n >= sizeof(arg)) break;
++            if (n >= sizeof(arg)) { valid = 0; break; }
 +            memcpy(arg, e, n); arg[n] = 0;
 +            e += n;
 +        }
 +        if (!_stricmp(verb, "down") || !_stricmp(verb, "up") || !_stricmp(verb, "tap")) {
 +            const struct KeyName *k = key_by_name(arg);
 +            unsigned id = k ? k->id : (!_stricmp(arg, "Esc") || !_stricmp(arg, "Escape")) ? KEY_ESC : 0;
-+            if (!id) { fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown key '%s'\n", arg); break; }
++            if (!id) { fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown key '%s'\n", arg); valid = 0; break; }
 +            ev->verb = (char)tolower((unsigned char)verb[0]); ev->arg = id;
 +        } else if (!_stricmp(verb, "move")) {
++            char *check_end;
++            errno = 0;
++            (void)strtol(arg, &check_end, 10);
++            if (check_end == arg || errno == ERANGE) valid = 0;
++            if (*check_end == ':') {
++                const char *second = check_end + 1;
++                errno = 0;
++                (void)strtol(second, &check_end, 10);
++                if (check_end == second || errno == ERANGE) valid = 0;
++            }
++            if (*check_end) valid = 0;
 +            ev->verb = 'm'; ev->a = strtol(arg, &end, 10);
 +            ev->b = *end == ':' ? strtol(end + 1, NULL, 10) : 0;
 +        } else if (!_stricmp(verb, "wheel")) {
++            errno = 0;
++            (void)strtol(arg, &end, 10);
++            if (end == arg || *end || errno == ERANGE) valid = 0;
 +            ev->verb = 'w'; ev->a = strtol(arg, NULL, 10);
 +        } else if (!_stricmp(verb, "focus")) {
++            errno = 0;
++            (void)strtol(arg, &end, 10);
++            if (end == arg || *end || errno == ERANGE) valid = 0;
 +            ev->verb = 'f'; ev->a = strtol(arg, NULL, 10);
++            if (ev->a != 0 && ev->a != 1) valid = 0;
 +        } else {
 +            fprintf(stderr, "[INPUT] RECOMP_INPUT_SCRIPT: unknown verb '%s'\n", verb);
++            valid = 0;
 +            break;
 +        }
 +        s_script_n++;
-+        if (*e == ',') e++; else break;
++        if (*e == ',') { e++; if (!*e) valid = 0; } else break;
 +    }
++    if (s_script_n == SCRIPT_MAX && e && *e) valid = 0;
++    s_script_background = valid && s_script_n > 0 && background && !strcmp(background, "1");
 +    if (s_script_n) fprintf(stderr, "[INPUT] %d scripted event(s) from RECOMP_INPUT_SCRIPT\n", s_script_n);
++    if (s_script_background) fprintf(stderr, "[INPUT] laboratory background script isolated from physical input\n");
 +}
 +
 +static void script_key(unsigned id, int down, uint64_t now)
@@ -4857,6 +5049,7 @@ index 0000000..4ceb323
 +    s_mouse_ignore_until = 0;
 +    s_script_n = s_script_next = 0;
 +    s_script_t0 = 0;
++    s_script_background = 0;
 +    load_config();
 +    load_script();
 +}
@@ -12017,10 +12210,10 @@ index 0000000..d00641c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_draw.inc b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 new file mode 100644
-index 0000000..ddeb110
+index 0000000..f1bf2f8
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_draw.inc
-@@ -0,0 +1,768 @@
+@@ -0,0 +1,773 @@
 +/* The draw, included by kelvin_gpu.c after feedback_copy.
 + *
 + * kgpu_draw_now draws one batch of triangles. Most of what a draw needs is the same as the draw before it: the
@@ -12334,6 +12527,11 @@ index 0000000..ddeb110
 +            (unsigned long long)s_dl.frame, s_dl.ord, d->gvs ? d->gvs->hash : 0, d->icount, d->topology, d->t->width, d->t->height,
 +            ps->depth_test, ps->depth_func, ps->depth_write, ps->blend, ps->blend_sfactor, ps->blend_dfactor, ps->alpha_test,
 +            d->cull_enable, ps->tex[0].width, ps->tex[0].height, (double)d->zbias, (double)ps->zmax);
++    fprintf(stderr, "[KDL]   targetva %08X depthva %08X depthclip %d zclip %g,%g cullctrl %d frontccw %d texturebase %08X,%08X,%08X,%08X texturevalid %d,%d,%d,%d\n",
++            d->t->color_va, d->t->zeta_va, (int)ps->depth_clip_cull, (double)ps->zclip_min, (double)ps->zclip_max,
++            d->cull_ctrl, (int)d->ccw_front,
++            ps->tex[0].base, ps->tex[1].base, ps->tex[2].base, ps->tex[3].base,
++            (int)ps->tex[0].valid, (int)ps->tex[1].valid, (int)ps->tex[2].valid, (int)ps->tex[3].valid);
 +    if (d->gvs && d->gvs->constants) {
 +        static float vp_last[8];
 +        const float *v = d->gvs->constants + 4 * 58;       /* c[-38] viewport scale, c[-37] offset */
@@ -13296,10 +13494,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..965b5be
+index 0000000..8db4ff6
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,802 @@
+@@ -0,0 +1,823 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -13615,11 +13813,12 @@ index 0000000..965b5be
 +    uint64_t ao_camera;                                     /* first world draw's queued camera, fixed for this frame */
 +    bool ao_done;
 +    bool done;
-+    long long last_qpc;
++    long long last_qpc;                                     /* last successful autofocus update, not merely a scene pass */
++    long long focus_trace_qpc;                              /* opt-in successful-observation trace, at most once per five seconds */
 +    int depth_stats;                                        /* RECOMP_KGPU_DEPTH_STATS=n: depth percentiles every n frames */
 +    char ao_dump[MAX_PATH], ao_scene_prefix[MAX_PATH];
 +    uint64_t ao_dump_frame, ao_scene_frame;
-+    bool ao_dump_done, ao_scene_done, post_trace, ao_skip_traced;
++    bool ao_dump_done, ao_scene_done, post_trace, ao_skip_traced, focus_skipped;
 +} s_post;
 +
 +static void kg_post_free(void)
@@ -13975,10 +14174,21 @@ index 0000000..965b5be
 +        fprintf(stderr, "[KAO] frame %llu ambient occlusion skipped: no valid queued world camera\n", (unsigned long long)(G.frames + 1));
 +    }
 +    kg_post_ao_scene(cs, zs);
++    if (s_post.dof && (!zs || !zs->depth || !zs->real || !zs->srv || zs->hw != cs->hw || zs->hh != cs->hh)) {
++        if (s_post.post_trace && !s_post.focus_skipped)
++            fprintf(stderr, "[KPOST] frame %llu autofocus skipped: depth present=%d depth=%d real=%d sampleable=%d size=%ux%u scene=%ux%u\n",
++                    (unsigned long long)(G.frames + 1), zs != NULL, zs ? (int)zs->depth : 0,
++                    zs ? (int)zs->real : 0, zs && zs->srv != NULL, zs ? zs->hw : 0, zs ? zs->hh : 0, cs->hw, cs->hh);
++        s_post.focus_skipped = true;
++    }
 +    if (s_post.dof && zs && zs->depth && zs->real && zs->srv && zs->hw == cs->hw && zs->hh == cs->hh) {
 +        const unsigned int next = s_post.focus_cur ^ 1u;
 +        const double dt = s_post.last_qpc ? (double)(now - s_post.last_qpc) / (double)G.qpf : -1.0;
 +        const float alpha = kg_post_focus_blend(dt);
++        if (s_post.post_trace && (s_post.focus_skipped || !s_post.last_qpc))
++            fprintf(stderr, "[KPOST] frame %llu autofocus acquired: observation gap %.9g alpha %.9g\n",
++                    (unsigned long long)(G.frames + 1), dt, (double)alpha);
++        s_post.focus_skipped = false;
 +        post_dof_preset(s_post.dof, &taps, &radius);
 +        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
 +        post_cb((float)cs->hw, (float)cs->hh, taps, radius * (float)cs->hh, alpha, depth_scale, 0.002f, 0.0f, 0.0f, 1.0f, 1.0f);
@@ -13986,8 +14196,17 @@ index 0000000..965b5be
 +        s_post.focus_cur = next;
 +        post_pass(s_post.ps_coc, s_post.coc_rtv, cs->hw, cs->hh, NULL, NULL, zs->srv, s_post.focus_srv[next]);
 +        post_pass(s_post.ps_dof, cs->rtv, cs->hw, cs->hh, s_post.copy_srv, s_post.coc_srv, NULL, NULL);
++        /* A frame without usable depth did not observe a focus surface. Keep
++         * the last observation time so a long interruption actually triggers
++         * kg_post_focus_blend's immediate reacquisition when depth returns. */
++        s_post.last_qpc = now;
++        if (s_post.post_trace && (!s_post.focus_trace_qpc ||
++            (double)(now - s_post.focus_trace_qpc) / (double)G.qpf >= 5.0)) {
++            fprintf(stderr, "[KPOST] frame %llu autofocus updated: observation gap %.9g alpha %.9g depth=%ux%u scene=%ux%u\n",
++                    (unsigned long long)(G.frames + 1), dt, (double)alpha, zs->hw, zs->hh, cs->hw, cs->hh);
++            s_post.focus_trace_qpc = now;
++        }
 +    }
-+    s_post.last_qpc = now;
 +    if (s_post.aa == PCV_AA_FXAA) {
 +        ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
 +        post_cb((float)cs->hw, (float)cs->hh, 0, 0, 0, 0, 0, 0, 0, 1.0f, 1.0f);
@@ -44412,6 +44631,434 @@ index 0000000..e2153bc
 +{
 +    if (!(elapsed_seconds > 0.0) || elapsed_seconds >= 0.5) return 1.0f;
 +    return (float)(1.0 - exp(-elapsed_seconds / 0.25));
++}
++
++#endif
+diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
+index cd69e57..afa81f6 100644
+--- a/src/apu/apu_xaudio2.c
++++ b/src/apu/apu_xaudio2.c
+@@ -26,6 +26,7 @@
+ #define XA2_CHANNELS      2
+ #define XA2_BUF_SAMPLES   1024   /* ~21ms per submission */
+ #define XA2_NUM_BUFS      3
++#define XA2_RECOVERY_RETRY_MS 1000
+ 
+ static IXAudio2               *g_xa2 = NULL;
+ static IXAudio2MasteringVoice *g_xa2_master = NULL;
+@@ -33,22 +34,78 @@ static IXAudio2SourceVoice    *g_xa2_source = NULL;
+ static int16_t                 g_xa2_bufs[XA2_NUM_BUFS][XA2_BUF_SAMPLES][2];
+ static int                     g_xa2_next_buf = 0;
+ static int                     g_xa2_initialized = 0;
++static int                     g_xa2_started = 0;
+ static int                     g_xa2_frames_written = 0;
++static Xa2OutputStats           g_xa2_stats;
++static volatile LONG           g_xa2_critical_errors;
++static volatile LONG           g_xa2_critical_status;
++static volatile LONG           g_xa2_critical_pending;
++static int                     g_xa2_callback_registered;
++static DWORD                   g_xa2_owner_thread;
++static int                     g_xa2_com_initialized;
++static ULONGLONG               g_xa2_retry_at;
++static uint64_t                g_xa2_played_base;
++static uint64_t                g_xa2_generation_submitted;
++static uint64_t                g_xa2_generation_played;
+ 
+-int xa2_init(void)
++/* Audio callbacks must not log, wait or take the APU lock. The submission
++ * thread reports these atomic observations with the other output counters. */
++static void STDMETHODCALLTYPE xa2_pass_start(IXAudio2EngineCallback *callback)
++{ (void)callback; }
++static void STDMETHODCALLTYPE xa2_pass_end(IXAudio2EngineCallback *callback)
++{ (void)callback; }
++static void STDMETHODCALLTYPE xa2_critical_error(IXAudio2EngineCallback *callback, HRESULT error)
+ {
+-    HRESULT hr;
+-    int com_initialized;
+-    WAVEFORMATEX wfx = { 0 };
+-
+-    if (g_xa2_initialized) return 1;
++    (void)callback;
++    InterlockedExchange(&g_xa2_critical_status, (LONG)error);
++    InterlockedIncrement(&g_xa2_critical_errors);
++    InterlockedExchange(&g_xa2_critical_pending, 1);
++}
++static IXAudio2EngineCallbackVtbl g_xa2_callback_vtable = {
++    xa2_pass_start, xa2_pass_end, xa2_critical_error
++};
++static IXAudio2EngineCallback g_xa2_callback = { &g_xa2_callback_vtable };
+ 
+-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+-    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+-        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
+-        return 0;
++/* DestroyVoice waits until the voice can no longer read its PCM buffers.
++ * Release the whole old graph before any ring slot can be reused. */
++static void xa2_release_graph(void)
++{
++    if (g_xa2 && g_xa2_callback_registered) {
++        IXAudio2_UnregisterForCallbacks(g_xa2, &g_xa2_callback);
++        g_xa2_callback_registered = 0;
++    }
++    if (g_xa2_source) {
++        XAUDIO2_VOICE_STATE state;
++        IXAudio2SourceVoice_GetState(g_xa2_source, &state, 0);
++        if (state.SamplesPlayed > g_xa2_generation_played)
++            g_xa2_generation_played = state.SamplesPlayed;
++        g_xa2_source->lpVtbl->DestroyVoice(g_xa2_source);
++        g_xa2_source = NULL;
++    }
++    if (g_xa2_master) {
++        g_xa2_master->lpVtbl->DestroyVoice(g_xa2_master);
++        g_xa2_master = NULL;
+     }
+-    com_initialized = SUCCEEDED(hr);
++    if (g_xa2) {
++        IXAudio2_Release(g_xa2);
++        g_xa2 = NULL;
++    }
++    g_xa2_played_base += g_xa2_generation_played;
++    if (g_xa2_generation_submitted > g_xa2_generation_played)
++        g_xa2_stats.discarded_samples +=
++            g_xa2_generation_submitted - g_xa2_generation_played;
++    g_xa2_stats.played_samples = g_xa2_played_base;
++    g_xa2_stats.queued_buffers = 0;
++    g_xa2_generation_submitted = g_xa2_generation_played = 0;
++    g_xa2_started = 0;
++}
++
++/* Graph creation reuses the owner's existing COM lease. Failed stages release
++ * every resource they acquired, without ending that apartment. */
++static int xa2_create_graph(void)
++{
++    HRESULT hr;
++    WAVEFORMATEX wfx = { 0 };
+ 
+     hr = XAudio2Create(&g_xa2, 0, XAUDIO2_DEFAULT_PROCESSOR);
+     if (FAILED(hr) || !g_xa2) {
+@@ -56,6 +113,13 @@ int xa2_init(void)
+         goto fail;
+     }
+ 
++    hr = IXAudio2_RegisterForCallbacks(g_xa2, &g_xa2_callback);
++    if (FAILED(hr)) {
++        fprintf(stderr, "[XA2] RegisterForCallbacks failed: 0x%08lX\n", hr);
++        goto fail;
++    }
++    g_xa2_callback_registered = 1;
++
+     hr = IXAudio2_CreateMasteringVoice(g_xa2, &g_xa2_master,
+         XA2_CHANNELS, XA2_SAMPLE_RATE, 0, NULL, NULL, 0);
+     if (FAILED(hr)) {
+@@ -77,47 +141,58 @@ int xa2_init(void)
+         goto fail;
+     }
+ 
+-    hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+-    if (FAILED(hr)) {
+-        fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
+-        goto fail;
+-    }
+-
+     g_xa2_next_buf = 0;
+-    g_xa2_initialized = 1;
+-    g_xa2_frames_written = 0;
+-
+-    fprintf(stderr, "[XA2] XAudio2 initialized (%d Hz stereo 16-bit, %d x %d-sample buffers)\n",
+-            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
++    g_xa2_started = 0;
+     return 1;
+ 
+ fail:
+-    xa2_shutdown();
+-    /* Failed initialization still runs on the COM-initializing thread. */
+-    if (com_initialized) CoUninitialize();
++    xa2_release_graph();
+     return 0;
+ }
+ 
+-void xa2_shutdown(void)
++int xa2_init(void)
+ {
+-    if (g_xa2_source) {
+-        IXAudio2SourceVoice_Stop(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
+-        IXAudio2SourceVoice_FlushSourceBuffers(g_xa2_source);
+-        g_xa2_source->lpVtbl->DestroyVoice(g_xa2_source);
+-        g_xa2_source = NULL;
+-    }
+-    if (g_xa2_master) {
+-        g_xa2_master->lpVtbl->DestroyVoice(g_xa2_master);
+-        g_xa2_master = NULL;
++    HRESULT hr;
++    if (g_xa2_initialized)
++        return g_xa2_owner_thread == GetCurrentThreadId();
++    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
++    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
++        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
++        return 0;
+     }
+-    if (g_xa2) {
+-        IXAudio2_Release(g_xa2);
+-        g_xa2 = NULL;
++    g_xa2_owner_thread = GetCurrentThreadId();
++    g_xa2_com_initialized = SUCCEEDED(hr);
++    g_xa2_frames_written = 0;
++    g_xa2_played_base = 0;
++    g_xa2_generation_submitted = g_xa2_generation_played = 0;
++    g_xa2_retry_at = 0;
++    memset(&g_xa2_stats, 0, sizeof(g_xa2_stats));
++    InterlockedExchange(&g_xa2_critical_errors, 0);
++    InterlockedExchange(&g_xa2_critical_status, 0);
++    InterlockedExchange(&g_xa2_critical_pending, 0);
++    if (!xa2_create_graph()) {
++        if (g_xa2_com_initialized) CoUninitialize();
++        g_xa2_com_initialized = 0;
++        g_xa2_owner_thread = 0;
++        return 0;
+     }
++    g_xa2_initialized = 1;
++    fprintf(stderr, "[XA2] XAudio2 initialized (%d Hz stereo 16-bit, %d x %d-sample buffers)\n",
++            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
++    return 1;
++}
+ 
++void xa2_shutdown(void)
++{
++    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId()) return;
++    xa2_release_graph();
++    InterlockedExchange(&g_xa2_critical_pending, 0);
+     if (g_xa2_initialized)
+         fprintf(stderr, "[XA2] Shut down (%d frames written)\n", g_xa2_frames_written);
+     g_xa2_initialized = 0;
++    if (g_xa2_com_initialized) CoUninitialize();
++    g_xa2_com_initialized = 0;
++    g_xa2_owner_thread = 0;
+ }
+ 
+ int xa2_is_active(void)
+@@ -125,6 +200,52 @@ int xa2_is_active(void)
+     return g_xa2_initialized;
+ }
+ 
++static int xa2_recover_if_needed(void)
++{
++    if (InterlockedCompareExchange(&g_xa2_critical_pending, 0, 0)) {
++        fprintf(stderr, "[XA2] Critical error: 0x%08lX; recreating output graph\n",
++                (unsigned long)InterlockedCompareExchange(&g_xa2_critical_status, 0, 0));
++        xa2_release_graph();
++        /* Old engine callbacks have ended before clearing their signal. A
++         * critical error from the newly created engine remains pending. */
++        InterlockedExchange(&g_xa2_critical_pending, 0);
++    }
++    if (g_xa2_source) return 1;
++    ULONGLONG now = GetTickCount64();
++    if (now < g_xa2_retry_at) return 0;
++    ++g_xa2_stats.recovery_attempts;
++    if (!xa2_create_graph() ||
++        InterlockedCompareExchange(&g_xa2_critical_pending, 0, 0)) {
++        /* A replacement can fail critically during creation too. Its signal
++         * belongs to the graph just released, so preserve the retry delay. */
++        xa2_release_graph();
++        InterlockedExchange(&g_xa2_critical_pending, 0);
++        ++g_xa2_stats.recovery_failed;
++        g_xa2_retry_at = GetTickCount64() + XA2_RECOVERY_RETRY_MS;
++        return 0;
++    }
++    ++g_xa2_stats.recoveries;
++    /* Also bound repeated asynchronous failures of newly created voices.
++     * The initial graph's first critical error has no retry deadline. */
++    g_xa2_retry_at = GetTickCount64() + XA2_RECOVERY_RETRY_MS;
++    fprintf(stderr, "[XA2] Output graph recovered; priming fresh PCM\n");
++    return 1;
++}
++
++static int xa2_start_if_primed(unsigned queued)
++{
++    if (g_xa2_started || queued < 2) return 1;
++    HRESULT hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++    if (FAILED(hr)) {
++        if (!g_xa2_stats.start_failed)
++            fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
++        ++g_xa2_stats.start_failed;
++        return 0;
++    }
++    g_xa2_started = 1;
++    return 1;
++}
++
+ /* Submit a buffer of mixed samples to XAudio2.
+  * Called from APU frame thread. Returns 1 if buffer was submitted. */
+ int xa2_submit_samples(const int16_t *samples, int num_samples)
+@@ -135,11 +256,33 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+     int copy_samples;
+     HRESULT hr;
+ 
+-    if (!g_xa2_initialized || !g_xa2_source) return 0;
++    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId() ||
++        !samples || num_samples <= 0) return 0;
++    if (!xa2_recover_if_needed()) return 0;
+ 
+     IXAudio2SourceVoice_GetState(g_xa2_source, &state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+-    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) return 0;
+-
++    if (!state.BuffersQueued && g_xa2_generation_submitted) {
++        ++g_xa2_stats.empty_queue;
++        if (g_xa2_started) {
++            /* No packet is owned by the voice. Restore startup headroom after
++             * an underrun instead of chasing a single packet indefinitely. */
++            hr = IXAudio2SourceVoice_Stop(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
++            if (SUCCEEDED(hr)) {
++                g_xa2_started = 0;
++                ++g_xa2_stats.reprimes;
++            } else {
++                if (!g_xa2_stats.stop_failed)
++                    fprintf(stderr, "[XA2] Stop failed: 0x%08lX\n", hr);
++                ++g_xa2_stats.stop_failed;
++            }
++        }
++    }
++    /* Retry a failed start even if all retained packets fill the ring. */
++    if (!xa2_start_if_primed(state.BuffersQueued)) return 0;
++    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) {
++        ++g_xa2_stats.queue_full;
++        return 0;
++    }
+     idx = g_xa2_next_buf;
+     copy_samples = (num_samples > XA2_BUF_SAMPLES) ? XA2_BUF_SAMPLES : num_samples;
+     memcpy(g_xa2_bufs[idx], samples, copy_samples * XA2_CHANNELS * sizeof(int16_t));
+@@ -149,11 +292,20 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+     xbuf.pAudioData = (const BYTE *)g_xa2_bufs[idx];
+ 
+     hr = IXAudio2SourceVoice_SubmitSourceBuffer(g_xa2_source, &xbuf, NULL);
+-    if (FAILED(hr)) return 0;
++    if (FAILED(hr)) {
++        ++g_xa2_stats.submit_failed;
++        return 0;
++    }
+ 
+     g_xa2_next_buf = (idx + 1) % XA2_NUM_BUFS;
+     g_xa2_frames_written++;
+-    return 1;
++    g_xa2_stats.submitted_samples += copy_samples;
++    g_xa2_generation_submitted += copy_samples;
++    /* Starting an empty voice made the producer chase the very last samples
++     * of a single packet. Ordinary scheduling jitter could exhaust it even
++     * when no packets were rejected. Prime two packets (42.7 ms capacity)
++     * before playback, preserving one packet of scheduling headroom. */
++    return xa2_start_if_primed(state.BuffersQueued + 1);
+ }
+ 
+ int xa2_get_buffer_size(void)
+@@ -161,6 +313,21 @@ int xa2_get_buffer_size(void)
+     return XA2_BUF_SAMPLES;
+ }
+ 
++void xa2_get_output_stats(Xa2OutputStats *stats)
++{
++    *stats = g_xa2_stats;
++    stats->critical_errors = (unsigned)InterlockedCompareExchange(&g_xa2_critical_errors, 0, 0);
++    stats->critical_error_status = (int32_t)InterlockedCompareExchange(&g_xa2_critical_status, 0, 0);
++    if (g_xa2_initialized && g_xa2_source) {
++        XAUDIO2_VOICE_STATE state;
++        IXAudio2SourceVoice_GetState(g_xa2_source, &state, 0);
++        if (state.SamplesPlayed > g_xa2_generation_played)
++            g_xa2_generation_played = state.SamplesPlayed;
++        stats->played_samples = g_xa2_played_base + g_xa2_generation_played;
++        stats->queued_buffers = state.BuffersQueued;
++    }
++}
++
+ #else /* !_WIN32 -- POSIX stubs (no audio output yet) */
+ 
+ int  xa2_init(void)                                   { return 0; }
+@@ -168,5 +335,6 @@ void xa2_shutdown(void)                               {}
+ int  xa2_is_active(void)                              { return 0; }
+ int  xa2_submit_samples(const int16_t *s, int n)      { (void)s; (void)n; return 0; }
+ int  xa2_get_buffer_size(void)                        { return 0; }
++void xa2_get_output_stats(Xa2OutputStats *s)           { memset(s, 0, sizeof(*s)); }
+ 
+ #endif /* _WIN32 */
+diff --git a/src/apu/apu_xaudio2.h b/src/apu/apu_xaudio2.h
+index 83e652d..1b637cb 100644
+--- a/src/apu/apu_xaudio2.h
++++ b/src/apu/apu_xaudio2.h
+@@ -6,19 +6,32 @@
+ 
+ #include <stdint.h>
+ 
+-/* Initialize XAudio2. Returns 1 on success, 0 on failure. */
++/* Initialize and shut down on the APU submission thread. Returns 1 on success,
++ * 0 on failure. That thread owns the COM apartment and all graph resources. */
+ int xa2_init(void);
+ 
+ /* Shut down XAudio2 and release all resources. */
+ void xa2_shutdown(void);
+ 
+-/* Returns 1 if XAudio2 is active. */
++/* Returns 1 while selected, including a confirmed device-error recovery. */
+ int xa2_is_active(void);
+ 
+-/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted. */
++/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted and started
++ * when primed. A failed Start may leave accepted PCM queued: do not replay it. */
+ int xa2_submit_samples(const int16_t *samples, int num_samples);
+ 
+ /* Get the preferred buffer size in samples. */
+ int xa2_get_buffer_size(void);
+ 
++typedef struct Xa2OutputStats {
++    uint64_t submitted_samples, played_samples, queue_full, submit_failed;
++    uint64_t start_failed, stop_failed, empty_queue, reprimes;
++    uint64_t recovery_attempts, recoveries, recovery_failed, discarded_samples;
++    unsigned critical_errors;
++    int32_t critical_error_status;
++    unsigned queued_buffers;
++} Xa2OutputStats;
++/* Read only on the APU submission thread (or after that thread has joined). */
++void xa2_get_output_stats(Xa2OutputStats *stats);
++
+ #endif /* APU_XAUDIO2_H */
+diff --git a/src/apu/apu_timing.h b/src/apu/apu_timing.h
+new file mode 100644
+index 0000000..6e6b4cc
+--- /dev/null
++++ b/src/apu/apu_timing.h
+@@ -0,0 +1,38 @@
++#ifndef MCPX_APU_TIMING_H
++#define MCPX_APU_TIMING_H
++
++#include <stdint.h>
++
++/* Scale QPC without overflowing after long Windows uptime. */
++static inline int64_t mcpx_apu_clock_microseconds(int64_t count, int64_t frequency)
++{
++    return (count / frequency) * INT64_C(1000000) +
++           (count % frequency) * INT64_C(1000000) / frequency;
++}
++
++/* Keep ordinary scheduling jitter as sample debt. Reset only after a long
++ * interruption: catching up unbounded old audio would delay current gameplay.
++ * 64 ms is the capacity of the three 1024-sample XAudio2 packets. */
++static inline int mcpx_apu_rebase_deadline(int64_t *deadline, unsigned *fraction,
++                                          int64_t now)
++{
++    if (!*deadline || (now > *deadline && now - *deadline > 64000)) {
++        *deadline = now;
++        *fraction = 0;
++        return 1;
++    }
++    return 0;
++}
++
++/* 256 samples at 48 kHz: 5333 + 1/3 microseconds. Truncating every period
++ * made the producer outrun the device by 337.5 ms over a 90-minute session. */
++static inline void mcpx_apu_advance_deadline(int64_t *deadline, unsigned *fraction)
++{
++    *deadline += 5333;
++    if (++*fraction == 3) {
++        ++*deadline;
++        *fraction = 0;
++    }
 +}
 +
 +#endif

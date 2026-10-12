@@ -10,6 +10,44 @@ from unittest.mock import patch
 import generate
 
 
+def test_scope_mask_native_boundary():
+    markers = ["loc_00121B50: ;", "loc_00121B69: ;", "loc_00121B89: ;",
+               "loc_00121BA9: ;", "l_eax = MEM32(ebp + 0xC);",
+               "RECOMP_ABI_CALL(0x000DA2B0u, sub_000DA2B0)",
+               "RECOMP_ABI_CALL(0x000DA3A0u, sub_000DA3A0)"]
+    operands = ["l_edx = MEM32(ebp + 8);", "l_ecx = l_eax + 0x3740;"]
+    body = "\n".join(markers + operands * 2)
+    assert generate.scope_mask_boundary("sub_00121B50_gen", body) == body
+    assert generate.scope_mask_boundary("unrelated", "unchanged") == "unchanged"
+    for marker in markers + operands:
+        for changed in (body.replace(marker, "changed", 1), body + "\n" + marker):
+            try:
+                generate.scope_mask_boundary("sub_00121B50_gen", changed)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Changed native scope draw contract must fail closed")
+    # The two native callbacks have identical leaf ABIs. Pin the actual shape
+    # registration and consumer as well, so a sibling glyph hook cannot pass.
+    registration = "MEM32(0x562BD8) = 0x121B50;\nMEM32(0x562BA8) = 0x121BC0;"
+    branch = "\n".join(("loc_00102D59: ;", "edx = MEM32(ebp + 0xC);",
+                         "eax = MEM32(ecx + 0x18);", "PUSH32(esp, edx);",
+                         "PUSH32(esp, eax);",
+                         "_icall_target = MEM32(0x562BD8); PUSH32(esp, 0x00102D67u);",
+                         "loc_00102D67: ;"))
+    for name, native in (("sub_00121CB0", registration), ("sub_00102840_gen", branch)):
+        assert generate.scope_mask_boundary(name, native) == native
+        for changed in (native.replace("0x562BD8", "0x562BA8"),
+                        native.replace("0x121B50", "0x121BC0") if native == registration
+                        else native.replace("PUSH32(esp, edx);", "PUSH32(esp, eax);")):
+            try:
+                generate.scope_mask_boundary(name, changed)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Wrong native callback binding/argument must fail closed")
+
+
 def test_disasm_forwards_feedback_seeds():
     with patch.object(generate, "command") as command:
         generate.run_disasm(
@@ -41,6 +79,23 @@ def test_weapon_trace_hooks_are_bounded_and_repeatable():
         else:
             raise AssertionError("missing guest label must fail closed")
     assert generate.weapon_trace_hooks("unrelated", "unchanged") == "unchanged"
+    for name, label, hook in (
+            ("sub_001D25D0", "001D25D0", "black_weapon_attachment_trace(1u, l_ecx);"),
+            ("sub_001C6150", "001C6150", "black_weapon_attachment_trace(2u, l_ecx);"),
+            ("sub_001C5490", "001C5490", "black_weapon_attachment_trace(3u, l_edi);"),
+            ("sub_0016B1E0", "0016B1E0", "black_viewmodel_muzzle_gate(l_esi);")):
+        body = f"loc_{label}: ;\n    original();\n"
+        traced = generate.weapon_trace_hooks(name, body)
+        assert traced.count(hook) == 1
+        assert traced.index(hook) < traced.index("original();")
+        assert generate.weapon_trace_hooks(name, traced) == traced
+        for wrong in ("unknown location", body + body):
+            try:
+                generate.weapon_trace_hooks(name, wrong)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("changed render observation boundary must fail closed")
 
 
 def test_viewmodel_hooks_preserve_draw_lifetime():
@@ -99,6 +154,39 @@ def test_unsigned_crt_carry_rotations():
             else:
                 raise AssertionError("changed CRT rotation boundaries must fail closed")
     assert generate.unsigned_division_hooks("unrelated", body) == body
+
+
+def test_native_lab_loadout_boundary():
+    body = "loc_001B78A0: ;\n    l_edx = MEM32(ebp + 0x28);\n    native_inventory_resolve();\n"
+    fixed = generate.test_weapon_hooks("sub_001B7800", body)
+    assert fixed.count("black_test_weapon_loadout(l_esi);") == 1
+    assert fixed.index("black_test_weapon_loadout") < fixed.index("l_edx =") < fixed.index("native_inventory_resolve")
+    assert generate.test_weapon_hooks("sub_001B7800", fixed) == fixed
+    for wrong in (body.replace("001B78A0", "001B78A1"),
+                  body.replace("0x28", "0x2C"), body + body,
+                  fixed.replace("0x28", "0x2C")):
+        try:
+            generate.test_weapon_hooks("sub_001B7800", wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("changed native loadout boundary must fail closed")
+    assert generate.test_weapon_hooks("unrelated", body) == body
+
+
+def test_native_lab_streaming_boundary():
+    body = "loc_001EDD8F: ;\n    MEM32(ebp + 0x5AF4) = l_eax;\n    native_streaming();\n"
+    fixed = generate.test_weapon_hooks("sub_001EDC90", body)
+    assert fixed.count("black_test_stream_unit(ebp);") == 1
+    assert fixed.index("0x5AF4") < fixed.index("black_test_stream_unit") < fixed.index("native_streaming")
+    assert generate.test_weapon_hooks("sub_001EDC90", fixed) == fixed
+    for wrong in (body.replace("001EDD8F", "001EDD90"), body.replace("0x5AF4", "0x5AF8"), body+body):
+        try:
+            generate.test_weapon_hooks("sub_001EDC90", wrong)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("changed native streaming boundary must fail closed")
 
 
 def test_post_transform_audit_describes_final_sources():
@@ -220,4 +308,7 @@ if __name__ == "__main__":
     test_viewmodel_hooks_preserve_draw_lifetime()
     test_unsigned_crt_carry_rotations()
     test_weapon_model_trace_boundaries()
-    print("9 checks passed")
+    test_native_lab_loadout_boundary()
+    test_native_lab_streaming_boundary()
+    test_scope_mask_native_boundary()
+    print("12 checks passed")

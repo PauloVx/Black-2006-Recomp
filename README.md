@@ -25,9 +25,14 @@ game files.
 AO reconstructs positions at the sampled depth texel and retries when an early
 draw has no usable depth buffer. Autofocus selects a representative surface in
 the central aperture, reducing focus jumps from thin foreground objects.
+After a gap without usable scene depth, autofocus reacquires the current view
+instead of blending from an old foreground focus distance.
 Wider gameplay FOV preserves the native framing of the player's weapon, arms,
 and suppressor using their render-queue ownership. World and companion weapons
 retain their own projection; see the [viewmodel tests](tests/viewmodel/README.md).
+Ultrawide sniper scopes extend the original outer black masks to the screen
+edges while preserving the aperture and reticle. The [scope mask tests](tests/scope_mask/README.md)
+cover native resource ownership, aspect ratios and temporary draw-state restoration.
 
 Enemy weapon-model lookup now preserves carry in the original 64-bit name
 calculation. Corrupted model names previously left enemies without a weapon
@@ -37,7 +42,8 @@ and save-hash compatibility; native drop rules remain in control.
 
 Launch through the first mission has been tested, including the opening movies,
 mission briefing, movement, shooting, and reloading with audio. This is still a
-work in progress: later missions are unverified, crashes and rendering issues
+work in progress: selected cemetery and docks scenes have also been checked,
+but complete later-mission playthroughs remain unverified. Crashes and rendering issues
 remain possible, and Xbox GP/EP audio effects are not fully emulated.
 
 Gameplay voices and effects now honor their source sample rate at the 48 kHz
@@ -50,6 +56,15 @@ playing raw effect sends a second time. This avoids reversed duplicate channels
 and the clipping they caused. Native DSP output still takes precedence; see the
 [spatial audio regressions](tests/apu_spatial/README.md). To export speech or
 music from your own Xbox SSH/BKS banks, use the [audio extraction guide](docs/audio-extraction.md).
+
+Audio pacing retains fractional frame time and recovers ordinary scheduling
+delays. The Windows output queues two packets before starting playback to provide
+scheduling headroom, and restores that buffering after an underrun. The [timing](tests/apu_timing/README.md) and
+[output queue](tests/apu_output/README.md) regressions cover these paths without
+an audio device. A reported critical device error recreates the output on its
+submission thread and primes fresh samples; failed retries are limited to once
+per second. Set `RECOMP_APU_TRACE_OUTPUT=1` for five-second source, clipping,
+queue, playback and recovery counters when investigating an audio problem.
 
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function

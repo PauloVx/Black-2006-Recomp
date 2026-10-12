@@ -25,6 +25,13 @@ libraries, then runs all three regressions in Release and Debug.
   and scripted mouse releases held across a transition must not leak menu taps.
   A synthetic resolver explicitly disables gameplay action mapping; no game
   control-map table is copied into the fixture.
+  Additional source-backed cases enable `RECOMP_INPUT_SCRIPT_BACKGROUND=1` with
+  a fully valid nonempty script. They verify held movement/fire and scripted
+  mouse look survive window focus/capture changes, physical keyboard/mouse
+  events never reach filters, pointer capture stays disabled, and virtual movie
+  confirmations still reach the production movie filter. Disabled, malformed,
+  absent and partial-script settings retain ordinary focus pause behavior; reset
+  restores physical input. The gameplay cases use a synthetic resolver.
 - `movie-overlay` supplies a one-texel synthetic font and tiny in-memory page to
   the production `pc_menu.c`. It checks safe margins, brightness, premultiplied
   alpha, letterboxing, ultrawide placement, resize, unchanged-pixel caching,

@@ -29,6 +29,9 @@ The workflow first compiles the production renderer, video and input libraries, 
   inputs, culture independence, in-game editability, English labels and saved-choice reload.
 - The authored camera hook and guard regressions in `camera/`.
 - Focus timing across 30/60 Hz and interrupted scenes, alongside AO draw-order checks.
+- The extracted production autofocus coordinator across missing, invalid or incompatible
+  depth, disabled DoF and unavailable resources: skipped observations retain their original
+  timestamp so long interruptions reacquire focus, while short gaps still smooth normally.
 - The extracted production AO draw trigger/coordinator against synthetic surfaces: an early
   blended draw with absent or incompatible depth does not consume the frame's AO pass; later
   valid depth retries exactly once. Invalid resources/camera and completed-pass deduplication

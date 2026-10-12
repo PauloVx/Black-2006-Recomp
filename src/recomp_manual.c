@@ -1021,6 +1021,241 @@ done:
 }
 /* END BLACK_WEAPON_MODEL_TRACE */
 
+/* BEGIN BLACK_WEAPON_RENDER_TRACE
+ * Read-only provenance for the separate native NPC attachment and player
+ * flash paths. Idle frames cannot consume the log budget: emit only changed
+ * snapshots, with at most 128 attachment and 64 flash records. Raw bits keep
+ * invalid guest float encodings out of the host FP environment. */
+static void black_weapon_attachment_snapshot(uint32_t stage, uint32_t actor,
+    uint32_t values[12])
+{
+    const uint8_t *memory = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t weapon = 0, model = 0;
+    memset(values, 0, 12u * sizeof(*values));
+    values[0] = stage;
+    values[1] = actor;
+    values[2] = black_pc_ram_span(actor, 0x3B0u);
+    if (values[2]) {
+        values[3] = GUEST32(actor + 0xC4u);
+        weapon = values[4] = GUEST32(actor + 0x29Cu);
+        values[5] = black_pc_ram_span(weapon, 0x109u);
+        if (values[5]) {
+            values[6] = memory[weapon];
+            values[7] = memory[weapon + 0x108u];
+        }
+        values[8] = memory[actor + 0x3A5u];
+        /* 1C5490 draws this NPC attachment model, independently of the
+         * player's 1D25D0 attachment slot at +26C. Record the correct path. */
+        model = values[9] = GUEST32(actor + (stage == 1u ? 0x26Cu : 0x35Cu));
+        values[10] = black_pc_ram_span(model, stage == 1u ? 0x1Bu : 0x6Cu);
+        if (values[10]) values[11] = stage == 1u ? memory[model + 0x1Au] : GUEST32(model + 0x24u);
+    }
+}
+
+void black_weapon_attachment_trace(uint32_t stage, uint32_t actor)
+{
+    static int enabled = -1;
+    static unsigned records;
+    static uint32_t previous[128][12];
+    uint32_t values[12];
+    unsigned i, csr;
+    fenv_t environment;
+    if (enabled == 0 || records >= 128u) return;
+    csr = _mm_getcsr();
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    if (enabled < 0) {
+        const char *value = getenv("RECOMP_BLACK_WEAPON_TRACE");
+        enabled = value && *value && *value != '0';
+    }
+    if (!enabled) goto done;
+    black_weapon_attachment_snapshot(stage, actor, values);
+    for (i = 0; i < 128u; ++i)
+        if (previous[i][0] == stage && previous[i][1] == actor) break;
+    if (i == 128u) {
+        for (i = 0; i < 128u && previous[i][0]; ++i) {}
+        if (i == 128u) goto done;
+    } else if (!memcmp(previous[i], values, sizeof(values))) goto done;
+    memcpy(previous[i], values, sizeof(values));
+    fprintf(stderr, "[WEAPON_ATTACHMENT] n=%u stage=%u actor=%08X valid=%u type=%u weapon=%08X weapon_valid=%u id=%u suppressed=%u render=%u model=%08X model_valid=%u count=%u\n",
+        ++records, values[0], values[1], values[2], values[3], values[4], values[5],
+        values[6], values[7], values[8], values[9], values[10], values[11]);
+done:
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+
+static void black_viewmodel_muzzle_snapshot(uint32_t effect, uint32_t values[10])
+{
+    const uint8_t *memory = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t entry = 0, settings = 0;
+    memset(values, 0, 10u * sizeof(*values));
+    values[0] = effect;
+    values[1] = black_pc_ram_span(effect, 0xCAu);
+    if (values[1]) {
+        values[2] = memory[effect + 0xC9u];
+        values[3] = memory[effect + 0xC8u];
+        entry = values[4] = GUEST32(effect + 0xC4u);
+        if (black_pc_ram_span(entry, 0x14u)) settings = GUEST32(entry + 0x10u);
+        values[5] = settings;
+        if (black_pc_ram_span(settings, 0x4Cu)) {
+            values[6] = GUEST32(settings + 0x20u);
+            if (values[3] < 3u) values[7] = GUEST32(settings + 0x20u + 4u * values[3]);
+            if (values[2] < 3u) {
+                values[8] = GUEST32(settings + 0x30u + 4u * values[2]);
+                values[9] = GUEST32(settings + 0x3Cu + 4u * values[2]);
+            }
+        }
+    }
+}
+
+void black_viewmodel_muzzle_gate(uint32_t effect)
+{
+    static int enabled = -1;
+    static unsigned records;
+    static uint32_t previous[10];
+    uint32_t values[10];
+    unsigned csr;
+    fenv_t environment;
+    if (enabled == 0 || records >= 64u) return;
+    csr = _mm_getcsr();
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    if (enabled < 0) {
+        const char *value = getenv("RECOMP_BLACK_VIEWMODEL_TRACE");
+        enabled = value && *value && *value != '0';
+    }
+    if (!enabled) goto done;
+    black_viewmodel_muzzle_snapshot(effect, values);
+    if (records && !memcmp(previous, values, sizeof(values))) goto done;
+    memcpy(previous, values, sizeof(values));
+    fprintf(stderr, "[MUZZLE_GATE] n=%u effect=%08X valid=%u frame=%u variant=%u entry=%08X settings=%08X texture0=%08X selected_texture=%08X opacity=%08X size_bits=%08X\n",
+        ++records, values[0], values[1], values[2], values[3], values[4], values[5],
+        values[6], values[7], values[8], values[9]);
+done:
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_WEAPON_RENDER_TRACE */
+
+/* BEGIN BLACK_TEST_WEAPON_LOADOUT
+ * Explicit offline test control only. Native 1B7800 initializes the player's
+ * loadout, then 1DEC70 loads and constructs its ordinary weapon/animations.
+ * Select an existing SVD table token before those native steps; never patch a
+ * live descriptor or pretend that this was a natural pickup. */
+static int black_test_weapon_loadout_valid(uint32_t record)
+{
+    const uint8_t *memory = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t core, inventory, header, entries, count, i, matches = 0;
+    if (!black_pc_ram_span(0x2D45D4u, 4u) || !black_pc_ram_span(0x2D12D0u, 4u)) return 0;
+    core = GUEST32(0x2D45D4u);
+    if (!black_pc_ram_span(core, 0x5CB2u) || record != core + 0x3F0u ||
+        !black_pc_ram_span(record, 0x50u) || memory[core + 0x5CB1u] ||
+        (memory[core + 0x5AECu] != 5u && memory[core + 0x5AECu] != 6u)) return 0;
+    inventory = GUEST32(0x2D12D0u);
+    if (!black_pc_ram_span(inventory, 4u)) return 0;
+    header = GUEST32(inventory);
+    if (!black_pc_ram_span(header, 8u)) return 0;
+    count = memory[header + 1u];
+    entries = GUEST32(header + 4u);
+    /* Native IDs are signed bytes, and -1 is the not-found sentinel. */
+    if (!count || count > 127u || !black_pc_ram_span(entries, count * 32u)) return 0;
+    for (i = 0; i < count; ++i) {
+        const uint32_t entry = entries + i * 32u;
+        if (GUEST32(entry) == 0xB8230000u && GUEST32(entry + 4u) == 0x54461524u) {
+            const uint32_t config = GUEST32(entry + 8u);
+            /* 1B7800 uses clip count at +60 and ammo category at +64. */
+            if (!black_pc_ram_span(config, 0x65u) || !GUEST32(config + 0x60u) ||
+                GUEST32(config + 0x60u) > 65535u || memory[config + 0x64u] >= 10u) return 0;
+            ++matches;
+        }
+    }
+    return matches == 1u;
+}
+
+void black_test_weapon_loadout(uint32_t record)
+{
+    static int enabled = -1;
+    static unsigned records;
+    unsigned csr;
+    fenv_t environment;
+    if (enabled == 0) return;
+    csr = _mm_getcsr();
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    if (enabled < 0) {
+        const char *value = getenv("RECOMP_BLACK_TEST_WEAPON");
+        enabled = value && !strcmp(value, "svd");
+    }
+    if (enabled) {
+        const int valid = black_test_weapon_loadout_valid(record);
+        if (valid) {
+            GUEST32(record) = 0xB8230000u;
+            GUEST32(record + 4u) = 0x54461524u;
+        }
+        if (records++ < 8u)
+            fprintf(stderr, "[BLACK_TEST_WEAPON] record=%08X accepted=%d token=54461524B8230000 native_initialization=1\n",
+                    record, valid);
+    }
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_TEST_WEAPON_LOADOUT */
+
+/* BEGIN BLACK_TEST_STREAM_UNIT
+ * Explicit offline checkpoint control. Select a unit from the loaded mission's
+ * own bounded table before native streaming chooses its two initial units. */
+static int black_test_stream_unit_valid(uint32_t core, unsigned unit)
+{
+    const uint8_t *memory = (const uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    uint32_t header;
+    unsigned count;
+    if (!black_pc_ram_span(0x2D45D4u, 4u) || core != GUEST32(0x2D45D4u) ||
+        !black_pc_ram_span(core, 0x5AF8u) ||
+        (memory[core + 0x5AECu] != 5u && memory[core + 0x5AECu] != 6u) ||
+        memory[core + 0x5AEDu] != 1u) return 0;
+    header = GUEST32(core + 0x5AF4u);
+    if (!black_pc_ram_span(header, 0x13u)) return 0;
+    count = memory[header + 0x11u];
+    return count && count <= 127u && unit && unit <= count;
+}
+
+void black_test_stream_unit(uint32_t core)
+{
+    static int initialized;
+    static unsigned unit, records;
+    unsigned csr = _mm_getcsr();
+    fenv_t environment;
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    if (!initialized) {
+        const char *value = getenv("RECOMP_BLACK_TEST_UNIT");
+        unsigned parsed = 0;
+        initialized = 1;
+        if (value && *value) {
+            const char *p = value;
+            while (*p >= '0' && *p <= '9' && parsed <= 127u)
+                parsed = parsed * 10u + (unsigned)(*p++ - '0');
+            if (!*p && parsed && parsed <= 127u) unit = parsed;
+        }
+    }
+    if (unit) {
+        int valid = black_test_stream_unit_valid(core, unit);
+        /* Native streaming uses the literal StUnit%02d.bin identifier. */
+        if (valid) GUEST32(core + 0x5AF0u) = unit;
+        if (records++ < 8u)
+            fprintf(stderr, "[BLACK_TEST_UNIT] core=%08X unit=%u accepted=%d native_streaming=1\n",
+                    core, unit, valid);
+    }
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_TEST_STREAM_UNIT */
+
 
 /* BEGIN BLACK_PC_MOTION_BLUR
  * The original 0x168A30 producer updates camera history before 0x173C30
@@ -1202,6 +1437,354 @@ void sub_00113E70(void)
     }
 }
 /* END BLACK_PC_HUD_ASPECT */
+
+/* BEGIN BLACK_PC_SCOPE_MASK
+ * WpnScope exports only sniperhud. Its character 27 wraps leaf 25: an
+ * untextured black 8x8 quad, placed twice with a tall affine transform.
+ * The proportional HUD chart reaches past these finite side masks on
+ * ultrawide screens. Extend only each outside edge at the leaf draw, then
+ * restore the native affine matrix. The aperture and reticle never enter
+ * this path. Native shape dispatch uses 0x562BD8 -> 0x121B50; the sibling
+ * 0x562BA8 -> 0x121BC0 callback draws glyphs. Resource/character/geometry
+ * ownership is resolved afresh;
+ * no remembered guest address or asset bytes are modified.
+ */
+extern void sub_00121B50_gen(void);
+
+static int black_scope_separate(uint32_t matrix, uint32_t address, uint32_t bytes)
+{
+    return black_hud_span(address, bytes) &&
+        black_hud_disjoint(matrix, 24u, address, bytes);
+}
+
+static int black_scope_owned(uint32_t ui, uint32_t shape)
+{
+    const uint32_t matrix = ui + 0x3740u;
+    uint32_t slot;
+    if (!black_hud_span(ui, 0x37A0u) || !black_scope_separate(matrix, shape, 8u)) return 0;
+    for (slot = 0u; slot < 13u; ++slot) {
+        uint32_t resource, table, entry, name, block, data, constants, movie;
+        uint32_t chars, leaf, pack, geometries, subshape, vertices, points;
+        uint32_t index;
+        resource = GUEST32(ui + 0x36B8u + slot * 4u);
+        if (!black_scope_separate(matrix, resource, 16u) || GUEST32(resource + 8u) != 1u) continue;
+        table = GUEST32(resource + 12u);
+        if (!black_scope_separate(matrix, table, 4u)) continue;
+        entry = GUEST32(table);
+        if (!black_scope_separate(matrix, entry, 8u)) continue;
+        name = GUEST32(entry);
+        if (!black_scope_separate(matrix, name, 10u) ||
+            memcmp((const void *)((uintptr_t)g_xbox_mem_offset + name), "sniperhud", 10u)) continue;
+        block = GUEST32(entry + 4u);
+        if (!black_scope_separate(matrix, block, 0x1Cu)) continue;
+        data = GUEST32(block + 0xCu);
+        constants = GUEST32(block + 0x10u);
+        if (!black_scope_separate(matrix, constants, 0x18u)) continue;
+        /* 0x10BB30 restores this offset after 0x1099F0 relocates the movie. */
+        if ((uint64_t)data + GUEST32(constants + 0x14u) > UINT32_MAX) continue;
+        movie = data + GUEST32(constants + 0x14u);
+        if (!black_scope_separate(matrix, movie, 0x1Cu) ||
+            GUEST32(movie) != 9u || GUEST32(movie + 0x14u) != 39u) continue;
+        chars = GUEST32(movie + 0x18u);
+        if (!black_scope_separate(matrix, chars, 39u * 4u) || GUEST32(chars) != movie) continue;
+        leaf = GUEST32(chars + 25u * 4u);
+        if (!black_scope_separate(matrix, leaf, 0x1Cu) ||
+            GUEST32(leaf) != 1u || GUEST32(leaf + 4u) != movie ||
+            GUEST32(leaf + 8u) || GUEST32(leaf + 0xCu) ||
+            GUEST32(leaf + 0x10u) != 0x41000000u ||
+            GUEST32(leaf + 0x14u) != 0x41000000u || GUEST32(leaf + 0x18u) != shape) continue;
+        pack = GUEST32(block + 0x18u);
+        if (!black_scope_separate(matrix, pack, 16u) ||
+            GUEST32(pack) != 0x7244EA15u || GUEST32(pack + 4u) != 0x96F6A8E2u ||
+            GUEST32(pack + 8u) != 10u) continue;
+        geometries = GUEST32(pack + 12u);
+        if (!black_scope_separate(matrix, geometries, 10u * 16u)) continue;
+        for (index = 0u; index < 10u; ++index) {
+            const uint32_t item = geometries + index * 16u;
+            /* Compact resource name 25, as looked up by 0x112B00/0x17FC0. */
+            if (!GUEST32(item) && GUEST32(item + 4u) == 0x1E449A94u &&
+                GUEST32(item + 8u) == shape) break;
+        }
+        if (index == 10u || GUEST32(shape + 4u) != 1u) continue;
+        subshape = GUEST32(shape);
+        if (!black_scope_separate(matrix, subshape, 12u) ||
+            GUEST32(subshape) != 0x80000000u || GUEST32(subshape + 4u)) continue;
+        vertices = GUEST32(subshape + 8u);
+        if (!black_scope_separate(matrix, vertices, 8u) || GUEST32(vertices + 4u) != 6u) continue;
+        points = GUEST32(vertices);
+        if (!black_scope_separate(matrix, points, 48u)) continue;
+        /* Six vertices of the same 8x8 primitive; a different shape fails closed. */
+        for (index = 0u; index < 12u; ++index) {
+            const uint32_t eight = (0x0B52u >> index) & 1u;
+            if (GUEST32(points + index * 4u) != (eight ? 0x41000000u : 0u)) break;
+        }
+        if (index == 12u) return 1;
+    }
+    return 0;
+}
+
+/* Opt-in evidence for a rejected live draw. Never spend the bounded budget on
+ * startup/menu draws before an exact sniperhud resource is loaded. Raw words
+ * are intentional: printing floats would hide relocation/rounding differences.
+ */
+static int black_scope_trace_enabled = -1;
+static unsigned black_scope_trace_records;
+static uint32_t black_scope_trace_keys[48][12];
+
+static uint32_t black_scope_trace_word(uint32_t base, uint32_t offset)
+{
+    const uint64_t address = (uint64_t)base + offset;
+    return address <= UINT32_MAX && black_hud_span((uint32_t)address, 4u) ?
+        GUEST32((uint32_t)address) : 0u;
+}
+
+static unsigned black_scope_trace_entries, black_scope_trace_slot_records;
+static unsigned black_scope_trace_tall_records;
+static uint32_t black_scope_trace_last_slots[105];
+static uint32_t black_scope_trace_tall_keys[64][8];
+
+/* Independent evidence budgets precede every resource/ownership gate. The
+ * first calls prove dispatch, resource changes reveal loaded header layout,
+ * and tall affine tuples remain observable even when the name lookup fails.
+ * None of these looser diagnostic gates authorize a mask write. */
+static void black_scope_mask_trace_entry(uint32_t stack)
+{
+    uint32_t ui = black_scope_trace_word(0x2D199Cu, 0u), slots[105], key[8];
+    unsigned i, j, changed, first, tall = 0u, csr;
+    fenv_t environment;
+    first = black_scope_trace_entries < 4u;
+    if (first) ++black_scope_trace_entries;
+    slots[0] = ui;
+    for (i = 0u; i < 13u; ++i) {
+        const uint32_t resource = black_scope_trace_word(ui, 0x36B8u + i * 4u);
+        const uint32_t table = black_scope_trace_word(resource, 12u);
+        const uint32_t entry = black_scope_trace_word(table, 0u);
+        const uint32_t name = black_scope_trace_word(entry, 0u);
+        slots[1u + i * 8u] = resource;
+        for (j = 0u; j < 4u; ++j) slots[2u + i * 8u + j] = black_scope_trace_word(resource, j * 4u);
+        slots[6u + i * 8u] = entry;
+        slots[7u + i * 8u] = name;
+        slots[8u + i * 8u] = black_scope_trace_word(name, 0u);
+    }
+    changed = black_scope_trace_slot_records < 32u &&
+        (!black_scope_trace_slot_records || memcmp(slots, black_scope_trace_last_slots, sizeof(slots)));
+    if (changed) {
+        memcpy(black_scope_trace_last_slots, slots, sizeof(slots));
+        ++black_scope_trace_slot_records;
+    }
+    key[0] = black_scope_trace_word(stack, 4u);
+    key[1] = black_scope_trace_word(stack, 8u);
+    for (i = 0u; i < 6u; ++i) key[i + 2u] = black_scope_trace_word(ui, 0x3740u + i * 4u);
+    if (black_scope_trace_tall_records < 64u &&
+        (key[5] & 0x7FFFFFFFu) >= 0x42000000u && (key[5] & 0x7FFFFFFFu) <= 0x43800000u) {
+        for (i = 0u; i < black_scope_trace_tall_records; ++i)
+            if (!memcmp(key, black_scope_trace_tall_keys[i], sizeof(key))) break;
+        if (i == black_scope_trace_tall_records) {
+            memcpy(black_scope_trace_tall_keys[i], key, sizeof(key));
+            ++black_scope_trace_tall_records; tall = 1u;
+        }
+    }
+    if (!first && !changed && !tall) return;
+    csr = _mm_getcsr(); fegetenv(&environment);
+    fesetenv(FE_DFL_ENV); _mm_setcsr(0x1F80u);
+    fprintf(stderr, "[BLACK_SCOPE_ENTRY] entry=%u slotRecords=%u tallRecords=%u first=%u changed=%u tall=%u stack=%08X stackValid=%u ret=%08X shape=%08X mode=%08X ui=%08X uiValid=%u renderer=%08X chart=%08X,%08X affine=%08X,%08X,%08X,%08X,%08X,%08X\n",
+        black_scope_trace_entries, black_scope_trace_slot_records, black_scope_trace_tall_records,
+        first, changed, tall, stack, black_hud_span(stack, 12u), black_scope_trace_word(stack, 0u),
+        key[0], key[1], ui, black_hud_span(ui, 0x37A0u), black_scope_trace_word(0x2D67F4u, 0u),
+        black_scope_trace_word(0x5629A4u, 0u), black_scope_trace_word(0x5629C8u, 0u),
+        key[2], key[3], key[4], key[5], key[6], key[7]);
+    if (changed) for (i = 0u; i < 13u; ++i) {
+        const uint32_t entry = slots[6u + i * 8u], name = slots[7u + i * 8u];
+        fprintf(stderr, "[BLACK_SCOPE_SLOTS] snapshot=%u slot=%u resource=%08X words=%08X,%08X,%08X,%08X entry=%08X words=%08X,%08X nameWords=%08X,%08X,%08X,%08X\n",
+            black_scope_trace_slot_records, i, slots[1u + i * 8u], slots[2u + i * 8u],
+            slots[3u + i * 8u], slots[4u + i * 8u], slots[5u + i * 8u], entry,
+            black_scope_trace_word(entry, 0u), black_scope_trace_word(entry, 4u),
+            black_scope_trace_word(name, 0u), black_scope_trace_word(name, 4u),
+            black_scope_trace_word(name, 8u), black_scope_trace_word(name, 12u));
+    }
+    fflush(stderr); fesetenv(&environment); _mm_setcsr(csr);
+}
+
+static void black_scope_mask_trace(uint32_t stack)
+{
+    uint32_t ui, renderer, slot, resource = 0u, table = 0u, entry = 0u;
+    uint32_t block, data, constants, movie, chars, leaf, pack, geometries;
+    uint32_t shape, subshape, vertices, points, mode, m[6], key[12], scale;
+    uint32_t failed = 0u, left, right, offset;
+    unsigned i, j, csr;
+    uint64_t movie_address;
+    fenv_t environment;
+    if (black_scope_trace_enabled < 0) {
+        const char *value;
+        csr = _mm_getcsr(); fegetenv(&environment);
+        fesetenv(FE_DFL_ENV); _mm_setcsr(0x1F80u);
+        value = getenv("RECOMP_BLACK_SCOPE_MASK_TRACE");
+        black_scope_trace_enabled = value && !strcmp(value, "1");
+        fesetenv(&environment); _mm_setcsr(csr);
+    }
+    if (!black_scope_trace_enabled) return;
+    black_scope_mask_trace_entry(stack);
+    if (black_scope_trace_records == 48u ||
+        !black_hud_span(stack, 12u)) return;
+    ui = black_scope_trace_word(0x2D199Cu, 0u);
+    if (!black_hud_span(ui, 0x37A0u)) return;
+    for (slot = 0u; slot < 13u; ++slot) {
+        uint32_t count, name, n;
+        resource = GUEST32(ui + 0x36B8u + slot * 4u);
+        if (!black_hud_span(resource, 16u)) continue;
+        count = GUEST32(resource + 8u);
+        table = GUEST32(resource + 12u);
+        if (!count || count > 32u || !black_hud_span(table, count * 4u)) continue;
+        for (n = 0u; n < count; ++n) {
+            entry = GUEST32(table + n * 4u);
+            if (!black_hud_span(entry, 8u)) continue;
+            name = GUEST32(entry);
+            if (black_hud_span(name, 10u) && !memcmp(
+                (const void *)((uintptr_t)g_xbox_mem_offset + name), "sniperhud", 10u)) break;
+        }
+        if (n < count) break;
+    }
+    if (slot == 13u) return;
+    shape = GUEST32(stack + 4u); mode = GUEST32(stack + 8u);
+    for (i = 0u; i < 6u; ++i) m[i] = GUEST32(ui + 0x3740u + i * 4u);
+    block = GUEST32(entry + 4u);
+    data = black_scope_trace_word(block, 0xCu);
+    constants = black_scope_trace_word(block, 0x10u);
+    movie_address = (uint64_t)data + black_scope_trace_word(constants, 0x14u);
+    movie = movie_address <= UINT32_MAX ? (uint32_t)movie_address : 0u;
+    chars = black_scope_trace_word(movie, 0x18u);
+    leaf = black_scope_trace_word(chars, 25u * 4u);
+    /* Permit a mismatched transform or relocation, but not ordinary small HUD
+     * widgets: capture the resource's expected leaf or a tall side-like draw. */
+    if (shape != black_scope_trace_word(leaf, 0x18u) &&
+        ((m[3] & 0x7FFFFFFFu) < 0x42000000u ||
+         (m[3] & 0x7FFFFFFFu) > 0x43800000u)) return;
+    key[0] = resource; key[1] = leaf; key[2] = shape; key[3] = mode;
+    memcpy(key + 4u, m, sizeof(m));
+    key[10] = black_scope_trace_word(0x5629A4u, 0u);
+    key[11] = black_scope_trace_word(0x5629C8u, 0u);
+    for (i = 0u; i < black_scope_trace_records; ++i)
+        if (!memcmp(key, black_scope_trace_keys[i], sizeof(key))) return;
+    memcpy(black_scope_trace_keys[black_scope_trace_records], key, sizeof(key));
+    ++black_scope_trace_records;
+    renderer = black_scope_trace_word(0x2D67F4u, 0u);
+    pack = black_scope_trace_word(block, 0x18u);
+    geometries = black_scope_trace_word(pack, 12u);
+    subshape = black_scope_trace_word(shape, 0u);
+    vertices = black_scope_trace_word(subshape, 8u);
+    points = black_scope_trace_word(vertices, 0u);
+    scale = black_hud_scale_bits();
+    if (!scale) failed |= 1u;
+    if (stack < 0x10020u || !black_hud_span(stack - 0x20u, 0x2Cu)) failed |= 2u;
+    if (mode) failed |= 4u;
+    if (!black_hud_span(renderer, 0xD430u) ||
+        !black_hud_span(renderer, 13u) || !*(const unsigned char *)
+        ((uintptr_t)g_xbox_mem_offset + renderer + 12u)) failed |= 8u;
+    if (!black_hud_disjoint(ui + 0x3740u, 24u, stack - 0x20u, 0x2Cu)) failed |= 16u;
+    if (key[10] != 0x44200000u || key[11] != 0x43F00000u) failed |= 32u;
+    if (m[0] != 0x41DBFFF0u || m[1] || m[2] || m[3] != 0x427A0090u ||
+        m[5] != 0xC1200000u) failed |= 64u;
+    if (!black_scope_owned(ui, shape)) failed |= 128u;
+    csr = _mm_getcsr(); fegetenv(&environment);
+    fesetenv(FE_DFL_ENV); _mm_setcsr(0x1F80u);
+    offset = scale == 0x3F124925u ? 0x43700000u : 0x44055555u;
+    left = black_hud_result(_mm_add_ss(black_hud_scalar(0xC31A0000u), black_hud_scalar(offset)));
+    right = black_hud_result(_mm_add_ss(black_hud_scalar(0x440EC000u), black_hud_scalar(offset)));
+    if (m[4] != left && m[4] != right) failed |= 256u;
+    fprintf(stderr, "[BLACK_SCOPE_MASK] record=%u reject=%03X stack=%08X ret=%08X shape=%08X mode=%08X ui=%08X renderer=%08X aspect=%08X scale=%08X chart=%08X,%08X expectedTX=%08X,%08X\n",
+        black_scope_trace_records, failed, stack, GUEST32(stack), shape, mode, ui, renderer,
+        black_aspect_bits, scale, key[10], key[11], left, right);
+    fprintf(stderr, "[BLACK_SCOPE_MASK] affine=%08X,%08X,%08X,%08X,%08X,%08X slot=%u resource=%08X count=%08X table=%08X entry=%08X block=%08X data=%08X constants=%08X movieOffset=%08X movie=%08X chars=%08X leaf25=%08X\n",
+        m[0], m[1], m[2], m[3], m[4], m[5], slot, resource,
+        black_scope_trace_word(resource, 8u), table, entry, block, data, constants,
+        black_scope_trace_word(constants, 0x14u), movie, chars, leaf);
+    fprintf(stderr, "[BLACK_SCOPE_MASK] movieWords=");
+    for (i = 0u; i < 7u; ++i) fprintf(stderr, "%s%08X", i ? "," : "", black_scope_trace_word(movie, i * 4u));
+    fprintf(stderr, " leafWords=");
+    for (i = 0u; i < 7u; ++i) fprintf(stderr, "%s%08X", i ? "," : "", black_scope_trace_word(leaf, i * 4u));
+    fprintf(stderr, " chars0=%08X pack=%08X words=%08X,%08X,%08X,%08X geometries=%08X\n",
+        black_scope_trace_word(chars, 0u), pack, black_scope_trace_word(pack, 0u),
+        black_scope_trace_word(pack, 4u), black_scope_trace_word(pack, 8u),
+        black_scope_trace_word(pack, 12u), geometries);
+    fprintf(stderr, "[BLACK_SCOPE_MASK] shapeWords=");
+    for (i = 0u; i < 8u; ++i) fprintf(stderr, "%s%08X", i ? "," : "", black_scope_trace_word(shape, i * 4u));
+    fprintf(stderr, " subshape=%08X words=%08X,%08X,%08X vertices=%08X words=%08X,%08X points=%08X words=",
+        subshape, black_scope_trace_word(subshape, 0u), black_scope_trace_word(subshape, 4u),
+        black_scope_trace_word(subshape, 8u), vertices, black_scope_trace_word(vertices, 0u),
+        black_scope_trace_word(vertices, 4u), points);
+    for (i = 0u; i < 12u; ++i) fprintf(stderr, "%s%08X", i ? "," : "", black_scope_trace_word(points, i * 4u));
+    fprintf(stderr, "\n[BLACK_SCOPE_MASK] geometryItems=");
+    for (i = 0u; i < 10u; ++i) {
+        fprintf(stderr, "%s", i ? ";" : "");
+        for (j = 0u; j < 4u; ++j) fprintf(stderr, "%s%08X", j ? "," : "",
+            black_scope_trace_word(geometries, i * 16u + j * 4u));
+    }
+    fprintf(stderr, "\n"); fflush(stderr);
+    fesetenv(&environment); _mm_setcsr(csr);
+}
+
+static int black_scope_mask_begin(uint32_t stack, uint32_t *ui_out, uint32_t saved[2])
+{
+    const uint32_t scale = black_hud_scale_bits();
+    uint32_t ui, renderer, shape, offset, left, right, x;
+    unsigned int csr;
+    __m128 shifted_left, shifted_right, edge, width, sx;
+    if (!scale || stack < 0x10020u || !black_hud_span(stack - 0x20u, 0x2Cu) ||
+        GUEST32(stack + 8u)) return 0; /* Ordinary leaf draw, never a stencil pass. */
+    ui = GUEST32(0x2D199Cu);
+    renderer = GUEST32(0x2D67F4u);
+    shape = GUEST32(stack + 4u);
+    if (!black_hud_span(ui, 0x37A0u) || !black_hud_span(renderer, 0xD430u) ||
+        !*(const unsigned char *)((uintptr_t)g_xbox_mem_offset + renderer + 0xCu) ||
+        !black_hud_disjoint(ui + 0x3740u, 24u, stack - 0x20u, 0x2Cu) ||
+        GUEST32(0x5629A4u) != 0x44200000u || GUEST32(0x5629C8u) != 0x43F00000u ||
+        GUEST32(ui + 0x3740u) != 0x41DBFFF0u || GUEST32(ui + 0x3744u) ||
+        GUEST32(ui + 0x3748u) || GUEST32(ui + 0x374Cu) != 0x427A0090u ||
+        GUEST32(ui + 0x3754u) != 0xC1200000u || !black_scope_owned(ui, shape)) return 0;
+    offset = scale == 0x3F124925u ? 0x43700000u : 0x44055555u;
+    csr = _mm_getcsr();
+    _mm_setcsr(0x1F80u); /* Policy arithmetic: no guest traps, flags, or rounding dependence. */
+    shifted_left = _mm_add_ss(black_hud_scalar(0xC31A0000u), black_hud_scalar(offset));
+    shifted_right = _mm_add_ss(black_hud_scalar(0x440EC000u), black_hud_scalar(offset));
+    left = black_hud_result(shifted_left);
+    right = black_hud_result(shifted_right);
+    x = GUEST32(ui + 0x3750u);
+    if (x != left && x != right) { _mm_setcsr(csr); return 0; }
+    saved[0] = GUEST32(ui + 0x3740u);
+    saved[1] = x;
+    sx = black_hud_scalar(saved[0]);
+    if (x == left) {
+        /* Keep the aperture-side edge; pad only the outside by one chart unit. */
+        edge = _mm_add_ss(shifted_left, _mm_mul_ss(sx, black_hud_scalar(0x41000000u)));
+        sx = _mm_div_ss(_mm_add_ss(edge, black_hud_scalar(0x3F800000u)), black_hud_scalar(0x41000000u));
+        GUEST32(ui + 0x3750u) = 0xBF800000u;
+    } else {
+        width = _mm_add_ss(black_hud_scalar(0x44200000u),
+            _mm_mul_ss(black_hud_scalar(offset), black_hud_scalar(0x40000000u)));
+        sx = _mm_div_ss(_mm_sub_ss(_mm_add_ss(width, black_hud_scalar(0x3F800000u)), shifted_right),
+            black_hud_scalar(0x41000000u));
+    }
+    GUEST32(ui + 0x3740u) = black_hud_result(sx);
+    *ui_out = ui;
+    _mm_setcsr(csr);
+    return 1;
+}
+
+void sub_00121B50(void)
+{
+    uint32_t ui = 0u, saved[2];
+    const unsigned int csr = _mm_getcsr();
+    black_aspect_refresh();
+    _mm_setcsr(csr);
+    black_scope_mask_trace(g_esp);
+    const int adjusted = black_scope_mask_begin(g_esp, &ui, saved);
+    sub_00121B50_gen();
+    if (adjusted) {
+        GUEST32(ui + 0x3740u) = saved[0];
+        GUEST32(ui + 0x3750u) = saved[1];
+    }
+}
+/* END BLACK_PC_SCOPE_MASK */
 
 /* ── Manual function overrides ─────────────────────────────── */
 

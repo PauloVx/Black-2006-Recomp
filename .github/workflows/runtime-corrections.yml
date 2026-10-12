@@ -90,6 +90,17 @@ jobs:
             ctest --test-dir build-viewmodel -C $configuration --output-on-failure
             if ($LASTEXITCODE -ne 0) { throw 'Viewmodel projection regression failed' }
           }
+      - name: Build and run ultrawide scope mask regressions
+        shell: pwsh
+        run: |
+          cmake -S tests/scope_mask -B build-scope-mask -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Scope mask test configure failed' }
+          foreach ($configuration in @('Release', 'Debug')) {
+            cmake --build build-scope-mask --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw 'Scope mask test build failed' }
+            ctest --test-dir build-scope-mask -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw 'Scope mask regression failed' }
+          }
       - name: Build and run weapon model arithmetic and observation regressions
         shell: pwsh
         run: |

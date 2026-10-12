@@ -357,6 +357,44 @@ def title_hooks(name, body):
     body = weapon_model_hooks(name, body)
     body = viewmodel_hooks(name, body)
     body = unsigned_division_hooks(name, body)
+    body = test_weapon_hooks(name, body)
+    body = scope_mask_boundary(name, body)
+    return body
+
+
+def scope_mask_boundary(name, body):
+    """Retain the shape callback ABI and its native registration/dispatch route."""
+    if name == "sub_00121CB0":
+        for marker in ("MEM32(0x562BD8) = 0x121B50;",
+                       "MEM32(0x562BA8) = 0x121BC0;"):
+            if body.count(marker) != 1:
+                raise ValueError("Native shape/glyph callback registration changed")
+        return body
+    if name == "sub_00102840_gen":
+        start, end = "loc_00102D59: ;", "loc_00102D67: ;"
+        if body.count(start) != 1 or body.count(end) != 1:
+            raise ValueError("Native shape callback consumer changed")
+        branch = body[body.index(start):body.index(end)]
+        markers = ("edx = MEM32(ebp + 0xC);", "eax = MEM32(ecx + 0x18);",
+                   "PUSH32(esp, edx);", "PUSH32(esp, eax);",
+                   "_icall_target = MEM32(0x562BD8); PUSH32(esp, 0x00102D67u);")
+        previous = -1
+        for marker in markers:
+            if branch.count(marker) != 1 or branch.index(marker) <= previous:
+                raise ValueError("Native shape callback arguments/target changed")
+            previous = branch.index(marker)
+        return body
+    if name != "sub_00121B50_gen":
+        return body
+    for marker in ("loc_00121B50: ;", "loc_00121B69: ;", "loc_00121B89: ;",
+                   "loc_00121BA9: ;", "l_eax = MEM32(ebp + 0xC);",
+                   "RECOMP_ABI_CALL(0x000DA2B0u, sub_000DA2B0)",
+                   "RECOMP_ABI_CALL(0x000DA3A0u, sub_000DA3A0)"):
+        if body.count(marker) != 1:
+            raise ValueError("Native scope leaf draw boundary changed")
+    for operand in ("l_edx = MEM32(ebp + 8);", "l_ecx = l_eax + 0x3740;"):
+        if body.count(operand) != 2:
+            raise ValueError("Native scope geometry/affine ownership changed")
     return body
 
 
@@ -377,6 +415,40 @@ def weapon_trace_hooks(name, body):
         hook = f"    black_weapon_trace({arguments});\n"
         if marker + hook not in body:
             body = replace_once(body, marker, marker + hook)
+    render_sites = {
+        "sub_001D25D0": ("001D25D0", "black_weapon_attachment_trace(1u, l_ecx);"),
+        "sub_001C6150": ("001C6150", "black_weapon_attachment_trace(2u, l_ecx);"),
+        "sub_001C5490": ("001C5490", "black_weapon_attachment_trace(3u, l_edi);"),
+        "sub_0016B1E0": ("0016B1E0", "black_viewmodel_muzzle_gate(l_esi);"),
+    }
+    if name in render_sites:
+        label, call = render_sites[name]
+        marker = f"loc_{label}: ;\n"
+        hook = f"    {call}\n"
+        if marker + hook not in body:
+            body = replace_once(body, marker, marker + hook)
+    return body
+
+
+def test_weapon_hooks(name, body):
+    """Select a validated offline lab loadout before ordinary native creation."""
+    if name == "sub_001EDC90":
+        marker = "loc_001EDD8F: ;\n    MEM32(ebp + 0x5AF4) = l_eax;\n"
+        hook = "    black_test_stream_unit(ebp); /* explicit offline lab checkpoint */\n"
+        if body.count(marker) != 1:
+            raise ValueError("Native streaming initialization boundary changed")
+        if marker + hook not in body:
+            body = replace_once(body, marker, marker + hook)
+        return body
+    if name != "sub_001B7800":
+        return body
+    marker = "loc_001B78A0: ;\n"
+    original = "    l_edx = MEM32(ebp + 0x28);\n"
+    hook = "    black_test_weapon_loadout(l_esi); /* explicit offline lab control */\n"
+    if body.count(marker) != 1 or body.count(original) != 1:
+        raise ValueError("Native player loadout initialization boundary changed")
+    if marker + hook + original not in body:
+        body = replace_once(body, marker + original, marker + hook + original)
     return body
 
 
@@ -658,7 +730,8 @@ def main():
     command(toolkit, "tools.recomp", [xbe, "--all", "--split", "1000", "--game-name", "BLACK", "--disasm-dir", disasm, "--func-id-dir", identified, "--abi-dir", abi, "--gen-dir", generated, "--exclude-manual", manual, "--output-dir", work / "summary"])
     chunks = sorted(generated.glob("recomp_[0-9]*.c"))
     emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
-    declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
+    declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_weapon_attachment_trace(uint32_t, uint32_t);\nextern void black_viewmodel_muzzle_gate(uint32_t);\nextern void black_test_weapon_loadout(uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
+    declarations += "\nextern void black_test_stream_unit(uint32_t);\n"
     for chunk in chunks:
         text = chunk.read_text(encoding="utf-8")
         text = rewrite_functions(text, promote_body)
