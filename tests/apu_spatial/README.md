@@ -21,13 +21,34 @@ This is a dry stereo fallback, not an emulation of the guest's effect graph or
 headphone HRTF. Headphone front/back localization and long-run synchronization
 still need gameplay recordings to validate.
 
+The complete dry stereo sum now uses a stereo-linked peak limiter before its
+first 16-bit conversion. Individually valid voices can overlap above full scale;
+independent hard clamps flattened their peaks and changed the left/right ratio.
+The limiter retains unity gain until an overload, reduces both channels together
+immediately, and releases with a 100 ms time constant at 48 kHz. State continues
+across 32-sample ticks and silence, resets on DSP reset and native EP/VP bypass,
+and adds no buffering or latency. The final clamp remains as a rounding guard.
+This prevents this fallback's hard saturation; instantaneous gain changes and
+the omitted guest effect graph still limit fidelity. The separate software
+DirectSound mixer is outside this correction.
+
+With `RECOMP_APU_TRACE_OUTPUT=1`, `overloaded` counts raw channel samples outside
+full scale, `limited` counts nonzero channel samples attenuated by the gain
+envelope, and `clipped` counts only actual post-limit hard saturation. The
+`mixer-active` field identifies whether the separate software mixer is in use.
+
 The test links the production APU and calls `mcpx_apu_dsp_frame`. No game data
 or audio device is needed. Independent signed impulses test each of the 32
 buses at every epoch offset. Additional cases test one-sided sounds with loud
-effect sends, unclipped dry gain, chronological stereo blocks, saturation,
+effect sends, unclipped dry gain, chronological stereo blocks, peak limiting,
 native PCM ownership and VP diagnostic ownership. Configured-pair cases check
 signed stereo, every epoch offset, coexistence with standard speakers,
 auxiliary-send exclusion, arbitrary channel ordering, and invalid requests.
+Overlapping-source cases check the quieter channel's preserved ratio, release
+through silence and frame boundaries, DSP reset, finite input handling, and
+separate overload/limiting/hard-clipping counters. A sustained 1 kHz overlapped
+tone checks stereo ratio, absence of hard-clipping plateaus, and the residual
+after projecting onto the fundamental (less than 0.3% full scale).
 A separate process retains
 the `RECOMP_APU_MIXDOWN_ALL=0` front-only diagnostic control.
 
@@ -46,6 +67,11 @@ To isolate the custom-pair fix, copy the current source and remove just the
 configured-pair additions to left/right output. Its custom-bus cases must fail,
 while the front-only control continues to pass. An older parity source can
 instead supply a validated setter stub and must fail the broader spatial cases.
+
+For a limiter negative control, set `APU_DSP_TEST_SOURCE` to the pre-limiter
+atomic-pair source with the same public API and current state header. Its dry
+routing checks pass, while overlap ratio, frame continuity, silence release,
+plateau, harmonic-residual and limiter telemetry checks must fail.
 
 Speaker bus IDs are independently documented in the public
 [Cxbx DirectSound types](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/master/src/core/hle/DSOUND/XbDSoundTypes.h).

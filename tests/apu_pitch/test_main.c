@@ -385,6 +385,8 @@ static void adpcm_cases(void)
     }
 }
 
+#include "test_trap_queue.inc"
+
 int main(void)
 {
     d = calloc(1, sizeof(*d));
@@ -395,6 +397,8 @@ int main(void)
     stream_cases();
     production_frame_case();
     adpcm_cases();
+    idle_trap_queue_case();
+    locked_trap_queue_case();
     free(ram);
     free(d);
     if (failures) {

@@ -31,6 +31,13 @@ VOICE_ON restart, SSL joins, deferred DONE notifications, persistent starvation,
 nonpersistent stream completion and final-frame mixing. Mono/stereo ADPCM tests
 cross decoded block boundaries at native, half and fractional source rates.
 
+The IDLE-trap regression keeps a continuing sound before and after two finished
+voices, plus active sounds in both following lists. It verifies all 32 samples
+on every audible bin, one pending trap payload with its unlink cursors, and the
+second finished voice's later trap after simulated ISR cleanup. It also covers
+an invalid idle cycle and pause/shutdown while a queued voice stays locked.
+Neither cancellation path may process source samples.
+
 For a negative control, set `-DAPU_VP_TEST_SOURCE=<absolute baseline apu_vp.c>`.
 Place that copied source in its own folder without a baseline `apu_state.h`;
 the harness uses the current state header. The old raw-fetch implementation

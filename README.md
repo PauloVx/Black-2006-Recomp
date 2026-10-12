@@ -121,7 +121,9 @@ runtime patch, creates a local Python environment, generates code from your XBE,
 and builds the game and launcher. These dependencies and outputs stay outside Git.
 Building the generated C code can take several minutes.
 
-Use the launcher to configure controls and video settings, then choose **Play**.
+**BLACK PC Launcher.exe** starts the game directly using your saved preferences.
+Open **BLACK PC Settings.exe** to configure controls and video settings separately,
+or run `BLACK PC Launcher.exe --settings`. The settings window also retains its **Play** button.
 Leave **Skip movies** and **Advance startup menus automatically** unchecked to
 watch the full opening and navigate manually. Local settings live in `local/`
 and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
