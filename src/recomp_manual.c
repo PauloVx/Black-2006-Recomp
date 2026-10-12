@@ -2840,6 +2840,28 @@ static uint32_t black_pc_brand_guest(uint32_t source)
 
 #include "black_native_menu.inc"
 
+/* Some frontend banks leave these keys unresolved and return the token itself.
+ * Substitute the matching localized MainUS record instead of drawing the key. */
+static uint32_t black_pc_localized_fallback(uint32_t source)
+{
+    static const char legal_screen[] = "$FE_LEGALSCREENTEXT";
+    static const char loading[] = "$FE___LOADING";
+    uint32_t record_id;
+    if (black_pc_ram_span(source, (uint32_t)sizeof(legal_screen)) &&
+        memcmp((const void *)((uintptr_t)g_xbox_mem_offset + source), legal_screen, sizeof(legal_screen)) == 0) {
+        record_id = 0x3A7C7126u;
+    } else if (black_pc_ram_span(source, (uint32_t)sizeof(loading)) &&
+        memcmp((const void *)((uintptr_t)g_xbox_mem_offset + source), loading, sizeof(loading)) == 0) {
+        record_id = 0x444D1E5Fu;
+    } else {
+        return source;
+    }
+    {
+        const uint32_t localized = bnm_string(record_id);
+        return localized ? localized : source;
+    }
+}
+
 /* The confirmation hint also works with RECOMP_NATIVE_MENUS=0, and before a
  * native page has loaded its fonts. The font is copied by the runtime, so the
  * game's file stays untouched. Retry-free on a missing installation asset. */
@@ -2860,6 +2882,7 @@ void sub_001F3A80(void)
     const uint32_t hash = black_pc_ram_span(stack, 8u) ? GUEST32(stack + 4u) : 0u;
     size_t i;
     sub_001F3A80_gen();
+    if (g_eax) g_eax = black_pc_localized_fallback(g_eax);
     if (!g_eax) return;
     {
         const unsigned int guest_csr = _mm_getcsr();

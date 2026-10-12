@@ -13,8 +13,10 @@ $launcherKeys = Join-Path $projectRoot 'localization\launcher\en-pt-BR.jsonl'
 $launcherCatalogDir = Join-Path $projectRoot 'localization\launcher'
 $catalogBuilder = Join-Path $PSScriptRoot 'localization\build_launcher_catalog.py'
 $bankBuilder = Join-Path $PSScriptRoot 'localization\build_mainus.py'
+$ptBrBankBuilder = Join-Path $PSScriptRoot 'localization\build_pt_br_bank.py'
 $bankBootstrap = Join-Path $PSScriptRoot 'localization\prepare_english_bank.ps1'
 $englishBank = Join-Path $projectRoot 'local\language-banks\en-US\MainUS.bin'
+$ptBrSource = Join-Path $projectRoot 'translations\pt-BR\MainUS.json'
 $gameCatalogDir = Join-Path $projectRoot 'localization\game'
 if (-not $OutputDirectory) { $OutputDirectory = $projectRoot }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -56,6 +58,17 @@ if ($python) {
     . $bankBootstrap
     Initialize-EnglishLanguageBank -InstalledBank (Join-Path $projectRoot 'game\language\strings\MainUS.bin') -EnglishBank $englishBank
     if (Test-Path -LiteralPath $englishBank) {
+        if ((Test-Path -LiteralPath $ptBrSource) -and (Test-Path -LiteralPath $ptBrBankBuilder)) {
+            $ptBrBank = Join-Path $projectRoot 'local\language-banks\pt-BR\MainUS.bin'
+            if ($Force -or -not (Test-Path -LiteralPath $ptBrBank) -or
+                (Get-Item -LiteralPath $englishBank).LastWriteTimeUtc -gt (Get-Item -LiteralPath $ptBrBank).LastWriteTimeUtc -or
+                (Get-Item -LiteralPath $ptBrSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $ptBrBank).LastWriteTimeUtc) {
+                & $python.Source @pythonArgs $ptBrBankBuilder $englishBank $ptBrSource $ptBrBank
+                if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Brazilian Portuguese MainUS bank.' }
+            }
+        } else {
+            Write-Output 'Skipped the Brazilian Portuguese game bank: its translation source or builder is missing.'
+        }
         foreach ($locale in @('es', 'fr', 'de', 'it')) {
             $catalog = Join-Path $gameCatalogDir ($locale + '.jsonl')
             $bank = Join-Path $projectRoot ('local\language-banks\' + $locale + '\MainUS.bin')
