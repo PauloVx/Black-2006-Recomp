@@ -8,11 +8,16 @@ namespace BlackXboxLauncher
     {
         internal const string English = "en-US";
         internal const string PortugueseBrazil = "pt-BR";
+        internal const string Spanish = "es";
+        internal const string French = "fr";
+        internal const string German = "de";
+        internal const string Italian = "it";
         internal const string StockEnglishSha256 = "B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB";
 
         internal static bool IsSupported(string language)
         {
-            return language == English || language == PortugueseBrazil;
+            return language == English || language == PortugueseBrazil || language == Spanish ||
+                language == French || language == German || language == Italian;
         }
 
         internal static string Normalize(string language)
@@ -20,9 +25,28 @@ namespace BlackXboxLauncher
             return IsSupported(language) ? language : English;
         }
 
+        internal static bool IsMachineDraft(string language)
+        {
+            return language == Spanish || language == French || language == German || language == Italian;
+        }
+
+        internal static string DisplayName(string language)
+        {
+            switch (language)
+            {
+                case English: return "English";
+                case PortugueseBrazil: return "Português (Brasil)";
+                case Spanish: return "Spanish (machine draft)";
+                case French: return "French (machine draft)";
+                case German: return "German (machine draft)";
+                case Italian: return "Italian (machine draft)";
+                default: return "English";
+            }
+        }
+
         internal static string BankPath(string root, string language)
         {
-            if (!IsSupported(language)) throw new ArgumentException("Choose English or Português (Brasil).", "language");
+            if (!IsSupported(language)) throw new ArgumentException("Choose one of the supported game languages.", "language");
             return Path.Combine(Path.GetFullPath(root), "local", "language-banks", language, "MainUS.bin");
         }
 

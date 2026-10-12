@@ -32,6 +32,7 @@
 #include "pc_video_menu.h"
 #include "pc_movie_skip.h"
 #include "pc_menu.h"
+#include "black_menu_prompt_language.h"
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
 
@@ -2713,13 +2714,16 @@ static INIT_ONCE black_menu_once = INIT_ONCE_STATIC_INIT;
 static BOOL CALLBACK black_menu_init(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
     size_t i;
+    const char *language = getenv("RECOMP_LANGUAGE");
     (void)once; (void)parameter; (void)context;
     for (i = 0; i < sizeof(black_menu_prompts) / sizeof(black_menu_prompts[0]); i++) {
         BlackMenuPrompt *prompt = &black_menu_prompts[i];
         char label[16], text[96];
         uint32_t guest;
         if (!pc_input_menu_text((PcMenuKey)prompt->key, label, sizeof(label))) continue;
-        snprintf(text, sizeof(text), "%s%s%s", prompt->before, label, prompt->after);
+        snprintf(text, sizeof(text), "%s%s%s",
+            black_menu_prompt_localize(prompt->before, language), label,
+            black_menu_prompt_localize(prompt->after, language));
         guest = xbox_HeapAlloc((uint32_t)(strlen(text) + 1u), 16u);
         if (!guest || !black_pc_ram_span(guest, (uint32_t)(strlen(text) + 1u))) continue;
         memcpy((void *)((uintptr_t)g_xbox_mem_offset + guest), text, strlen(text) + 1u);

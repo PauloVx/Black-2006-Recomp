@@ -1,5 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace BlackXboxLauncher
@@ -7,19 +11,113 @@ namespace BlackXboxLauncher
     internal static class LauncherLanguage
     {
         private static string current = GameLanguageBanks.English;
+        private static readonly object languageCacheLock = new object();
+        private static readonly System.Lazy<Dictionary<string, Dictionary<string, string>>> generatedCatalogs =
+            new System.Lazy<Dictionary<string, Dictionary<string, string>>>(LoadGeneratedCatalogs);
+        private static readonly Dictionary<string, Dictionary<string, string>> translationsByLanguage =
+            new Dictionary<string, Dictionary<string, string>>(System.StringComparer.Ordinal);
+        private static readonly Dictionary<string, Regex> matchersByLanguage =
+            new Dictionary<string, Regex>(System.StringComparer.Ordinal);
+
+        private static Dictionary<string, Dictionary<string, string>> GeneratedCatalogs
+        {
+            get { return generatedCatalogs.Value; }
+        }
+
+        private static Dictionary<string, Dictionary<string, string>> LoadGeneratedCatalogs()
+        {
+            var catalogs = new Dictionary<string, Dictionary<string, string>>();
+            try
+            {
+                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BlackXboxLauncher.launcher-locales.json"))
+                {
+                    if (stream == null) return catalogs;
+                    using (StreamReader reader = new StreamReader(stream))
+                    {
+                        var serializer = new JavaScriptSerializer();
+                        var loaded = serializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(reader.ReadToEnd());
+                        if (loaded != null) catalogs = loaded;
+                    }
+                }
+            }
+            catch (System.InvalidOperationException) { }
+            catch (IOException) { }
+            return catalogs;
+        }
+        private static readonly Dictionary<string, string> spanish = new Dictionary<string, string>
+        {
+            { "Display", "Pantalla" }, { "Graphics", "Gráficos" }, { "Input", "Entrada" }, { "Game", "Juego" },
+            { "Menu language", "Idioma del menú" }, { "Game menu language", "Idioma del juego" },
+            { "Select a language", "Selecciona un idioma" }, { "English", "Inglés" },
+            { "Português (Brasil)", "Portugués (Brasil)" }, { "Spanish", "Español" }, { "French", "Francés" },
+            { "German", "Alemán" }, { "Italian", "Italiano" }, { "Ready to play", "Listo para jugar" },
+            { "Open logs", "Abrir registros" }, { "Send error", "Enviar error" }, { "Stop game", "Detener juego" },
+            { "PLAY", "JUGAR" }, { "Resolution", "Resolución" }, { "Window mode", "Modo de ventana" },
+            { "Internal resolution", "Resolución interna" }, { "Scaling", "Escalado" },
+            { "Scaling filter", "Filtro de escalado" }, { "VSync", "Sincronización vertical" },
+            { "Frame limit", "Límite de FPS" }, { "Camera aspect", "Relación de aspecto" },
+            { "Field of view", "Campo de visión" }, { "Controls", "Controles" },
+            { "Keyboard and mouse", "Teclado y ratón" }, { "Controller", "Mando" }
+        };
+        private static readonly Dictionary<string, string> french = new Dictionary<string, string>
+        {
+            { "Display", "Affichage" }, { "Graphics", "Graphismes" }, { "Input", "Entrée" }, { "Game", "Jeu" },
+            { "Menu language", "Langue du menu" }, { "Game menu language", "Langue du jeu" },
+            { "Select a language", "Sélectionnez une langue" }, { "English", "Anglais" },
+            { "Português (Brasil)", "Portugais (Brésil)" }, { "Spanish", "Espagnol" }, { "French", "Français" },
+            { "German", "Allemand" }, { "Italian", "Italien" }, { "Ready to play", "Prêt à jouer" },
+            { "Open logs", "Ouvrir les journaux" }, { "Send error", "Signaler une erreur" }, { "Stop game", "Arrêter le jeu" },
+            { "PLAY", "JOUER" }, { "Resolution", "Résolution" }, { "Window mode", "Mode fenêtre" },
+            { "Internal resolution", "Résolution interne" }, { "Scaling", "Mise à l’échelle" },
+            { "Scaling filter", "Filtre de mise à l’échelle" }, { "VSync", "Synchronisation verticale" },
+            { "Frame limit", "Limite d’images/s" }, { "Camera aspect", "Format d’image" },
+            { "Field of view", "Champ de vision" }, { "Controls", "Commandes" },
+            { "Keyboard and mouse", "Clavier et souris" }, { "Controller", "Manette" }
+        };
+        private static readonly Dictionary<string, string> german = new Dictionary<string, string>
+        {
+            { "Display", "Anzeige" }, { "Graphics", "Grafik" }, { "Input", "Eingabe" }, { "Game", "Spiel" },
+            { "Menu language", "Menüsprache" }, { "Game menu language", "Spielsprache" },
+            { "Select a language", "Sprache auswählen" }, { "English", "Englisch" },
+            { "Português (Brasil)", "Portugiesisch (Brasilien)" }, { "Spanish", "Spanisch" }, { "French", "Französisch" },
+            { "German", "Deutsch" }, { "Italian", "Italienisch" }, { "Ready to play", "Spielbereit" },
+            { "Open logs", "Protokolle öffnen" }, { "Send error", "Fehler melden" }, { "Stop game", "Spiel beenden" },
+            { "PLAY", "SPIELEN" }, { "Resolution", "Auflösung" }, { "Window mode", "Fenstermodus" },
+            { "Internal resolution", "Interne Auflösung" }, { "Scaling", "Skalierung" },
+            { "Scaling filter", "Skalierungsfilter" }, { "VSync", "Vertikale Synchronisierung" },
+            { "Frame limit", "FPS-Begrenzung" }, { "Camera aspect", "Seitenverhältnis" },
+            { "Field of view", "Sichtfeld" }, { "Controls", "Steuerung" },
+            { "Keyboard and mouse", "Tastatur und Maus" }, { "Controller", "Controller" }
+        };
+        private static readonly Dictionary<string, string> italian = new Dictionary<string, string>
+        {
+            { "Display", "Schermo" }, { "Graphics", "Grafica" }, { "Input", "Input" }, { "Game", "Gioco" },
+            { "Menu language", "Lingua del menu" }, { "Game menu language", "Lingua del gioco" },
+            { "Select a language", "Seleziona una lingua" }, { "English", "Inglese" },
+            { "Português (Brasil)", "Portoghese (Brasile)" }, { "Spanish", "Spagnolo" }, { "French", "Francese" },
+            { "German", "Tedesco" }, { "Italian", "Italiano" }, { "Ready to play", "Pronto per giocare" },
+            { "Open logs", "Apri i registri" }, { "Send error", "Invia segnalazione" }, { "Stop game", "Ferma il gioco" },
+            { "PLAY", "GIOCA" }, { "Resolution", "Risoluzione" }, { "Window mode", "Modalità finestra" },
+            { "Internal resolution", "Risoluzione interna" }, { "Scaling", "Ridimensionamento" },
+            { "Scaling filter", "Filtro di ridimensionamento" }, { "VSync", "Sincronizzazione verticale" },
+            { "Frame limit", "Limite FPS" }, { "Camera aspect", "Proporzioni" },
+            { "Field of view", "Campo visivo" }, { "Controls", "Comandi" },
+            { "Keyboard and mouse", "Tastiera e mouse" }, { "Controller", "Controller" }
+        };
         private static readonly Dictionary<string, string> portuguese = new Dictionary<string, string>
         {
             { "Display", "Tela" }, { "Graphics", "Gráficos" }, { "Input", "Controles" }, { "Game", "Jogo" },
             { "BLACK | PC Launcher", "BLACK | Launcher para PC" },
             { "BLACK  /  RECOMPILED FOR PC", "BLACK  /  RECOMPILADO PARA PC" },
             { "Development build", "Versão de desenvolvimento" },
+            { "The game works with keyboard, mouse and controller.", "O jogo funciona com teclado, mouse e controle." },
             { "Output resolution", "Resolução da janela" }, { "Window mode", "Modo de janela" },
             { "Windowed", "Em janela" }, { "Borderless", "Sem bordas" }, { "Fullscreen", "Tela cheia" },
             { "Internal resolution", "Resolução interna" }, { "Scaling", "Escala" },
             { "Fit", "Ajustar" }, { "Stretch", "Esticar" }, { "Integer", "Inteira" },
             { "Scaling filter", "Filtro de escala" }, { "Smooth", "Suave" }, { "Sharp", "Nítido" },
             { "VSync", "Sincronização vertical" }, { "Frame limit", "Limite FPS" },
-            { "Camera aspect", "Proporção" }, { "Original", "Original" }, { "Motion blur", "Desfoque" },
+            { "Camera aspect", "Proporção da câmera" }, { "Original", "Original" }, { "Motion blur", "Desfoque" },
             { "Vertical field of view", "Campo de visão vertical" }, { "Keep BLACK's original field of view and aim zoom. Uncheck to choose a vertical angle in degrees.", "Mantém o campo de visão e o zoom de mira originais de BLACK. Desmarque para escolher um ângulo vertical em graus." },
             { "Vertical field of view in vertical degrees. Higher values show more above and below; the camera aspect sets how wide the view is.", "Campo de visão vertical em graus. Valores maiores mostram mais áreas acima e abaixo; a proporção da câmera define a largura da visão." },
             { "Controls how the picture fits a resized window or a movie. Keep aspect ratio adds bars; Stretch fills the window.", "Define como a imagem se ajusta à janela ou ao vídeo. Manter a proporção adiciona barras; Esticar preenche a janela." },
@@ -202,19 +300,46 @@ namespace BlackXboxLauncher
 
         internal static string Text(string english)
         {
+            if (english == null || current == GameLanguageBanks.English) return english;
+            Dictionary<string, string> translations;
+            Regex matcher;
+            lock (languageCacheLock)
+            {
+                if (!translationsByLanguage.TryGetValue(current, out translations))
+                {
+                    Dictionary<string, string> catalog = current == GameLanguageBanks.PortugueseBrazil ? portuguese :
+                        current == GameLanguageBanks.Spanish ? spanish : current == GameLanguageBanks.French ? french :
+                        current == GameLanguageBanks.German ? german : current == GameLanguageBanks.Italian ? italian : null;
+                    Dictionary<string, string> generated;
+                    GeneratedCatalogs.TryGetValue(current, out generated);
+                    if ((generated == null || generated.Count == 0) && (catalog == null || catalog.Count == 0)) return english;
+
+                    translations = new Dictionary<string, string>(System.StringComparer.Ordinal);
+                    if (catalog != null)
+                        foreach (KeyValuePair<string, string> entry in catalog) translations[entry.Key] = entry.Value;
+                    if (generated != null)
+                        foreach (KeyValuePair<string, string> entry in generated) translations[entry.Key] = entry.Value;
+                    translationsByLanguage[current] = translations;
+                    string[] keys = translations.Keys.Where(key => !System.String.IsNullOrEmpty(key))
+                        .OrderByDescending(key => key.Length).ToArray();
+                    if (keys.Length == 0) return english;
+                    string[] patterns = keys.Select(key =>
+                        (System.Char.IsLetterOrDigit(key[0]) || key[0] == '_' ? @"(?<![\p{L}\p{N}_])" : "") +
+                        Regex.Escape(key) +
+                        (System.Char.IsLetterOrDigit(key[key.Length - 1]) || key[key.Length - 1] == '_' ? @"(?![\p{L}\p{N}_])" : "")
+                    ).ToArray();
+                    matcher = new Regex(System.String.Join("|", patterns), RegexOptions.CultureInvariant);
+                    matchersByLanguage[current] = matcher;
+                }
+                else if (!matchersByLanguage.TryGetValue(current, out matcher)) return english;
+            }
             string translated;
-            if (current != GameLanguageBanks.PortugueseBrazil || english == null) return english;
-            if (portuguese.TryGetValue(english, out translated)) return translated;
-            foreach (KeyValuePair<string, string> entry in portuguese.OrderByDescending(pair => pair.Key.Length))
-                if (english.IndexOf(entry.Key, System.StringComparison.Ordinal) >= 0)
-                    english = english.Replace(entry.Key, entry.Value);
-            return english;
+            if (translations.TryGetValue(english, out translated)) return translated;
+            return matcher.Replace(english, match => translations[match.Value]);
         }
 
         internal static void Apply(Control parent)
         {
-            // These controls contain values entered by the user, rather than
-            // captions. NumericUpDown also contains an editable TextBox child.
             if (!(parent is ComboBox) && !(parent is TextBoxBase) && !(parent is UpDownBase))
             {
                 if (parent.Tag == null) parent.Tag = parent.Text;

@@ -1,0 +1,292 @@
+{"id": "0000", "text": "Display", "pt-BR": "Tela"}
+{"id": "0001", "text": "Graphics", "pt-BR": "Gráficos"}
+{"id": "0002", "text": "Input", "pt-BR": "Controles"}
+{"id": "0003", "text": "Game", "pt-BR": "Jogo"}
+{"id": "0004", "text": "BLACK | PC Launcher", "pt-BR": "BLACK | Launcher para PC"}
+{"id": "0005", "text": "BLACK  /  RECOMPILED FOR PC", "pt-BR": "BLACK  /  RECOMPILADO PARA PC"}
+{"id": "0006", "text": "Development build", "pt-BR": "Versão de desenvolvimento"}
+{"id": "0007", "text": "The game works with keyboard, mouse and controller.", "pt-BR": "O jogo funciona com teclado, mouse e controle."}
+{"id": "0008", "text": "Output resolution", "pt-BR": "Resolução da janela"}
+{"id": "0009", "text": "Window mode", "pt-BR": "Modo de janela"}
+{"id": "0010", "text": "Windowed", "pt-BR": "Em janela"}
+{"id": "0011", "text": "Borderless", "pt-BR": "Sem bordas"}
+{"id": "0012", "text": "Fullscreen", "pt-BR": "Tela cheia"}
+{"id": "0013", "text": "Internal resolution", "pt-BR": "Resolução interna"}
+{"id": "0014", "text": "Scaling", "pt-BR": "Escala"}
+{"id": "0015", "text": "Fit", "pt-BR": "Ajustar"}
+{"id": "0016", "text": "Stretch", "pt-BR": "Esticar"}
+{"id": "0017", "text": "Integer", "pt-BR": "Inteira"}
+{"id": "0018", "text": "Scaling filter", "pt-BR": "Filtro de escala"}
+{"id": "0019", "text": "Smooth", "pt-BR": "Suave"}
+{"id": "0020", "text": "Sharp", "pt-BR": "Nítido"}
+{"id": "0021", "text": "VSync", "pt-BR": "Sincronização vertical"}
+{"id": "0022", "text": "Frame limit", "pt-BR": "Limite FPS"}
+{"id": "0023", "text": "Camera aspect", "pt-BR": "Proporção da câmera"}
+{"id": "0024", "text": "Original", "pt-BR": "Original"}
+{"id": "0025", "text": "Motion blur", "pt-BR": "Desfoque"}
+{"id": "0026", "text": "Vertical field of view", "pt-BR": "Campo de visão vertical"}
+{"id": "0027", "text": "Keep BLACK's original field of view and aim zoom. Uncheck to choose a vertical angle in degrees.", "pt-BR": "Mantém o campo de visão e o zoom de mira originais de BLACK. Desmarque para escolher um ângulo vertical em graus."}
+{"id": "0028", "text": "Vertical field of view in vertical degrees. Higher values show more above and below; the camera aspect sets how wide the view is.", "pt-BR": "Campo de visão vertical em graus. Valores maiores mostram mais áreas acima e abaixo; a proporção da câmera define a largura da visão."}
+{"id": "0029", "text": "Controls how the picture fits a resized window or a movie. Keep aspect ratio adds bars; Stretch fills the window.", "pt-BR": "Define como a imagem se ajusta à janela ou ao vídeo. Manter a proporção adiciona barras; Esticar preenche a janela."}
+{"id": "0030", "text": "The size of the game window when windowed. A saved nonstandard size is retained as a saved choice.", "pt-BR": "O tamanho da janela do jogo no modo em janela. Tamanhos personalizados salvos continuam disponíveis."}
+{"id": "0031", "text": "How many lines the game renders; the width follows the camera aspect, and the picture is scaled to the window. Higher is sharper and slower. The game's own Video Settings page (Options) changes this too.", "pt-BR": "Quantidade de linhas renderizadas; a largura segue a proporção da câmera e a imagem é ajustada à janela. Valores maiores deixam a imagem mais nítida e reduzem o desempenho. A página Configurações de vídeo do jogo também altera este valor."}
+{"id": "0032", "text": "Sizing and filtering are independent. Smooth blends neighboring pixels; Sharp keeps distinct pixel edges.", "pt-BR": "O tamanho e o filtro são independentes. Suave mistura pixels vizinhos; Nítido preserva as bordas dos pixels."}
+{"id": "0033", "text": "Limits display updates. This does not change the game's simulation speed.", "pt-BR": "Limita as atualizações da imagem. Isso não altera a velocidade da simulação do jogo."}
+{"id": "0034", "text": "Changes how wide the camera can see. Resolution controls picture detail; field of view controls its vertical angle.", "pt-BR": "Altera a largura da visão da câmera. A resolução controla os detalhes; o campo de visão controla o ângulo vertical."}
+{"id": "0035", "text": "Anti-aliasing", "pt-BR": "Serrilhado"}
+{"id": "0036", "text": "Anisotropic", "pt-BR": "Anisotrópico"}
+{"id": "0037", "text": "Depth of field", "pt-BR": "Prof. de campo"}
+{"id": "0038", "text": "Sharpening", "pt-BR": "Nitidez"}
+{"id": "0039", "text": "Ambient occlusion", "pt-BR": "Oclusão amb."}
+{"id": "0040", "text": "AO quality", "pt-BR": "Qualidade AO"}
+{"id": "0041", "text": "Off", "pt-BR": "Desativado"}
+{"id": "0042", "text": "Low", "pt-BR": "Baixa"}
+{"id": "0043", "text": "Medium", "pt-BR": "Média"}
+{"id": "0044", "text": "High", "pt-BR": "Alta"}
+{"id": "0045", "text": "Ultra", "pt-BR": "Máxima"}
+{"id": "0046", "text": "FXAA", "pt-BR": "FXAA"}
+{"id": "0047", "text": "SSAA 4x", "pt-BR": "SSAA 4x"}
+{"id": "0048", "text": "SSAO Classic", "pt-BR": "SSAO clássico"}
+{"id": "0049", "text": "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", "pt-BR": "Efeitos do renderizador GPU aplicados à imagem antes da interface. A página Configurações de vídeo do jogo"}
+{"id": "0050", "text": "(Options > V) changes them while playing. Internal resolution is on the Display tab.", "pt-BR": "(Opções > V) permite alterá-los durante o jogo. A resolução interna fica na aba Tela."}
+{"id": "0051", "text": "FXAA smooths jagged edges at almost no cost. SSAA 4x renders twice as wide and high and averages down: the cleanest and the heaviest. Needs the GPU renderer.", "pt-BR": "FXAA suaviza bordas serrilhadas com custo mínimo. SSAA 4x renderiza com o dobro da largura e altura e reduz a imagem: é a opção mais nítida e mais pesada. Requer o renderizador GPU."}
+{"id": "0052", "text": "Keeps textures sharp on floors and walls seen at a slant. Costs almost nothing. Needs the GPU renderer.", "pt-BR": "Mantém nítidas as texturas de pisos e paredes vistas de lado. Tem custo mínimo. Requer o renderizador GPU."}
+{"id": "0053", "text": "Blurs what is behind the point you are looking at; the weapon and the HUD stay sharp. Needs the GPU renderer.", "pt-BR": "Desfoca o que está atrás do ponto observado; a arma e a interface permanecem nítidas. Requer o renderizador GPU."}
+{"id": "0054", "text": "Brings back fine detail that filtering and scaling soften. Needs the GPU renderer.", "pt-BR": "Recupera detalhes finos suavizados pelo filtro e pela escala. Requer o renderizador GPU."}
+{"id": "0055", "text": "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO. Needs the GPU renderer.", "pt-BR": "A oclusão de ambiente adiciona sombras de contato usando a profundidade da cena. Escolha SSAO clássico, HBAO, HBAO+ ou GTAO. Requer o renderizador GPU."}
+{"id": "0056", "text": "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur. Choose an AO method to enable the effect.", "pt-BR": "Qualidades maiores aumentam a amostragem e o alcance da oclusão, exigindo mais da GPU. Todos os níveis usam a resolução da cena e desfoque sensível à profundidade. Escolha um método para ativar o efeito."}
+{"id": "0057", "text": "Controller only ignores the keyboard and mouse in the game; keyboard and mouse only ignores the pad.", "pt-BR": "Somente controle ignora teclado e mouse no jogo; somente teclado e mouse ignora o controle."}
+{"id": "0058", "text": "Raw mouse input, no acceleration. 1.00 is 0.06 degrees per mouse count.", "pt-BR": "Entrada direta do mouse, sem aceleração. 1,00 equivale a 0,06 grau por unidade de movimento."}
+{"id": "0059", "text": "How often the game's clock steps. Presented frames match it, so 240 needs a fast PC and a 240 Hz display to show.", "pt-BR": "Frequência do relógio do jogo. Os quadros exibidos acompanham esse valor; 240 exige um PC rápido e uma tela de 240 Hz."}
+{"id": "0060", "text": "Draws the game on the graphics card, which holds 60 FPS at 3440x1440. Off uses the CPU renderer, which is far slower at high resolutions.", "pt-BR": "Renderiza o jogo na placa de vídeo e mantém 60 FPS em 3440×1440. Desativado usa o renderizador da CPU, bem mais lento em altas resoluções."}
+{"id": "0061", "text": "Runs the game clock faster so every presented frame is a simulated frame. Off keeps the original 30 Hz clock.", "pt-BR": "Acelera o relógio do jogo para que cada quadro exibido também seja simulado. Desativado mantém os 30 Hz originais."}
+{"id": "0062", "text": "Game menu language", "pt-BR": "Idioma do jogo"}
+{"id": "0063", "text": "Menu language", "pt-BR": "Idioma"}
+{"id": "0064", "text": "Selects the game's text bank. The launcher installs this choice before each run; English is selected by default.", "pt-BR": "Escolhe o idioma dos textos do jogo e do launcher. A opção é aplicada antes de cada partida; English é o padrão."}
+{"id": "0065", "text": "English", "pt-BR": "English"}
+{"id": "0066", "text": "Português (Brasil)", "pt-BR": "Português (Brasil)"}
+{"id": "0067", "text": "Skip movies", "pt-BR": "Pular vídeos"}
+{"id": "0068", "text": "Advance startup menus automatically (first 65 seconds)", "pt-BR": "Avançar menus iniciais automaticamente (primeiros 65 segundos)"}
+{"id": "0069", "text": "Detailed visual trace", "pt-BR": "Rastreamento gráfico detalhado"}
+{"id": "0070", "text": "Frames (start-end/step)", "pt-BR": "Quadros (início-fim/intervalo)"}
+{"id": "0071", "text": "Detailed DSP state trace (GP/EP stack)", "pt-BR": "Rastreamento detalhado do DSP (pilhas GP/EP)"}
+{"id": "0072", "text": "GPU draw log (frame,count)", "pt-BR": "Registro de desenho GPU (quadro,quantidade)"}
+{"id": "0073", "text": "Records detailed [KTRACE] drawing data in reports\\...\\visual-trace.log (maximum 1 MB). Requires CPU Kelvin; turn off GPU renderer for this diagnostic. The renderer synchronizes work during collection, which can change frame timing. Use an untraced run for performance comparisons.", "pt-BR": "Registra dados [KTRACE] detalhados em reports\\...\\visual-trace.log (máximo de 1 MB). Requer CPU Kelvin; desative o renderizador GPU para este diagnóstico. A coleta sincroniza o renderizador e pode alterar o tempo dos quadros. Compare desempenho em uma partida sem rastreamento."}
+{"id": "0074", "text": "Examples: 120, 120-180, or 120-240/30. Requires CPU Kelvin and can change frame timing; compare performance with a normal run.", "pt-BR": "Exemplos: 120, 120-180 ou 120-240/30. Requer CPU Kelvin e pode alterar o tempo dos quadros; compare com uma partida normal."}
+{"id": "0075", "text": "Records GP/EP state, EP output FIFO activity, and final PCM levels about once per second in reports\\...\\audio-dsp-trace.log (maximum 1 MB). No audio is saved; short stack events may be missed.", "pt-BR": "Registra o estado GP/EP, a atividade da fila de saída EP e os níveis PCM finais aproximadamente uma vez por segundo em reports\\...\\audio-dsp-trace.log (máximo de 1 MB). O áudio não é salvo; eventos rápidos podem passar despercebidos."}
+{"id": "0076", "text": "Leave blank to keep this diagnostic off. Example: 2400,2 records at most 2 frames to reports\\...\\kgpu-draw-trace.log (maximum 1 MB). Requires GPU Kelvin and adds overhead during those frames.", "pt-BR": "Deixe vazio para desativar este diagnóstico. Exemplo: 2400,2 registra até 2 quadros em reports\\...\\kgpu-draw-trace.log (máximo de 1 MB). Requer GPU Kelvin e adiciona custo nesses quadros."}
+{"id": "0077", "text": "Renderer threads", "pt-BR": "Threads do renderizador"}
+{"id": "0078", "text": "Key bindings...", "pt-BR": "Atalhos de teclado..."}
+{"id": "0079", "text": "Invert vertical mouse look", "pt-BR": "Inverter movimento vertical do mouse"}
+{"id": "0080", "text": "Display mode", "pt-BR": "Modo de exibição"}
+{"id": "0081", "text": "FPS limit", "pt-BR": "Limite de FPS"}
+{"id": "0082", "text": "Window size", "pt-BR": "Resolução"}
+{"id": "0083", "text": "Ready to play", "pt-BR": "Pronto para jogar"}
+{"id": "0084", "text": "PC Release build is missing", "pt-BR": "A versão Release do jogo não foi encontrada"}
+{"id": "0085", "text": "Game running", "pt-BR": "Jogo em execução"}
+{"id": "0086", "text": "Unable to launch", "pt-BR": "Não foi possível iniciar"}
+{"id": "0087", "text": "Stopping game...", "pt-BR": "Encerrando o jogo..."}
+{"id": "0088", "text": "Game stopped", "pt-BR": "Jogo encerrado"}
+{"id": "0089", "text": "Game closed", "pt-BR": "Jogo fechado"}
+{"id": "0090", "text": "Open logs", "pt-BR": "Abrir registros"}
+{"id": "0091", "text": "Controls", "pt-BR": "Controles"}
+{"id": "0092", "text": "Stop game", "pt-BR": "Parar jogo"}
+{"id": "0093", "text": "PLAY", "pt-BR": "JOGAR"}
+{"id": "0094", "text": "Send error", "pt-BR": "Enviar erro"}
+{"id": "0095", "text": "Send error report", "pt-BR": "Enviar relatório de erro"}
+{"id": "0096", "text": "Describe what happened", "pt-BR": "Descreva o que aconteceu"}
+{"id": "0097", "text": "Attach the listed logs on GitHub before submitting. Use Attach files or drag them into the description, then review and submit.", "pt-BR": "Anexe os registros listados no GitHub antes de enviar. Use Anexar arquivos ou arraste-os para a descrição; depois revise e publique."}
+{"id": "0098", "text": "The GitHub report is generated in English. Logs remain local; no files are attached automatically. Add any extra information under Additional notes on GitHub.", "pt-BR": "O relatório do GitHub é gerado em inglês. Os registros permanecem locais; nenhum arquivo é anexado automaticamente. Adicione informações extras em Observações no GitHub."}
+{"id": "0099", "text": "Logs to attach from the latest session", "pt-BR": "Registros para anexar da sessão mais recente"}
+{"id": "0100", "text": "A local Markdown draft is saved and copied. No files are uploaded by the launcher.", "pt-BR": "Um rascunho Markdown será salvo e copiado. O launcher não envia arquivos."}
+{"id": "0101", "text": "Open logs folder", "pt-BR": "Abrir pasta dos registros"}
+{"id": "0102", "text": "Could not open logs folder", "pt-BR": "Não foi possível abrir a pasta dos registros"}
+{"id": "0103", "text": "Attach this log:", "pt-BR": "Anexe este registro:"}
+{"id": "0104", "text": "Also attach if available:", "pt-BR": "Anexe também, se disponível:"}
+{"id": "0105", "text": "Optional diagnostic log:", "pt-BR": "Registro de diagnóstico opcional:"}
+{"id": "0106", "text": "No launcher session folder was found.", "pt-BR": "Nenhuma pasta de sessão do launcher foi encontrada."}
+{"id": "0107", "text": "The main session log was not found.", "pt-BR": "O registro principal da sessão não foi encontrado."}
+{"id": "0108", "text": "Detected information from the latest session", "pt-BR": "Informações detectadas da última sessão"}
+{"id": "0109", "text": "A local Markdown draft is saved and copied. Logs stay on this PC; attach them manually if needed.", "pt-BR": "Um rascunho Markdown será salvo e copiado. Os registros ficam neste PC; anexe-os manualmente se necessário."}
+{"id": "0110", "text": "Prepare report and open GitHub", "pt-BR": "Preparar relatório e abrir o GitHub"}
+{"id": "0111", "text": "Describe what happened before preparing the report.", "pt-BR": "Descreva o que aconteceu antes de preparar o relatório."}
+{"id": "0112", "text": "The report was saved and copied. Review the pre-filled issue on GitHub, then click Submit. If the browser text was shortened, the clipboard has the full report.", "pt-BR": "O relatório foi salvo e copiado. Revise o relato já preenchido no GitHub e clique em enviar. Se o texto no navegador tiver sido reduzido, a área de transferência contém o relatório completo."}
+{"id": "0113", "text": "Report ready", "pt-BR": "Relatório pronto"}
+{"id": "0114", "text": "Could not prepare report: ", "pt-BR": "Não foi possível preparar o relatório: "}
+{"id": "0115", "text": "# BLACK PC error report", "pt-BR": "# Relatório de erro do BLACK PC"}
+{"id": "0116", "text": "## Description", "pt-BR": "## Descrição"}
+{"id": "0117", "text": "## Detected diagnostics", "pt-BR": "## Diagnóstico detectado"}
+{"id": "0118", "text": "The launcher does not upload logs. Attach the relevant files through GitHub's issue form.", "pt-BR": "O launcher não envia os registros. Anexe os arquivos relevantes pelo formulário de relato do GitHub."}
+{"id": "0119", "text": "No launcher session data was found.", "pt-BR": "Nenhum dado de sessão do launcher foi encontrado."}
+{"id": "0120", "text": "Session folder: ", "pt-BR": "Pasta da sessão: "}
+{"id": "0121", "text": "Process exit code: ", "pt-BR": "Código de saída do processo: "}
+{"id": "0122", "text": "Started (UTC): ", "pt-BR": "Início (UTC): "}
+{"id": "0123", "text": "Game menu language: ", "pt-BR": "Idioma do jogo: "}
+{"id": "0124", "text": "Game executable SHA-256: ", "pt-BR": "SHA-256 do executável: "}
+{"id": "0125", "text": "Retail game SHA-256: ", "pt-BR": "SHA-256 do jogo original: "}
+{"id": "0126", "text": "Classification: process exited with a nonzero code.", "pt-BR": "Classificação: o processo terminou com código diferente de zero."}
+{"id": "0127", "text": "Classification: no nonzero exit code detected; the reported symptom needs the user's description.", "pt-BR": "Classificação: nenhum código de erro foi detectado; descreva o sintoma observado."}
+{"id": "0128", "text": "No lines marked error/failure/exception were detected in session.log.", "pt-BR": "Nenhuma linha com indicação de erro/falha/exceção foi encontrada em session.log."}
+{"id": "0129", "text": "Recent error-like lines from session.log:", "pt-BR": "Linhas recentes com possível erro em session.log:"}
+{"id": "0130", "text": "Recent error-like lines from kernel.log:", "pt-BR": "Linhas recentes com possível erro em kernel.log:"}
+{"id": "0131", "text": "No error-like lines were detected in kernel.log.", "pt-BR": "Nenhuma linha com possível erro foi encontrada em kernel.log."}
+{"id": "0132", "text": "Diagnostic files in this session: ", "pt-BR": "Arquivos de diagnóstico desta sessão: "}
+{"id": "0133", "text": "Session diagnostics could not be read: ", "pt-BR": "Não foi possível ler o diagnóstico da sessão: "}
+{"id": "0134", "text": "none", "pt-BR": "nenhum"}
+{"id": "0135", "text": "Settings could not be saved: ", "pt-BR": "Não foi possível salvar as configurações: "}
+{"id": "0136", "text": "Could not open logs", "pt-BR": "Não foi possível abrir os registros"}
+{"id": "0137", "text": "BLACK PC controls", "pt-BR": "Controles do BLACK PC"}
+{"id": "0138", "text": "Close the existing game before Play. This launcher can stop sessions it starts.", "pt-BR": "Feche o jogo que já está aberto antes de iniciar. Este launcher pode encerrar as partidas que ele inicia."}
+{"id": "0139", "text": "Keyboard and mouse are ready; a controller is optional. Startup may take a minute.\nSaves stay in the local save folder.", "pt-BR": "Teclado e mouse estão prontos; o controle é opcional. A inicialização pode levar um minuto.\nOs jogos salvos ficam na pasta local."}
+{"id": "0140", "text": "Visual trace may change frame timing. Compare performance with a normal run.\nDetailed data: visual-trace.log (max 1 MB).", "pt-BR": "O rastreamento gráfico pode alterar o tempo dos quadros. Compare o desempenho com uma partida normal.\nDados detalhados: visual-trace.log (máx. 1 MB)."}
+{"id": "0141", "text": "DSP trace samples GP/EP and final PCM levels about once per second; timing may shift slightly.\nDetailed data: audio-dsp-trace.log (max 1 MB).", "pt-BR": "O rastreamento DSP registra GP/EP e níveis PCM finais aproximadamente uma vez por segundo; o tempo pode variar um pouco.\nDados detalhados: audio-dsp-trace.log (máx. 1 MB)."}
+{"id": "0142", "text": "GPU draw logging adds overhead on selected frames.\nDetailed data: kgpu-draw-trace.log (max 1 MB).", "pt-BR": "O registro de desenho GPU adiciona custo nos quadros selecionados.\nDados detalhados: kgpu-draw-trace.log (máx. 1 MB)."}
+{"id": "0143", "text": "Use the BLACK PC window to play.\nStop ends the game process; finish saving first.", "pt-BR": "Jogue pela janela BLACK PC.\nParar encerra o processo do jogo; salve antes."}
+{"id": "0144", "text": "Open logs for this session's output and launch settings.", "pt-BR": "Abra os registros para ver a saída desta partida e as configurações de inicialização."}
+{"id": "0145", "text": "Session logging error: ", "pt-BR": "Erro ao registrar a partida: "}
+{"id": "0146", "text": "Close the game window or use Stop game to end the session. Finish saving before closing.", "pt-BR": "Feche a janela do jogo ou use Parar jogo para encerrar a partida. Salve antes de fechar."}
+{"id": "0147", "text": "Bind ", "pt-BR": "Configurar: "}
+{"id": "0148", "text": "Press a key or click a mouse button, or turn the wheel, for\n", "pt-BR": "Pressione uma tecla, clique em um botão do mouse ou gire a roda para\n"}
+{"id": "0149", "text": "Clear this binding", "pt-BR": "Limpar este atalho"}
+{"id": "0150", "text": "Cancel", "pt-BR": "Cancelar"}
+{"id": "0151", "text": "F11 toggles fullscreen and cannot be bound.", "pt-BR": "F11 alterna a tela cheia e não pode ser atribuído."}
+{"id": "0152", "text": "That key cannot be bound.", "pt-BR": "Essa tecla não pode ser atribuída."}
+{"id": "0153", "text": "Keyboard and mouse bindings", "pt-BR": "Atalhos de teclado e mouse"}
+{"id": "0154", "text": "Double-click a slot (or select it and press Enter), then press the key or mouse button.", "pt-BR": "Clique duas vezes em um campo (ou selecione e pressione Enter) e depois pressione a tecla ou o botão do mouse."}
+{"id": "0155", "text": "Action", "pt-BR": "Ação"}
+{"id": "0156", "text": "Binding 1", "pt-BR": "Atalho 1"}
+{"id": "0157", "text": "Binding 2", "pt-BR": "Atalho 2"}
+{"id": "0158", "text": "Binding 3", "pt-BR": "Atalho 3"}
+{"id": "0159", "text": "Reset to defaults", "pt-BR": "Restaurar padrões"}
+{"id": "0160", "text": "OK", "pt-BR": "OK"}
+{"id": "0161", "text": "Escape (pause / back) and F11 (fullscreen) are fixed. Enter always confirms; arrow keys and the wheel move through menus.", "pt-BR": "Escape (pausar / voltar) e F11 (tela cheia) são fixos. Enter sempre confirma; as setas e a roda percorrem os menus."}
+{"id": "0162", "text": "Shared keys: ", "pt-BR": "Teclas compartilhadas: "}
+{"id": "0163", "text": ". Both actions will fire.", "pt-BR": ". As duas ações serão executadas."}
+{"id": "0164", "text": "BLACK PC launcher", "pt-BR": "Launcher BLACK PC"}
+{"id": "0165", "text": "BLACK PC", "pt-BR": "BLACK PC"}
+{"id": "0166", "text": "PC game already running (PID ", "pt-BR": "O jogo já está em execução (PID "}
+{"id": "0167", "text": "Close the existing game before Play.", "pt-BR": "Feche o jogo que já está aberto antes de iniciar."}
+{"id": "0168", "text": "BLACK PC  /  Local saves", "pt-BR": "BLACK PC  /  Jogos salvos locais"}
+{"id": "0169", "text": "upscaled", "pt-BR": "ampliada"}
+{"id": "0170", "text": "saved", "pt-BR": "salvo"}
+{"id": "0171", "text": "Custom", "pt-BR": "Personalizada"}
+{"id": "0172", "text": "Flat", "pt-BR": "Original"}
+{"id": "0173", "text": "Default", "pt-BR": "Padrão"}
+{"id": "0174", "text": "Auto", "pt-BR": "Automático"}
+{"id": "0175", "text": "Keyboard and mouse", "pt-BR": "Teclado e mouse"}
+{"id": "0176", "text": "Controller", "pt-BR": "Controle"}
+{"id": "0177", "text": "Mouse sensitivity", "pt-BR": "Sensibilidade do mouse"}
+{"id": "0178", "text": "Prompt device", "pt-BR": "Dispositivo dos avisos"}
+{"id": "0179", "text": "Input mode", "pt-BR": "Modo de entrada"}
+{"id": "0180", "text": "Video settings", "pt-BR": "Configurações de vídeo"}
+{"id": "0181", "text": "The game works with keyboard, mouse and controller.\nThis is an experimental build; crashes and inaccuracies remain.", "pt-BR": "O jogo funciona com teclado, mouse e controle.\nEsta é uma versão experimental; ainda podem ocorrer falhas e imprecisões."}
+{"id": "0182", "text": "Window", "pt-BR": "Janela"}
+{"id": "0183", "text": "Filter", "pt-BR": "Filtro"}
+{"id": "0184", "text": "Borderless fullscreen", "pt-BR": "Tela cheia sem bordas"}
+{"id": "0185", "text": "Keep aspect ratio", "pt-BR": "Manter proporção"}
+{"id": "0186", "text": "Stretch to fill", "pt-BR": "Esticar para preencher"}
+{"id": "0187", "text": "Integer scaling", "pt-BR": "Escala inteira"}
+{"id": "0188", "text": "Unlimited", "pt-BR": "Sem limite"}
+{"id": "0189", "text": "Standard (4:3)", "pt-BR": "Padrão (4:3)"}
+{"id": "0190", "text": "Widescreen (16:9)", "pt-BR": "Widescreen (16:9)"}
+{"id": "0191", "text": "Ultrawide (21:9)", "pt-BR": "Ultrawide (21:9)"}
+{"id": "0192", "text": "Ultrawide (32:9)", "pt-BR": "Super Ultra-Wide (32:9)"}
+{"id": "0193", "text": "Internal", "pt-BR": "Interna"}
+{"id": "0194", "text": "720p (default)", "pt-BR": "720p (padrão)"}
+{"id": "0195", "text": "SSAA 4x (2 x 2)", "pt-BR": "SSAA 4x (2 x 2)"}
+{"id": "0196", "text": "Devices", "pt-BR": "Dispositivos"}
+{"id": "0197", "text": "Prompts", "pt-BR": "Botões"}
+{"id": "0198", "text": "Sensitivity", "pt-BR": "Sensibilidade"}
+{"id": "0199", "text": "0.06° / count", "pt-BR": "0,06° / unidade"}
+{"id": "0200", "text": "Keyboard, mouse, pad", "pt-BR": "Teclado / mouse / controle"}
+{"id": "0201", "text": "Keyboard and mouse only", "pt-BR": "Somente teclado e mouse"}
+{"id": "0202", "text": "Follow the device I use", "pt-BR": "Dispositivo em uso"}
+{"id": "0203", "text": "Field of view", "pt-BR": "FOV"}
+{"id": "0204", "text": "Presentation frame limit", "pt-BR": "Limite de quadros exibidos"}
+{"id": "0205", "text": "Scaling mode", "pt-BR": "Modo de escala"}
+{"id": "0206", "text": "Timing rate", "pt-BR": "Frequência do relógio"}
+{"id": "0207", "text": "Input devices", "pt-BR": "Dispositivos de entrada"}
+{"id": "0208", "text": "Button prompts", "pt-BR": "Comandos dos botões"}
+{"id": "0209", "text": "Original field of view", "pt-BR": "Campo de visão original"}
+{"id": "0210", "text": "Vertical field of view in degrees", "pt-BR": "Campo de visão vertical em graus"}
+{"id": "0211", "text": "Move forward", "pt-BR": "Mover para frente"}
+{"id": "0212", "text": "Move back", "pt-BR": "Mover para trás"}
+{"id": "0213", "text": "Move left", "pt-BR": "Mover para a esquerda"}
+{"id": "0214", "text": "Move right", "pt-BR": "Mover para a direita"}
+{"id": "0215", "text": "Look left (keys)", "pt-BR": "Olhar para a esquerda (teclas)"}
+{"id": "0216", "text": "Look right (keys)", "pt-BR": "Olhar para a direita (teclas)"}
+{"id": "0217", "text": "Look up (keys)", "pt-BR": "Olhar para cima (teclas)"}
+{"id": "0218", "text": "Look down (keys)", "pt-BR": "Olhar para baixo (teclas)"}
+{"id": "0219", "text": "unbound", "pt-BR": "sem atribuição"}
+{"id": "0220", "text": "Left Ctrl", "pt-BR": "Ctrl esquerdo"}
+{"id": "0221", "text": "Right Ctrl", "pt-BR": "Ctrl direito"}
+{"id": "0222", "text": "Ctrl (either)", "pt-BR": "Ctrl (qualquer lado)"}
+{"id": "0223", "text": "Left Shift", "pt-BR": "Shift esquerdo"}
+{"id": "0224", "text": "Right Shift", "pt-BR": "Shift direito"}
+{"id": "0225", "text": "Shift (either)", "pt-BR": "Shift (qualquer lado)"}
+{"id": "0226", "text": "Left Alt", "pt-BR": "Alt esquerdo"}
+{"id": "0227", "text": "Right Alt", "pt-BR": "Alt direito"}
+{"id": "0228", "text": "Alt (either)", "pt-BR": "Alt (qualquer lado)"}
+{"id": "0229", "text": "Left mouse button", "pt-BR": "Botão esquerdo do mouse"}
+{"id": "0230", "text": "Right mouse button", "pt-BR": "Botão direito do mouse"}
+{"id": "0231", "text": "Middle mouse button", "pt-BR": "Botão do meio do mouse"}
+{"id": "0232", "text": "Mouse button 4", "pt-BR": "Botão 4 do mouse"}
+{"id": "0233", "text": "Mouse button 5", "pt-BR": "Botão 5 do mouse"}
+{"id": "0234", "text": "Mouse wheel up", "pt-BR": "Roda do mouse para cima"}
+{"id": "0235", "text": "Mouse wheel down", "pt-BR": "Roda do mouse para baixo"}
+{"id": "0236", "text": "Fire", "pt-BR": "Atirar"}
+{"id": "0237", "text": "Aim / zoom", "pt-BR": "Mirar / zoom"}
+{"id": "0238", "text": "Reload", "pt-BR": "Recarregar"}
+{"id": "0239", "text": "Crouch", "pt-BR": "Agachar"}
+{"id": "0240", "text": "Use / pick up", "pt-BR": "Usar / pegar"}
+{"id": "0241", "text": "Switch weapon", "pt-BR": "Trocar arma"}
+{"id": "0242", "text": "Switch weapon (other way)", "pt-BR": "Trocar arma (sentido contrário)"}
+{"id": "0243", "text": "Throw grenade", "pt-BR": "Arremessar granada"}
+{"id": "0244", "text": "Fire mode", "pt-BR": "Modo de disparo"}
+{"id": "0245", "text": "Suppressor", "pt-BR": "Silenciador"}
+{"id": "0246", "text": "Melee attack", "pt-BR": "Ataque corpo a corpo"}
+{"id": "0247", "text": "Use health pack", "pt-BR": "Usar kit médico"}
+{"id": "0248", "text": "Cycle item (White)", "pt-BR": "Alternar item (Branco)"}
+{"id": "0249", "text": "Back / objectives", "pt-BR": "Voltar / objetivos"}
+{"id": "0250", "text": "Start (pause)", "pt-BR": "Start (pausar)"}
+{"id": "0251", "text": "KEYBOARD AND MOUSE (no controller needed)", "pt-BR": "TECLADO E MOUSE (sem controle)"}
+{"id": "0252", "text": "Look: move the mouse (raw input, no acceleration).", "pt-BR": "Olhar: mova o mouse (entrada direta, sem aceleração)."}
+{"id": "0253", "text": "Menus: arrow keys or the mouse wheel to move, Enter / Space / left click to select,", "pt-BR": "Menus: use as setas ou a roda do mouse para navegar; Enter, Espaço ou clique esquerdo seleciona."}
+{"id": "0254", "text": "Backspace / right click / Escape to go back. Enter also confirms \"to continue\" prompts.", "pt-BR": "Backspace, clique direito ou Escape volta. Enter também confirma avisos de \"pressione para continuar\"."}
+{"id": "0255", "text": "Escape pauses a mission.", "pt-BR": "Escape pausa a missão."}
+{"id": "0256", "text": "CONTROLLER ONLY", "pt-BR": "SOMENTE CONTROLE"}
+{"id": "0257", "text": "CONTROLLER (optional)", "pt-BR": "CONTROLE (opcional)"}
+{"id": "0258", "text": "Any XInput controller works as before.", "pt-BR": "Qualquer controle XInput funciona como antes."}
+{"id": "0259", "text": "Keyboard and mouse gameplay and menu controls are disabled.", "pt-BR": "Os comandos de teclado e mouse para jogo e menus ficam desativados."}
+{"id": "0260", "text": "Controller input is disabled.", "pt-BR": "Os comandos do controle ficam desativados."}
+{"id": "0261", "text": "Prompts follow whichever device you used last.", "pt-BR": "Os comandos na tela acompanham o último dispositivo usado."}
+{"id": "0262", "text": "Prompts show controller buttons.", "pt-BR": "Os comandos na tela mostram os botões do controle."}
+{"id": "0263", "text": "Prompts show keyboard and mouse bindings.", "pt-BR": "Os comandos na tela mostram os atalhos de teclado e mouse."}
+{"id": "0264", "text": "Leaving the game window pauses a mission.", "pt-BR": "Sair da janela do jogo pausa a missão."}
+{"id": "0265", "text": "F11 toggles fullscreen. Movies: Escape skips the current one.", "pt-BR": "F11 alterna a tela cheia. Vídeos: Escape pula o vídeo atual."}
+{"id": "0266", "text": "The size of the game window", "pt-BR": "Tamanho da janela do jogo"}
+{"id": "0267", "text": "480p", "pt-BR": "480p"}
+{"id": "0268", "text": "720p", "pt-BR": "720p"}
+{"id": "0269", "text": "1080p", "pt-BR": "1080p"}
+{"id": "0270", "text": "1440p", "pt-BR": "1440p"}
+{"id": "0271", "text": "2160p", "pt-BR": "2160p"}
+{"id": "0272", "text": "60 steps per second", "pt-BR": "60 etapas por segundo"}
+{"id": "0273", "text": "120 steps per second", "pt-BR": "120 etapas por segundo"}
+{"id": "0274", "text": "240 steps per second", "pt-BR": "240 etapas por segundo"}
+{"id": "0275", "text": "Faster timing (the original game ran at 30)", "pt-BR": "Ritmo acelerado (o jogo original rodava a 30)"}
+{"id": "0276", "text": "GPU renderer (Direct3D 11)", "pt-BR": "Renderizador GPU (Direct3D 11)"}
+{"id": "0277", "text": "FPS", "pt-BR": "FPS"}
+{"id": "0278", "text": "Original keeps BLACK's own motion blur. Off disables that effect while preserving other post effects.", "pt-BR": "Original mantém o desfoque de movimento de BLACK. Desativado remove esse efeito e preserva os demais efeitos de imagem."}
+{"id": "0279", "text": "Key bindings", "pt-BR": "Atalhos de teclado"}
+{"id": "0280", "text": "Anisotropic filtering", "pt-BR": "Filtragem anisotrópica"}
+{"id": "0281", "text": "Ambient occlusion method", "pt-BR": "Método de oclusão de ambiente"}
+{"id": "0282", "text": "Ambient occlusion quality", "pt-BR": "Qualidade da oclusão de ambiente"}
+{"id": "0283", "text": "Camera", "pt-BR": "Proporção"}
+{"id": "0284", "text": "Select a language", "pt-BR": "Selecione um idioma"}
+{"id": "0285", "text": "PC game already running", "pt-BR": "O jogo já está em execução"}
+{"id": "0286", "text": "Game status", "pt-BR": "Estado do jogo"}
+{"id": "0287", "text": "WASD moves, the mouse looks, the left button fires.", "pt-BR": "WASD move; mouse olha; botão esquerdo atira."}
+{"id": "0288", "text": "Escape pauses a mission (and goes back in menus). Leaving the window pauses too.", "pt-BR": "Escape pausa a missão e volta nos menus. Sair da janela também pausa."}
+{"id": "0289", "text": "F11 toggles fullscreen. In-game prompts show your real bindings.", "pt-BR": "F11 alterna tela cheia. Os comandos na tela mostram seus atalhos."}
+{"id": "0290", "text": " default on this ", "pt-BR": " padrão neste PC com "}
+{"id": "0291", "text": "-thread PC", "pt-BR": " threads"}

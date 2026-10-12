@@ -35,7 +35,9 @@ target_link_libraries(movie-overlay-test PRIVATE user32 gdi32)
 add_executable(movie-wrapper-test test_wrapper.c)
 target_include_directories(movie-wrapper-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-foreach(target movie-input-test movie-overlay-test movie-wrapper-test)
+add_executable(movie-prompt-localization-test test_prompt_localization.c)
+
+foreach(target movie-input-test movie-overlay-test movie-wrapper-test movie-prompt-localization-test)
     target_include_directories(${target} PRIVATE
         "${XBOXRECOMP_DIR}/src/video" "${XBOXRECOMP_DIR}/src/input")
     target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -52,4 +54,9 @@ enable_testing()
 add_test(NAME movie-input COMMAND movie-input-test)
 add_test(NAME movie-overlay COMMAND movie-overlay-test)
 add_test(NAME movie-wrapper COMMAND movie-wrapper-test)
-set_tests_properties(movie-input movie-overlay movie-wrapper PROPERTIES TIMEOUT 15)
+add_test(NAME movie-prompt-localization COMMAND movie-prompt-localization-test)
+add_test(NAME movie-subtitle-catalog
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/validate_subtitle_catalog.py"
+        --root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+set_tests_properties(movie-input movie-overlay movie-wrapper movie-prompt-localization movie-subtitle-catalog PROPERTIES TIMEOUT 15)

@@ -1631,8 +1631,12 @@ namespace BlackXboxLauncher
             AddOptionLabel(game, new LaunchOptions().Threads + " default on this " + Environment.ProcessorCount + "-thread PC", 298, 77, 300).ForeColor = muted;
             AddOptionLabel(game, "Menu language", 14, 110, 176);
             ConfigureChoices(menuLanguage, "Game menu language", 194, 106, 408,
-                new DisplayChoice(GameLanguageBanks.English, "English"),
-                new DisplayChoice(GameLanguageBanks.PortugueseBrazil, "Português (Brasil)"));
+                new DisplayChoice(GameLanguageBanks.English, GameLanguageBanks.DisplayName(GameLanguageBanks.English)),
+                new DisplayChoice(GameLanguageBanks.PortugueseBrazil, GameLanguageBanks.DisplayName(GameLanguageBanks.PortugueseBrazil)),
+                new DisplayChoice(GameLanguageBanks.Spanish, GameLanguageBanks.DisplayName(GameLanguageBanks.Spanish)),
+                new DisplayChoice(GameLanguageBanks.French, GameLanguageBanks.DisplayName(GameLanguageBanks.French)),
+                new DisplayChoice(GameLanguageBanks.German, GameLanguageBanks.DisplayName(GameLanguageBanks.German)),
+                new DisplayChoice(GameLanguageBanks.Italian, GameLanguageBanks.DisplayName(GameLanguageBanks.Italian)));
             game.Controls.Add(menuLanguage);
             SetSettingsTip(menuLanguage, "Selects the game's text bank. The launcher installs this choice before each run; English is selected by default.");
             skipMovies.SetBounds(14, 142, 590, 28);

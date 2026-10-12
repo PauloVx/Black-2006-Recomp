@@ -26,6 +26,30 @@ namespace BlackXboxLauncher
             LauncherLanguage.Set(GameLanguageBanks.English);
             try
             {
+                LauncherLanguage.Set("es");
+                var localizationHost = new Panel();
+                var userText = new TextBox { Text = "Initial profile name" };
+                var userNumber = new NumericUpDown { Value = 3 };
+                var translatedLabel = new Label { Text = "Display" };
+                localizationHost.Controls.Add(userText);
+                localizationHost.Controls.Add(userNumber);
+                localizationHost.Controls.Add(translatedLabel);
+                LauncherLanguage.Apply(localizationHost);
+                userText.Text = "Custom operator";
+                userNumber.Value = 8;
+                LauncherLanguage.Apply(localizationHost);
+                check(userText.Text == "Custom operator", "Applying translations preserves user-entered text.");
+                check(userNumber.Value == 8, "Applying translations preserves an edited numeric value.");
+                check(translatedLabel.Text == "Pantalla", "Applying translations still updates static labels.");
+                check(LauncherLanguage.Text("Status: Any XInput controller works as before.") ==
+                    "Status: Cualquier mando XInput funciona como antes.",
+                    "Applying a generated locale does not rewrite English fragments inside translated output.");
+                check(LauncherLanguage.Text("Status: Gamepad 1 and XInput are supported.") ==
+                    "Status: Gamepad 1 and XInput are supported.",
+                    "Fallback translations do not replace English fragments inside unmatched words.");
+                check(LauncherLanguage.Text("Input") == "Entrada",
+                    "Whole-word fallback translation still handles a standalone key.");
+
                 using (var form = new LauncherForm(project, true))
                 {
                     Field<NumericUpDown>(form, "threads").Value = 3;

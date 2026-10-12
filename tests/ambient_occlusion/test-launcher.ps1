@@ -11,10 +11,11 @@ New-Item -ItemType Directory -Path $testOutput -Force | Out-Null
 $executable = Join-Path $testOutput 'ao-launcher-test.exe'
 $launcherDirectory = Split-Path -Parent ([IO.Path]::GetFullPath($LauncherSource))
 $languageTests = Join-Path $PSScriptRoot '..\launcher_language'
+$localeCatalog = Join-Path $PSScriptRoot '..\..\scripts\localization\launcher-locales.json'
 & $compiler /nologo /target:exe /platform:x64 /optimize+ `
     /main:BlackXboxLauncher.AmbientOcclusionTests `
     /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
-    /reference:System.Web.Extensions.dll "/out:$executable" `
+    /reference:System.Web.Extensions.dll "/resource:$localeCatalog,BlackXboxLauncher.launcher-locales.json" "/out:$executable" `
     ([IO.Path]::GetFullPath($LauncherSource)) `
     (Join-Path $launcherDirectory 'game-language.cs') `
     (Join-Path $launcherDirectory 'launcher-language.cs') `

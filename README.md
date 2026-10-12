@@ -114,26 +114,32 @@ and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 game and back up all three data directories before moving or removing the
 project folder if you want to keep your progress.
 
-The launcher's **Game > Menu language** setting chooses English or Brazilian
-Portuguese for both the launcher and game, and is saved in
-`local/xbox-launcher.json`. Before each run, the launcher installs the selected
-bank at `game/language/strings/MainUS.bin` and passes that language to the game.
-On the first launch, it preserves the recognized original English bank at
-`local/language-banks/en-US/MainUS.bin` before applying either language. Fresh
-retail installations and existing English installations need no manual copy.
-An already staged English bank is retained. If the installed bank was previously
-translated or changed and no English copy exists, restore the original English
-`MainUS.bin` from your supported retail files to that source path before launching.
-The reference English bank SHA-256 is
+The launcher's **Game > Menu language** setting chooses English, Brazilian
+Portuguese, Spanish, French, German, or Italian for both the launcher and game,
+and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
+are marked as machine-draft translations and still need fluent-speaker review.
+Before each run, the launcher installs the selected bank at
+`game/language/strings/MainUS.bin` and passes that language to the game. The
+launcher build preserves the recognized original English bank at
+`local/language-banks/en-US/MainUS.bin` and generates the four new language banks
+on a fresh setup. The launcher also preserves English before applying another language. If the
+installed bank was previously translated or changed and no English copy exists,
+restore the original English `MainUS.bin` from supported retail files to that
+source path before launching. The reference English bank SHA-256 is
 `B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB`.
-Supply the Portuguese runtime bank at `local/language-banks/pt-BR/MainUS.bin`
-before selecting Portuguese; a missing bank leaves the installed text unchanged.
-Keep both source banks for switching back to English. `local/` is excluded from
-Git. The launcher defaults to English when the setting is new or invalid.
+English and Brazilian Portuguese banks come from the user's local game files.
+The build can generate Spanish, French, German, and Italian banks under
+`local/language-banks/` when the preserved English bank is present. No licensed
+bank is included in Git. A missing selected bank leaves the installed text
+unchanged, and a new or invalid language setting defaults to English.
 
-The opening cutscene subtitles are in `subtitles/03_N.srt` (English) and
-`subtitles/pt-BR/03_N.srt` (Brazilian Portuguese). The runtime selects the file
-from the launcher language. Supply the corresponding audio/game files yourself.
+Nine spoken cutscenes have subtitle tracks in English, Brazilian Portuguese,
+Spanish, French, German, and Italian. The runtime selects a track using the game
+language and lays captions out inside the active picture area, including 4:3,
+16:9, and ultrawide presentations. Spanish, French, German, and Italian tracks
+remain pending fluent-speaker and full audio review; speaker-attribution
+uncertainties are documented in `subtitles/SPEAKER_ATTRIBUTION_REVIEW.csv`.
+Experimental retiming candidates and gameplay ASR dialogue are not loaded.
 
 AO requires the GPU renderer. Every quality uses a full-resolution R8 mask and
 depth-aware blur; higher quality increases sampling density and radius. AO

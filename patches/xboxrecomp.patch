@@ -36245,10 +36245,9 @@ index 0000000..15dfe54
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2400 @@
+@@ -0,0 +1,2484 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -37435,33 +37434,52 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +    out[n] = 0;
 +}
 +
-+static int portuguese_menu_language(void)
++static int pc_menu_locale(void)
 +{
 +    const char *language = getenv("RECOMP_LANGUAGE");
-+    return language && !_stricmp(language, "pt-BR");
++    if (!language || !_stricmp(language, "en-US")) return 0;
++    if (!_stricmp(language, "pt-BR")) return 1;
++    if (!_stricmp(language, "es")) return 2;
++    if (!_stricmp(language, "fr")) return 3;
++    if (!_stricmp(language, "de")) return 4;
++    if (!_stricmp(language, "it")) return 5;
++    return 0;
 +}
 +
 +static const char *localized_video_literal(const char *text)
 +{
 +    const char *active_page = m_page >= 0 && m_doc ? m_doc->page[m_page].name : m_page_name;
-+    static const struct { const char *english, *portuguese; } words[] = {
-+        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO" }, { "DISPLAY", "TELA" },
-+        { "GRAPHICS", "GRÁFICOS" }, { "RESET TO DEFAULTS", "RESTAURAR PADRÕES" },
-+        { "BACK", "VOLTAR" }, { "WINDOW MODE", "MODO DE JANELA" },
-+        { "WINDOW SIZE", "RESOLUÇÃO" }, { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA" },
-+        { "ASPECT RATIO", "PROPORÇÃO DA IMAGEM" }, { "SCALING", "ESCALA DA IMAGEM" },
-+        { "SCALING FILTER", "FILTRO DE ESCALA" }, { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL" },
-+        { "FRAME LIMIT", "LIMITE DE QUADROS" }, { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO" },
-+        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA" }, { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO" },
-+        { "SHARPENING", "NITIDEZ" }, { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE" },
-+        { "AO QUALITY", "QUALIDADE DA OCLUSÃO" }, { "FIELD OF VIEW", "FOV" },
-+        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO" }
++    int locale = pc_menu_locale();
++    static const struct { const char *english, *pt, *es, *fr, *de, *it; } words[] = {
++        { "VIDEO SETTINGS", "CONFIGURAÇÕES DE VÍDEO", "AJUSTES DE VÍDEO", "PARAMÈTRES VIDÉO", "VIDEOEINSTELLUNGEN", "IMPOSTAZIONI VIDEO" },
++        { "DISPLAY", "TELA", "PANTALLA", "AFFICHAGE", "ANZEIGE", "SCHERMO" },
++        { "GRAPHICS", "GRÁFICOS", "GRÁFICOS", "GRAPHIQUES", "GRAFIK", "GRAFICA" },
++        { "RESET TO DEFAULTS", "RESTAURAR PADRÕES", "RESTABLECER VALORES", "RÉINITIALISER", "ZURÜCKSETZEN", "RIPRISTINA PREDEFINITI" },
++        { "BACK", "VOLTAR", "ATRÁS", "RETOUR", "ZURÜCK", "INDIETRO" },
++        { "WINDOW MODE", "MODO DE JANELA", "MODO DE VENTANA", "MODE FENÊTRÉ", "FENSTERMODUS", "MODALITÀ FINESTRA" },
++        { "WINDOW SIZE", "RESOLUÇÃO", "RESOLUCIÓN", "RÉSOLUTION", "AUFLÖSUNG", "RISOLUZIONE" },
++        { "INTERNAL RESOLUTION", "RESOLUÇÃO INTERNA", "RESOLUCIÓN INTERNA", "RÉSOLUTION INTERNE", "INTERNE AUFLÖSUNG", "RISOLUZIONE INTERNA" },
++        { "ASPECT RATIO", "PROPORÇÃO", "RELACIÓN DE ASPECTO", "FORMAT D’IMAGE", "BILDFORMAT", "PROPORZIONI" },
++        { "SCALING", "ESCALA DA IMAGEM", "ESCALADO", "MISE À L’ÉCHELLE", "SKALIERUNG", "RIDIMENSIONAMENTO" },
++        { "SCALING FILTER", "FILTRO DE ESCALA", "FILTRO DE ESCALADO", "FILTRE DE MISE À L’ÉCHELLE", "SKALIERUNGSFILTER", "FILTRO DI RIDIMENSIONAMENTO" },
++        { "VERTICAL SYNC", "SINCRONIZAÇÃO VERTICAL", "SINCRONIZACIÓN VERTICAL", "SYNCHRONISATION VERTICALE", "VERTIKALE SYNCHRONISIERUNG", "SINCRONIZZAZIONE VERTICALE" },
++        { "FRAME LIMIT", "LIMITE DE QUADROS", "LÍMITE DE FPS", "LIMITE D’IMAGES/S", "BILDERLIMIT", "LIMITE FPS" },
++        { "ANTI-ALIASING", "SUAVIZAÇÃO DE SERRILHADO", "SUAVIZADO", "ANTICRÉNELAGE", "ANTIALIASING", "ANTIALIASING" },
++        { "ANISOTROPIC FILTERING", "FILTRAGEM ANISOTRÓPICA", "FILTRADO ANISOTRÓPICO", "FILTRAGE ANISOTROPE", "ANISOTROPE FILTERUNG", "FILTRO ANISOTROPICO" },
++        { "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO", "PROFUNDIDAD DE CAMPO", "PROFONDEUR DE CHAMP", "SCHÄRFENTIEFE", "PROFONDITÀ DI CAMPO" },
++        { "SHARPENING", "NITIDEZ", "NITIDEZ", "NETTETÉ", "SCHÄRFEN", "NITIDEZZA" },
++        { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE", "OCLUSIÓN AMBIENTAL", "OCCLUSION AMBIANTE", "UMGEBUNGSVERDECKUNG", "OCCLUSIONE AMBIENTALE" },
++        { "AO QUALITY", "QUALIDADE DA OCLUSÃO", "CALIDAD DE OCLUSIÓN", "QUALITÉ DE L’OCCLUSION", "AO-QUALITÄT", "QUALITÀ AO" },
++        { "FIELD OF VIEW", "FOV", "CAMPO DE VISIÓN", "CHAMP DE VISION", "SICHTFELD", "CAMPO VISIVO" },
++        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" }
 +    };
 +    int i;
-+    if (!portuguese_menu_language() ||
-+        (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
++    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
 +    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
-+        if (!strcmp(text, words[i].english)) return words[i].portuguese;
++        if (!strcmp(text, words[i].english)) {
++            const char *values[] = { words[i].english, words[i].pt, words[i].es, words[i].fr, words[i].de, words[i].it };
++            return values[locale];
++        }
 +    return text;
 +}
 +
@@ -38462,14 +38480,47 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +/* The hint is a separate layer: its pixels never enter the cached page pixels, so hiding it
 + * restores exactly the page underneath. A change to this layer invalidates the whole upload;
 + * ordinary pages retain their existing small dirty regions while the hint is hidden. */
++#define PCM_CAPTION_ROWS 5
++
++/* Wrap at the last fitting space; split an overlong word without losing characters. */
++static unsigned caption_rows(const uint16_t *text, uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP], float limit)
++{
++    unsigned count = 0, at = 0;
++    memset(rows, 0, sizeof(uint16_t) * PCM_CAPTION_ROWS * PCM_TEXT_CAP);
++    while (text[at] && count < PCM_CAPTION_ROWS) {
++        unsigned start, n = 0, space = 0;
++        while (text[at] == ' ' || text[at] == '\t') ++at;
++        if (!text[at]) break;
++        start = at;
++        while (text[at] && text[at] != '\n' && text[at] != '\r' && n + 1 < PCM_TEXT_CAP) {
++            rows[count][n++] = text[at];
++            rows[count][n] = 0;
++            if (n > 1 && text_width(PCM_FONT_SMALL, rows[count], 17.0f) > limit) {
++                rows[count][--n] = 0;
++                if (space) { n = space; at = start + space + 1; }
++                break;
++            }
++            if (text[at] == ' ' || text[at] == '\t') space = n - 1;
++            ++at;
++        }
++        while (n && (rows[count][n - 1] == ' ' || rows[count][n - 1] == '\t')) --n;
++        rows[count][n] = 0;
++        if (text[at] == '\r') ++at;
++        if (text[at] == '\n') ++at;
++        ++count;
++    }
++    return count;
++}
++
 +int pc_menu_overlay(unsigned w, unsigned h, int px, int py, unsigned pw, unsigned ph, const uint32_t **pixels, int *changed)
 +{
 +    static uint32_t *hint, *composed;
-+    static uint16_t previous_caption[PCM_TEXT_CAP];
++    static uint16_t previous_caption[PC_MOVIE_SUBTITLE_CHARS];
++    static int caption_rect[4];
 +    static unsigned hw, hh;
 +    static int overlay_was_on, hint_was_on, base_was_on, caption_was_on;
 +    const uint32_t *base = NULL;
-+    uint16_t caption[PCM_TEXT_CAP];
++    uint16_t caption[PC_MOVIE_SUBTITLE_CHARS];
 +    int base_changed = 0, overlay_changed = 0, caption_changed;
 +    const int base_on = page_overlay(w, h, px, py, pw, ph, &base, &base_changed);
 +    int hint_on = InterlockedCompareExchange(&m_movie_skip_prompt, 0, 0) && w && h && pw && ph &&
@@ -38477,8 +38528,13 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +    int subtitle_on;
 +    memset(caption, 0, sizeof(caption));
 +    subtitle_on = w && h && pw && ph && m_font[PCM_FONT_SMALL].pixels &&
-+                  pc_movie_skip_subtitle(caption, PCM_TEXT_CAP);
++                  pc_movie_skip_subtitle(caption, PC_MOVIE_SUBTITLE_CHARS);
 +    caption_changed = subtitle_on != caption_was_on || memcmp(caption, previous_caption, sizeof(caption)) != 0;
++    if (subtitle_on && (caption_rect[0] != px || caption_rect[1] != py ||
++                        caption_rect[2] != (int)pw || caption_rect[3] != (int)ph)) {
++        overlay_changed = 1;
++        caption_rect[0] = px; caption_rect[1] = py; caption_rect[2] = (int)pw; caption_rect[3] = (int)ph;
++    }
 +    if (caption_changed) memcpy(previous_caption, caption, sizeof(caption));
 +    caption_was_on = subtitle_on;
 +    if ((hint_on || subtitle_on) && (hw != w || hh != h || !hint || !composed)) {
@@ -38501,7 +38557,21 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +    overlay_changed |= !overlay_was_on || caption_changed || hint_on != hint_was_on;
 +    if (overlay_changed) {
 +        static Display d;
-+        static const uint16_t text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
++        static const uint16_t english_skip_text[] = { 'P','r','e','s','s',' ','a','g','a','i','n',' ','t','o',' ','s','k','i','p',0 };
++        const char *language = getenv("RECOMP_LANGUAGE");
++        const char *skip_text = "Press again to skip";
++        uint16_t localized_skip_text[64];
++        const uint16_t *text = english_skip_text;
++        if (language && !_stricmp(language, "pt-BR")) skip_text = "PRESSIONE NOVAMENTE PARA PULAR";
++        else if (language && !_stricmp(language, "es")) skip_text = "PULSA DE NUEVO PARA OMITIR";
++        else if (language && !_stricmp(language, "fr")) skip_text = "APPUYEZ À NOUVEAU POUR PASSER";
++        else if (language && !_stricmp(language, "de")) skip_text = "ZUM ÜBERSPRINGEN ERNEUT DRÜCKEN";
++        else if (language && !_stricmp(language, "it")) skip_text = "PREMI DI NUOVO PER SALTARE";
++        if (language && (_stricmp(language, "pt-BR") == 0 || _stricmp(language, "es") == 0 ||
++                         _stricmp(language, "fr") == 0 || _stricmp(language, "de") == 0 || _stricmp(language, "it") == 0)) {
++            if (MultiByteToWideChar(CP_UTF8, 0, skip_text, -1, (WCHAR *)localized_skip_text, 64) > 0)
++                text = localized_skip_text;
++        }
 +        Canvas c;
 +        float right, bottom, tw;
 +        d.n = 0; d.slide = 0;
@@ -38514,28 +38584,41 @@ index 0000000..82e56e62c681d55a48ab1bcf9cf0146e8f4ca103
 +            rect(&d, right - tw - 20.0f, bottom - 30.0f, tw + 20.0f, 30.0f, 0xCC101010u, 0);
 +            text_prim(&d, PCM_FONT_SMALL, right - tw - 10.0f, bottom - 23.0f, 16.0f, 1.0f, 0xFFE5E5E5u, text);
 +        }
-+        if (subtitle_on) {
-+            uint16_t rows[2][PCM_TEXT_CAP];
-+            unsigned row = 0, pos = 0, i;
-+            float widths[2] = {0, 0}, box_w, box_y;
-+            memset(rows, 0, sizeof(rows));
-+            for (i = 0; caption[i] && row < 2; ++i) {
-+                if (caption[i] == '\n' || caption[i] == '\r') {
-+                    if (caption[i] == '\r' && caption[i + 1] == '\n') ++i;
-+                    if (row == 0) { ++row; pos = 0; }
-+                } else if (pos + 1 < PCM_TEXT_CAP) rows[row][pos++] = caption[i];
-+            }
-+            for (i = 0; i < 2; ++i) widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
-+            box_w = fmaxf(widths[0], widths[1]) + 28.0f;
-+            if (box_w > 600.0f) box_w = 600.0f;
-+            box_y = 480.0f - (row ? 64.0f : 42.0f) - 14.0f;
-+            rect(&d, 320.0f - box_w * 0.5f, box_y, box_w, row ? 58.0f : 36.0f, 0xB8000000u, 0);
-+            text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[0] * 0.5f, box_y + 8.0f,
-+                      17.0f, 1.0f, 0xFFFFFFFFu, rows[0]);
-+            if (row) text_prim(&d, PCM_FONT_SMALL, 320.0f - widths[1] * 0.5f, box_y + 30.0f,
-+                               17.0f, 1.0f, 0xFFFFFFFFu, rows[1]);
-+        }
 +        render(&d, hint, w, h, 0, 0, w, h);
++        if (subtitle_on) {
++            uint16_t rows[PCM_CAPTION_ROWS][PCM_TEXT_CAP];
++            float widths[PCM_CAPTION_ROWS], box_w = 0, box_y, centre, limit, caption_bottom;
++            unsigned count, i;
++            /* Captions belong to the displayed picture; the hint keeps its client anchor. */
++            canvas_for(&c, hint, w, h, px, py, pw, ph);
++            limit = ((float)(c.cr - c.cl) / c.s) - 68.0f;
++            if (limit < 1.0f) limit = 1.0f;
++            count = caption_rows(caption, rows, limit);
++            centre = (((float)c.cl + (float)c.cr) * 0.5f - c.ox) / c.s;
++            for (i = 0; i < count; ++i) {
++                widths[i] = text_width(PCM_FONT_SMALL, rows[i], 17.0f);
++                box_w = fmaxf(box_w, widths[i]);
++            }
++            box_w += 28.0f;
++            caption_bottom = (float)c.cb - 14.0f * c.s;
++            if (hint_on) {
++                Canvas client;
++                canvas_for(&client, hint, w, h, 0, 0, w, h);
++                caption_bottom = fminf(caption_bottom, (float)h - 50.0f * client.s - 8.0f * c.s);
++            }
++            box_y = (caption_bottom - c.oy) / c.s - (22.0f * count + 14.0f);
++            d.n = 0;
++            rect(&d, centre - box_w * 0.5f, box_y, box_w, 22.0f * count + 14.0f, 0xB8000000u, 0);
++            for (i = 0; i < count; ++i)
++                text_prim(&d, PCM_FONT_SMALL, centre - widths[i] * 0.5f, box_y + 7.0f + 22.0f * i,
++                          17.0f, 1.0f, 0xFFFFFFFFu, rows[i]);
++            /* Draw onto the hint layer without render_region's clearing pass. */
++            for (i = 0; i < (unsigned)d.n; ++i) {
++                const Prim *p = &d.prim[i];
++                if (p->type == PR_RECT) draw_rect(&c, p, 0);
++                else draw_text(&c, p, 0);
++            }
++        }
 +    }
 +    *changed = base_changed || overlay_changed || base_on != base_was_on;
 +    if (base_on) {
@@ -38970,10 +39053,9 @@ index 0000000..6affd56
 +}
 diff --git a/src/video/pc_movie_skip.c b/src/video/pc_movie_skip.c
 new file mode 100644
-index 0000000..5ff10e0
 --- /dev/null
 +++ b/src/video/pc_movie_skip.c
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,370 @@
 +/* BLACK's native XMV input. Decoder ownership and EOF stay with the guest. */
 +#include "pc_movie_skip.h"
 +#include "pc_menu.h"
@@ -38999,9 +39081,10 @@ index 0000000..5ff10e0
 +static uint64_t m_started;
 +static int m_kind, m_request, m_release;
 +static int m_subtitle_target, m_subtitle_loaded;
++static char m_subtitle_stem[16];
 +static int m_focused = 1;
 +#define PC_MOVIE_CAPTIONS 64
-+#define PC_MOVIE_CAPTION_CHARS 160
++#define PC_MOVIE_CAPTION_CHARS PC_MOVIE_SUBTITLE_CHARS
 +typedef struct MovieCaption { uint64_t start, end; uint16_t text[PC_MOVIE_CAPTION_CHARS]; } MovieCaption;
 +static MovieCaption m_captions[PC_MOVIE_CAPTIONS];
 +static unsigned m_caption_count;
@@ -39026,6 +39109,7 @@ index 0000000..5ff10e0
 +    m_kind = PC_MOVIE_SKIP_NONE;
 +    m_request = 0;
 +    m_subtitle_target = m_subtitle_loaded = 0;
++    m_subtitle_stem[0] = 0;
 +    m_caption_count = 0;
 +    m_release = (m_keys | m_pad | m_mouse) != 0;
 +    pc_menu_set_movie_skip_prompt(0);
@@ -39091,15 +39175,34 @@ index 0000000..5ff10e0
 +    return 1;
 +}
 +
++static int subtitle_supported_stem(const char *stem)
++{
++    static const char *const supported[] = {
++        "03_N", "05_N", "07_N", "09_N", "11_N", "13_N", "15_N", "17_N", "18_N"
++    };
++    unsigned i;
++    if (!stem || !*stem) return 0;
++    for (i = 0; i < sizeof(supported) / sizeof(supported[0]); ++i)
++        if (!_stricmp(stem, supported[i])) return 1;
++    return 0;
++}
++
 +static void subtitle_load_locked(void)
 +{
 +    FILE *f;
 +    char line[1024];
++    char subtitle_path[MAX_PATH];
 +    const char *language = getenv("RECOMP_LANGUAGE");
-+    const char *subtitle_path = language && !_stricmp(language, "pt-BR")
-+        ? "subtitles\\pt-BR\\03_N.srt" : "subtitles\\03_N.srt";
++    const char *directory = language && !_stricmp(language, "pt-BR") ? "subtitles\\pt-BR\\" :
++        language && !_stricmp(language, "es") ? "subtitles\\es\\" :
++        language && !_stricmp(language, "fr") ? "subtitles\\fr\\" :
++        language && !_stricmp(language, "de") ? "subtitles\\de\\" :
++        language && !_stricmp(language, "it") ? "subtitles\\it\\" : "subtitles\\";
 +    m_subtitle_loaded = 1;
 +    m_caption_count = 0;
++    if (!m_subtitle_target || !m_subtitle_stem[0] ||
++        _snprintf_s(subtitle_path, sizeof(subtitle_path), _TRUNCATE,
++                    "%s%s.srt", directory, m_subtitle_stem) < 0) return;
 +    f = fopen(subtitle_path, "rb");
 +    if (!f) {
 +        fprintf(stderr, "[SUBTITLE] %s not found\n", subtitle_path);
@@ -39138,16 +39241,19 @@ index 0000000..5ff10e0
 +        m_caption_count++;
 +    }
 +    fclose(f);
-+    fprintf(stderr, "[SUBTITLE] loaded %u cues for 03_N\n", m_caption_count);
++    fprintf(stderr, "[SUBTITLE] loaded %u cues for %s\n", m_caption_count, m_subtitle_stem);
 +}
 +
 +void pc_movie_skip_subtitle_target(uint64_t session, const char *stem)
 +{
 +    AcquireSRWLockExclusive(&m_lock);
 +    if (active_locked(now_ms()) && session == m_session) {
-+        const int target = stem && !_stricmp(stem, "03_N");
-+        if (target != m_subtitle_target) {
++        const int target = subtitle_supported_stem(stem);
++        if (target != m_subtitle_target ||
++            (target && _stricmp(stem, m_subtitle_stem) != 0)) {
 +            m_subtitle_target = target;
++            if (target) strncpy_s(m_subtitle_stem, sizeof(m_subtitle_stem), stem, _TRUNCATE);
++            else m_subtitle_stem[0] = 0;
 +            m_subtitle_loaded = 0;
 +            m_caption_count = 0;
 +        }
@@ -39322,15 +39428,15 @@ index 0000000..5ff10e0
 +#endif
 diff --git a/src/video/pc_movie_skip.h b/src/video/pc_movie_skip.h
 new file mode 100644
-index 0000000..5023deb
 --- /dev/null
 +++ b/src/video/pc_movie_skip.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,26 @@
 +#ifndef XBOXRECOMP_PC_MOVIE_SKIP_H
 +#define XBOXRECOMP_PC_MOVIE_SKIP_H
 +#include <stdint.h>
 +
 +enum { PC_MOVIE_SKIP_NONE, PC_MOVIE_SKIP_INTRO, PC_MOVIE_SKIP_CUTSCENE };
++#define PC_MOVIE_SUBTITLE_CHARS 256
 +
 +/* Game thread: refresh a playing movie's identity each pump. Zero playing or NONE
 + * retires it. A new identity always starts with an unarmed confirmation. */
