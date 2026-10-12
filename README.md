@@ -82,9 +82,18 @@ The launcher's **Game > Menu language** setting chooses English or Brazilian
 Portuguese for both the launcher and game, and is saved in
 `local/xbox-launcher.json`. Before each run, the launcher installs the selected
 bank at `game/language/strings/MainUS.bin` and passes that language to the game.
-Keep the source banks at `local/language-banks/en-US/MainUS.bin` and
-`local/language-banks/pt-BR/MainUS.bin`; `local/` is excluded from Git. The
-launcher defaults to English when the setting is new or invalid.
+On the first launch, it preserves the recognized original English bank at
+`local/language-banks/en-US/MainUS.bin` before applying either language. Fresh
+retail installations and existing English installations need no manual copy.
+An already staged English bank is retained. If the installed bank was previously
+translated or changed and no English copy exists, restore the original English
+`MainUS.bin` from your supported retail files to that source path before launching.
+The reference English bank SHA-256 is
+`B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB`.
+Supply the Portuguese runtime bank at `local/language-banks/pt-BR/MainUS.bin`
+before selecting Portuguese; a missing bank leaves the installed text unchanged.
+Keep both source banks for switching back to English. `local/` is excluded from
+Git. The launcher defaults to English when the setting is new or invalid.
 
 The opening cutscene subtitles are in `subtitles/03_N.srt` (English) and
 `subtitles/pt-BR/03_N.srt` (Brazilian Portuguese). The runtime selects the file

@@ -23,6 +23,8 @@ The workflow first compiles the production renderer, video and input libraries, 
   Existing DOF, FXAA, sharpening and SSAA shader entry points also compile.
 - The actual launcher model and controls: all choices, file/JSON persistence, legacy and invalid
   inputs, culture independence, in-game editability, English labels and saved-choice reload.
+  Language switches preserve edited numeric and text settings in both the UI and saved JSON.
+  Synthetic language banks cover first-run English preservation and Portuguese/English switching.
 - The authored camera hook and guard regressions in `camera/`.
 
 WARP uses synthetic depth and scene textures; it does not execute the complete guest game or

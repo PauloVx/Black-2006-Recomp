@@ -213,7 +213,9 @@ namespace BlackXboxLauncher
 
         internal static void Apply(Control parent)
         {
-            if (!(parent is ComboBox))
+            // These controls contain values entered by the user, rather than
+            // captions. NumericUpDown also contains an editable TextBox child.
+            if (!(parent is ComboBox) && !(parent is TextBoxBase) && !(parent is UpDownBase))
             {
                 if (parent.Tag == null) parent.Tag = parent.Text;
                 string english = parent.Tag as string;

@@ -296,6 +296,8 @@ namespace BlackXboxLauncher
                     foreach (TabPage tab in tabs.TabPages)
                         Check(tab.AutoScroll, "Resizing retains access to settings on the " + tab.Text + " tab.");
                 }
+                LanguageBankTests.Run(fixture, Check);
+                LauncherLanguageTests.Run(fixture, Check);
                 Console.WriteLine("PASS: " + checks + " actual-launcher checks.");
                 return 0;
             }

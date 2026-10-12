@@ -15,8 +15,9 @@
 static unsigned char guest[4 * 1024 * 1024];
 ptrdiff_t g_xbox_mem_offset;
 uint32_t g_eax, g_ecx, g_edx, g_ebx, g_esi, g_edi, g_esp;
-static uint64_t active_session, requested_session;
+static uint64_t active_session, requested_session, subtitle_target_session;
 static int active_kind, generated_calls, generated_action, font_loads;
+static char subtitle_target_stem[64];
 static int black_pc_ram_span(uint32_t va, uint32_t bytes)
 { return va >= 0x10000u && (uint64_t)va + bytes <= sizeof(guest); }
 void pc_movie_skip_update(uint64_t session, int kind, int playing)
@@ -28,6 +29,11 @@ int pc_movie_skip_take_request(uint64_t session)
     if (session != requested_session) return 0;
     requested_session=0;
     return 1;
+}
+void pc_movie_skip_subtitle_target(uint64_t session, const char *stem)
+{
+    subtitle_target_session = session;
+    snprintf(subtitle_target_stem, sizeof(subtitle_target_stem), "%s", stem ? stem : "");
 }
 static int bnm_load_font(int slot, const char *path)
 {
@@ -83,6 +89,7 @@ int main(void)
     movie("LO_n_US");
     sub_000C4570();
     assert(active_kind==PC_MOVIE_SKIP_INTRO && active_session && generated_calls==1);
+    assert(subtitle_target_session==active_session && !strcmp(subtitle_target_stem,"LO_n_US"));
     assert(!guest[MOVIE+0x62u]); check_abi();
 
     movie("03_n");
@@ -91,6 +98,7 @@ int main(void)
     sub_000C4570();
     assert(fegetround()==FE_DOWNWARD && _mm_getcsr()==csr);
     assert(active_kind==PC_MOVIE_SKIP_CUTSCENE && font_loads==1 && generated_calls==1);
+    assert(subtitle_target_session==active_session && !strcmp(subtitle_target_stem,"03_n"));
     assert(g_eax==0x12345678u); check_abi(); first=active_session;
     g_esp=STACK; sub_000C4570();
     assert(active_session==first && font_loads==1);
@@ -102,6 +110,7 @@ int main(void)
     movie("C_N_Us");
     sub_000C4570();
     assert(active_kind==PC_MOVIE_SKIP_CUTSCENE && active_session!=first);
+    assert(subtitle_target_session==active_session && !strcmp(subtitle_target_stem,"C_N_Us"));
     first=active_session;
     generated_action=1; g_esp=STACK;
     sub_000C4570();
