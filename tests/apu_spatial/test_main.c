@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 void xbox_SetAckTick(void (*fn)(void)) { (void)fn; }
 
@@ -13,6 +14,15 @@ static unsigned checks, failures;
 static int front_only;
 static MCPXAPUState *apu;
 static float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME];
+
+static void check(int condition, const char *label)
+{
+    ++checks;
+    if (!condition) {
+        if (failures < 12) fprintf(stderr, "%s\n", label);
+        ++failures;
+    }
+}
 
 static void check_sample(const char *label, unsigned tick, unsigned sample,
                          unsigned channel, int expected)
@@ -33,6 +43,10 @@ static void clear_case(void)
     memset(apu->monitor.frame_buf, 0, sizeof(apu->monitor.frame_buf));
     apu->monitor.ep_fifo_frame_valid = false;
     apu->monitor.point = MCPX_APU_DEBUG_MON_EP;
+    apu->fallback_limiter_gain = 1.0;
+    apu->trace_output = false;
+    apu->output_overloaded_samples = apu->output_limited_samples = 0;
+    apu->output_clipped_samples = 0;
 }
 
 static void check_single_bus(void)
@@ -88,7 +102,7 @@ static void check_effect_sends_do_not_reverse_or_clip(void)
     }
 }
 
-static void check_chronology_and_clipping(void)
+static void check_chronology(void)
 {
     clear_case();
     for (unsigned tick = 0; tick < 8; ++tick) {
@@ -107,13 +121,123 @@ static void check_chronology_and_clipping(void)
                              (int)(value * (ch ? -32767.0f : 32767.0f)));
             }
 
+}
+
+static void check_limiter_overlap_and_release(void)
+{
     clear_case();
-    mixbins[0][0] = 2.0f;
-    mixbins[1][0] = -2.0f;
+    apu->trace_output = true;
+    for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample) {
+        /* Two individually valid buses overlap. The right channel is quiet
+         * and must receive the same gain reduction as the overloaded left. */
+        mixbins[0][sample] = front_only ? 2.0f : 1.0f;
+        mixbins[4][sample] = 1.0f;
+        mixbins[1][sample] = -0.5f;
+    }
     apu->ep_frame_div = 0;
     mcpx_apu_dsp_frame(apu, mixbins);
-    check_sample("positive saturation", 0, 0, 0, 32767);
-    check_sample("negative saturation", 0, 0, 1, -32767);
+    for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample) {
+        check_sample("limited overlapping left", 0, sample, 0, 32767);
+        check_sample("linked quiet right", 0, sample, 1, -8191);
+    }
+    check(apu->output_overloaded_samples == 32, "raw overload counts channel samples");
+    check(apu->output_limited_samples == 64, "limiting counts both nonzero channels");
+    check(apu->output_clipped_samples == 0, "limiting avoids actual hard clipping");
+
+    memset(mixbins, 0, sizeof(mixbins));
+    mixbins[0][0] = 0.5f;
+    mixbins[1][0] = -0.125f;
+    apu->ep_frame_div = 1;
+    mcpx_apu_dsp_frame(apu, mixbins);
+    int left = apu->monitor.frame_buf[32][0];
+    int right = apu->monitor.frame_buf[32][1];
+    check(left >= 8191 && left <= 8200, "gain reduction persists across a frame boundary");
+    check(abs(left + 4 * right) <= 4, "release preserves the stereo amplitude ratio");
+
+    /* Continue with silence to a total of 4800 release samples: a 100 ms
+     * time constant restores 1 - 0.5/e of unity gain, even with zero PCM. */
+    memset(mixbins, 0, sizeof(mixbins));
+    for (unsigned tick = 1; tick < 150; ++tick) {
+        apu->ep_frame_div = tick % 8;
+        mcpx_apu_dsp_frame(apu, mixbins);
+    }
+    check(fabs(apu->fallback_limiter_gain - (1.0 - 0.5 / exp(1.0))) < 1e-9,
+          "silence advances the 100 ms release across ticks");
+    check(apu->output_clipped_samples == 0, "release requires no safety clipping");
+    mcpx_apu_dsp_reset(apu);
+    check(apu->fallback_limiter_gain == 1.0, "DSP reset restores unity gain");
+    check(apu->output_overloaded_samples == 32, "DSP reset retains cumulative telemetry");
+}
+
+static void check_limiter_sustained_sine(void)
+{
+    clear_case();
+    apu->trace_output = true;
+    double output_square = 0, sine_projection = 0, cosine_projection = 0;
+    unsigned observed = 0, plateau = 0, max_plateau = 0;
+    const double tau = 6.2831853071795864769;
+    for (unsigned tick = 0; tick < 1500; ++tick) {
+        for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample) {
+            unsigned n = tick * NUM_SAMPLES_PER_FRAME + sample;
+            /* Start at a peak; discard the first two periods for waveform
+             * quality. This is a 1 kHz tone from two unity-amplitude sources. */
+            float value = (float)cos(tau * n / 48.0);
+            mixbins[0][sample] = (front_only ? 2.0f : 1.0f) * value;
+            mixbins[4][sample] = value;
+            mixbins[1][sample] = (front_only ? 0.5f : 0.25f) * value;
+            mixbins[5][sample] = 0.25f * value;
+        }
+        apu->ep_frame_div = tick % 8;
+        mcpx_apu_dsp_frame(apu, mixbins);
+        for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample) {
+            unsigned n = tick * NUM_SAMPLES_PER_FRAME + sample;
+            int left = apu->monitor.frame_buf[(tick % 8) * 32 + sample][0];
+            int right = apu->monitor.frame_buf[(tick % 8) * 32 + sample][1];
+            check(abs(left - 4 * right) <= 4, "sustained overload retains stereo ratio");
+            if (n < 96) continue;
+            if (abs(left) >= 32766) ++plateau;
+            else plateau = 0;
+            if (plateau > max_plateau) max_plateau = plateau;
+            double value = left / 32767.0;
+            output_square += value * value;
+            sine_projection += value * sin(tau * n / 48.0);
+            cosine_projection += value * cos(tau * n / 48.0);
+            ++observed;
+        }
+    }
+    /* Project the output onto its fundamental. Independent channel clamps
+     * leave long full-scale plateaus and strong harmonics, unlike the linked
+     * gain envelope. This measures output quality, not the implementation. */
+    double fundamental = 2.0 * (sine_projection * sine_projection +
+        cosine_projection * cosine_projection) / ((double)observed * observed);
+    double residual = fmax(0.0, output_square / observed - fundamental);
+    printf("APU limiter tone: residual-rms=%.8f max-plateau=%u raw-overloaded=%llu limited=%llu clipped=%llu.\n",
+           sqrt(residual), max_plateau,
+           (unsigned long long)apu->output_overloaded_samples,
+           (unsigned long long)apu->output_limited_samples,
+           (unsigned long long)apu->output_clipped_samples);
+    check(max_plateau <= 1, "sustained tone has no hard-clipping plateaus");
+    check(sqrt(residual) < 0.003, "sustained tone residual stays below 0.3 percent full scale");
+    check(apu->output_overloaded_samples > 1000, "tone exercises genuine raw overload");
+    check(apu->output_limited_samples > 1000, "tone exercises gain reduction");
+    check(apu->output_clipped_samples == 0, "tone produces no post-limit saturation");
+}
+
+static void check_limiter_finite_inputs(void)
+{
+    clear_case();
+    mixbins[0][0] = NAN;
+    mixbins[1][0] = 0.25f;
+    mixbins[0][1] = INFINITY;
+    mixbins[1][1] = -INFINITY;
+    apu->fallback_limiter_gain = NAN;
+    apu->ep_frame_div = 0;
+    mcpx_apu_dsp_frame(apu, mixbins);
+    check_sample("nonfinite left is silent", 0, 0, 0, 0);
+    check_sample("finite opposite channel is preserved", 0, 0, 1, 8191);
+    check_sample("infinite left is silent", 0, 1, 0, 0);
+    check_sample("infinite right is silent", 0, 1, 1, 0);
+    check(isfinite(apu->fallback_limiter_gain), "invalid state recovers finite gain");
 }
 
 static void check_stereo_with_cross_parity_effect_sends(void)
@@ -147,6 +271,7 @@ static void check_native_and_vp_ownership(void)
         }
         if (mode == 0) apu->monitor.ep_fifo_frame_valid = true;
         else apu->monitor.point = MCPX_APU_DEBUG_MON_VP;
+        apu->fallback_limiter_gain = 0.5;
         for (unsigned bus = 0; bus < NUM_MIXBINS; ++bus)
             for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample)
                 mixbins[bus][sample] = 0.5f;
@@ -160,6 +285,7 @@ static void check_native_and_vp_ownership(void)
                 check_sample("native/VP ownership", tick, sample, 0, 1000 + i);
                 check_sample("native/VP ownership", tick, sample, 1, -2000 - i);
             }
+        check(apu->fallback_limiter_gain == 1.0, "native/VP bypass clears old fallback gain");
     }
 }
 
@@ -233,10 +359,14 @@ int main(void)
     if (!apu) return 2;
     check_single_bus();
     check_effect_sends_do_not_reverse_or_clip();
-    check_chronology_and_clipping();
+    check_chronology();
     check_stereo_with_cross_parity_effect_sends();
     check_configured_stereo_bus();
+    printf("APU dry routing: %u checks, %u failures.\n", checks, failures);
     check_native_and_vp_ownership();
+    check_limiter_overlap_and_release();
+    check_limiter_sustained_sine();
+    check_limiter_finite_inputs();
     free(apu);
     printf("APU spatial: %u checks, %u failures (%s).\n",
            checks, failures, front_only ? "front-only control" : "dry stereo");

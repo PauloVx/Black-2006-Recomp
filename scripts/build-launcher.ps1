@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$Launch, [switch]$Force)
+param([switch]$Launch, [switch]$Force, [string]$OutputDirectory)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -14,7 +14,11 @@ $bankBuilder = Join-Path $PSScriptRoot 'localization\build_mainus.py'
 $bankBootstrap = Join-Path $PSScriptRoot 'localization\prepare_english_bank.ps1'
 $englishBank = Join-Path $projectRoot 'local\language-banks\en-US\MainUS.bin'
 $gameCatalogDir = Join-Path $projectRoot 'localization\game'
-$output = Join-Path $projectRoot 'BLACK PC Launcher.exe'
+if (-not $OutputDirectory) { $OutputDirectory = $projectRoot }
+$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$output = Join-Path $OutputDirectory 'BLACK PC Launcher.exe'
+$settingsOutput = Join-Path $OutputDirectory 'BLACK PC Settings.exe'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $compiler)) { throw 'The .NET Framework 4 compiler is missing.' }
 if (-not (Test-Path -LiteralPath $languageSource)) { throw 'The launcher language-bank source is missing.' }
@@ -66,17 +70,23 @@ if ($python) {
     Write-Output 'Python is unavailable; using the checked-in launcher catalog and skipping generated game-language banks.'
 }
 
-if ($Force -or -not (Test-Path -LiteralPath $output) -or
-    (Get-Item -LiteralPath $source).LastWriteTimeUtc -gt (Get-Item -LiteralPath $output).LastWriteTimeUtc -or
-    (Get-Item -LiteralPath $languageSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $output).LastWriteTimeUtc -or
-    (Get-Item -LiteralPath $uiLanguageSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $output).LastWriteTimeUtc -or
-    (Get-Item -LiteralPath $localeCatalog).LastWriteTimeUtc -gt (Get-Item -LiteralPath $output).LastWriteTimeUtc) {
-    & $compiler /nologo /target:winexe /platform:x64 /optimize+ `
-        /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
-        /reference:System.Web.Extensions.dll "/resource:$localeCatalog,BlackXboxLauncher.launcher-locales.json" "/out:$output" $languageSource $uiLanguageSource $source
-    if ($LASTEXITCODE -ne 0) { throw "Launcher compilation failed (exit $LASTEXITCODE)." }
-    Write-Output "Built $output"
+foreach ($target in @(
+    @{ Path = $output; EntryPoint = 'BlackXboxLauncher.Program' },
+    @{ Path = $settingsOutput; EntryPoint = 'BlackXboxLauncher.SettingsProgram' }
+)) {
+    $targetPath = $target.Path
+    if ($Force -or -not (Test-Path -LiteralPath $targetPath) -or
+        (Get-Item -LiteralPath $source).LastWriteTimeUtc -gt (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc -or
+        (Get-Item -LiteralPath $languageSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc -or
+        (Get-Item -LiteralPath $uiLanguageSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc -or
+        (Get-Item -LiteralPath $localeCatalog).LastWriteTimeUtc -gt (Get-Item -LiteralPath $targetPath).LastWriteTimeUtc) {
+        & $compiler /nologo /target:winexe /platform:x64 /optimize+ "/main:$($target.EntryPoint)" `
+            /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
+            /reference:System.Web.Extensions.dll "/resource:$localeCatalog,BlackXboxLauncher.launcher-locales.json" "/out:$targetPath" $languageSource $uiLanguageSource $source
+        if ($LASTEXITCODE -ne 0) { throw "Launcher compilation failed (exit $LASTEXITCODE)." }
+        Write-Output "Built $targetPath"
+    }
 }
 if ($Launch) {
-    Start-Process -FilePath $output -WorkingDirectory $projectRoot
+    Start-Process -FilePath $output -WorkingDirectory $projectRoot -WindowStyle Hidden
 }

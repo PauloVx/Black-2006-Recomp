@@ -128,14 +128,45 @@ namespace BlackXboxLauncher
 
         internal static string FindProject(string directory)
         {
-            foreach (string candidate in new[] { directory })
+            foreach (string candidate in new[] { directory, Path.Combine(directory, "black-xbox", "game"), Path.Combine(directory, "game") })
                 if (File.Exists(Path.Combine(candidate, "src", "main.c")) && Directory.Exists(Path.Combine(candidate, "scripts")))
                     return Path.GetFullPath(candidate);
-            throw new DirectoryNotFoundException("Place BLACK PC Launcher.exe in the Black 2006 Recomp project folder.");
+            throw new DirectoryNotFoundException("Place BLACK PC Launcher.exe in the Black 2006 Recomp project folder or its workspace.");
         }
 
         [STAThread]
         private static int Main(string[] args)
+        {
+            return Run(args, false);
+        }
+
+        internal static LaunchOptions LoadOptions(string root)
+        {
+            string settingsPath = Path.Combine(root, "local", "xbox-launcher.json");
+            string videoPath = LaunchOptions.VideoIniPath(root);
+            var options = File.Exists(settingsPath) ? LaunchOptions.FromSettingsJson(File.ReadAllText(settingsPath)) : new LaunchOptions();
+            if (File.Exists(videoPath)) options.ApplyVideoIni(File.ReadAllText(videoPath));
+            options.Validate();
+            return options;
+        }
+
+        // Keep the session owner alive to drain output and hold the game's mutex,
+        // without creating a settings window or rewriting existing preferences.
+        internal static int RunGame(string root)
+        {
+            var options = LoadOptions(root);
+            LauncherLanguage.Set(options.MenuLanguage);
+            using (var session = GameSession.Start(root, options, true))
+            {
+                int code = session.WaitForExit();
+                session.ArchiveKernelLog(root);
+                if (session.LogFailure != null)
+                    throw new IOException("Session logging error: " + session.LogFailure + "\nLogs: " + session.DirectoryPath);
+                return code;
+            }
+        }
+
+        internal static int Run(string[] args, bool settingsLauncher)
         {
             try
             {
@@ -177,6 +208,10 @@ namespace BlackXboxLauncher
                     }
                     return 0;
                 }
+                if (args.Length > 0 && !(args.Length == 1 && args[0] == "--settings"))
+                    throw new ArgumentException("Use --settings to open settings or --check to verify the game files.");
+                if (!settingsLauncher && args.Length == 0)
+                    return RunGame(root);
                 SetProcessDPIAware();
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -190,11 +225,17 @@ namespace BlackXboxLauncher
             }
             catch (Exception error)
             {
-                if (args.Length > 0) Console.Error.WriteLine(error.Message);
+                if (args.Length > 0 && !(args.Length == 1 && args[0] == "--settings")) Console.Error.WriteLine(error.Message);
                 else MessageBox.Show(error.Message, "BLACK PC launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }
         }
+    }
+
+    internal static class SettingsProgram
+    {
+        [STAThread]
+        private static int Main(string[] args) { return Program.Run(args, true); }
     }
 
     internal sealed class LaunchOptions
@@ -849,7 +890,7 @@ namespace BlackXboxLauncher
             return info;
         }
 
-        internal static GameSession Start(string root, LaunchOptions options)
+        internal static GameSession Start(string root, LaunchOptions options, bool preserveVideoSettings = false)
         {
             root = Path.GetFullPath(root);
             Validate(root);
@@ -879,8 +920,10 @@ namespace BlackXboxLauncher
                 if (options.DspTraceEnabled) session.dspTraceLog = new VisualTraceLog(Path.Combine(session.DirectoryPath, "audio-dsp-trace.log"), VisualTraceLog.DefaultLimit, "[DSPTRACE]");
                 if (!String.IsNullOrWhiteSpace(options.KgpuDrawLogFrames)) session.kgpuDrawTraceLog = new VisualTraceLog(Path.Combine(session.DirectoryPath, "kgpu-draw-trace.log"), VisualTraceLog.DefaultLimit, "[KDL]");
                 Directory.CreateDirectory(Path.Combine(root, "local"));
-                File.WriteAllText(LaunchOptions.VideoIniPath(root), options.VideoIni(), new UTF8Encoding(false));
-                File.WriteAllText(Path.Combine(session.DirectoryPath, "video.ini"), options.VideoIni(), new UTF8Encoding(false));
+                string videoPath = LaunchOptions.VideoIniPath(root);
+                if (!preserveVideoSettings || !File.Exists(videoPath))
+                    File.WriteAllText(videoPath, options.VideoIni(), new UTF8Encoding(false));
+                File.Copy(videoPath, Path.Combine(session.DirectoryPath, "video.ini"));
                 var environment = new Dictionary<string, string>();
                 foreach (DictionaryEntry entry in info.EnvironmentVariables)
                     if (((string)entry.Key).StartsWith("RECOMP_", StringComparison.OrdinalIgnoreCase)) environment[(string)entry.Key] = (string)entry.Value;
