@@ -1,6 +1,7 @@
 /* Exercise the production DSP fallback through its public frame entry point.
  * No guest assets, device, DSP initialization or host audio playback needed. */
 #include "apu_state.h"
+#include "apu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -162,6 +163,68 @@ static void check_native_and_vp_ownership(void)
     }
 }
 
+static void check_configured_stereo_bus(void)
+{
+    /* BLACK's primary custom bus is a stereo pair at 19/20. A voice can
+     * route exclusively there, with all standard speaker sends muted. */
+    ++checks;
+    if (!mcpx_apu_set_stereo_fallback_pair(apu, 19, 20)) ++failures;
+    for (unsigned tick = 0; tick < 8; ++tick) {
+        clear_case();
+        for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample) {
+            mixbins[19][sample] = sample & 1 ? -0.5f : 0.25f;
+            mixbins[20][sample] = sample & 1 ? 0.125f : -0.375f;
+            /* Auxiliary sends must not become extra dry speakers. */
+            mixbins[11][sample] = mixbins[12][sample] = 1.0f;
+            for (unsigned bus = 21; bus < NUM_MIXBINS; ++bus)
+                mixbins[bus][sample] = -1.0f;
+        }
+        apu->ep_frame_div = tick;
+        mcpx_apu_dsp_frame(apu, mixbins);
+        for (unsigned epoch = 0; epoch < 8; ++epoch)
+            for (unsigned sample = 0; sample < NUM_SAMPLES_PER_FRAME; ++sample)
+                for (unsigned ch = 0; ch < 2; ++ch) {
+                    float value = epoch == tick && !front_only ? mixbins[19 + ch][sample] : 0;
+                    check_sample("custom stereo bus", epoch, sample, ch,
+                                 (int)(value * 32767.0f));
+                }
+    }
+
+    /* Invalid requests leave the previous pair intact. */
+    static const unsigned invalid[][2] = {{9,20}, {19,9}, {32,20}, {19,32}, {19,19}};
+    for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        ++checks;
+        if (mcpx_apu_set_stereo_fallback_pair(apu, invalid[i][0], invalid[i][1])) ++failures;
+    }
+    ++checks;
+    if (mcpx_apu_set_stereo_fallback_pair(NULL, 19, 20)) ++failures;
+    clear_case();
+    mixbins[0][0] = 0.125f;
+    mixbins[1][0] = -0.0625f;
+    mixbins[19][0] = 0.25f;
+    mixbins[20][0] = -0.125f;
+    apu->ep_frame_div = 0;
+    mcpx_apu_dsp_frame(apu, mixbins);
+    check_sample("custom plus standard left", 0, 0, 0,
+                 (int)((front_only ? 0.125f : 0.375f) * 32767.0f));
+    check_sample("custom plus standard right", 0, 0, 1,
+                 (int)((front_only ? -0.0625f : -0.1875f) * 32767.0f));
+
+    /* Direction comes from configuration, including an even left / even
+     * right pair. It cannot be inferred from numerical bin parity. */
+    ++checks;
+    if (!mcpx_apu_set_stereo_fallback_pair(apu, 30, 10)) ++failures;
+    clear_case();
+    mixbins[30][4] = 0.25f;
+    mixbins[10][4] = -0.5f;
+    apu->ep_frame_div = 0;
+    mcpx_apu_dsp_frame(apu, mixbins);
+    check_sample("explicit left bin", 0, 4, 0, front_only ? 0 : 8191);
+    check_sample("explicit right bin", 0, 4, 1, front_only ? 0 : -16383);
+    ++checks;
+    if (!mcpx_apu_set_stereo_fallback_pair(apu, 19, 20)) ++failures;
+}
+
 int main(void)
 {
     const char *mode = getenv("APU_SPATIAL_FRONT_ONLY");
@@ -172,6 +235,7 @@ int main(void)
     check_effect_sends_do_not_reverse_or_clip();
     check_chronology_and_clipping();
     check_stereo_with_cross_parity_effect_sends();
+    check_configured_stereo_bus();
     check_native_and_vp_ownership();
     free(apu);
     printf("APU spatial: %u checks, %u failures (%s).\n",

@@ -11,7 +11,12 @@ left/right signals before clipping.
 
 The fallback now preserves the front/back left and right speaker and 3D buses,
 folds center and LFE equally into stereo at -3 dB per channel, and excludes raw
-effect/submix inputs. Native EP output is still used whenever it is available.
+effect/submix inputs unless the title explicitly configures a primary stereo
+pair. BLACK configures 19/20: captured PCM voices route exclusively to that
+pair, and its native audio setup assigns it two channels. Without that pair,
+cutscene soundtracks and some level sounds never reach the fallback output.
+The auxiliary 11/12 and 21..31 sends remain excluded. Native EP output is still
+used whenever it is available.
 This is a dry stereo fallback, not an emulation of the guest's effect graph or
 headphone HRTF. Headphone front/back localization and long-run synchronization
 still need gameplay recordings to validate.
@@ -20,7 +25,10 @@ The test links the production APU and calls `mcpx_apu_dsp_frame`. No game data
 or audio device is needed. Independent signed impulses test each of the 32
 buses at every epoch offset. Additional cases test one-sided sounds with loud
 effect sends, unclipped dry gain, chronological stereo blocks, saturation,
-native PCM ownership and VP diagnostic ownership. A separate process retains
+native PCM ownership and VP diagnostic ownership. Configured-pair cases check
+signed stereo, every epoch offset, coexistence with standard speakers,
+auxiliary-send exclusion, arbitrary channel ordering, and invalid requests.
+A separate process retains
 the `RECOMP_APU_MIXDOWN_ALL=0` front-only diagnostic control.
 
 ```powershell
@@ -31,9 +39,13 @@ ctest --test-dir build-apu-spatial -C Release --output-on-failure
 
 Use `-DXBOXRECOMP_DIR=<patched runtime>` and
 `-DDSP56300_SOURCE_DIR=<pinned DSP checkout>` for a separate checkout. Set
-`-DAPU_DSP_TEST_SOURCE=<prior apu_dsp.c>` to compile the original DSP into the
-test executable as a negative control. The old parity fallback must fail the
-spatial tests while the front-only control continues to pass.
+`-DAPU_DSP_TEST_SOURCE=<alternate apu_dsp.c>` to compile a negative control.
+The alternate source must supply the current public DSP API, including
+`mcpx_apu_set_stereo_fallback_pair`: an unmodified older source cannot link.
+To isolate the custom-pair fix, copy the current source and remove just the
+configured-pair additions to left/right output. Its custom-bus cases must fail,
+while the front-only control continues to pass. An older parity source can
+instead supply a validated setter stub and must fail the broader spatial cases.
 
 Speaker bus IDs are independently documented in the public
 [Cxbx DirectSound types](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/master/src/core/hle/DSOUND/XbDSoundTypes.h).

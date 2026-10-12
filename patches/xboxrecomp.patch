@@ -205,29 +205,38 @@ index 04c6b06..1d013fe 100644
          │             │           │
          └──────┬──────┘───────────┘
 diff --git a/src/apu/apu.h b/src/apu/apu.h
-index f7b9f8f..06754f2 100644
+index f7b9f8f..79b537b 100644
 --- a/src/apu/apu.h
 +++ b/src/apu/apu.h
 @@ -6,6 +6,7 @@
  #pragma once
- 
+
  #include <stdint.h>
 +#include <stddef.h>
- 
+
  #ifdef __cplusplus
  extern "C" {
-@@ -18,9 +19,30 @@ typedef struct MCPXAPUState MCPXAPUState;
+@@ -18,9 +19,39 @@ typedef struct MCPXAPUState MCPXAPUState;
   * Returns the APU state, or NULL on failure. */
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
- 
+
 +/* Initialize with the actual readable physical backing length. DSP bootstrap
 + * bounds every SGE and source-page read against this length and the decoded
 + * APU aperture. The original initializer retains its 64MB contract. */
 +MCPXAPUState *mcpx_apu_init_standalone_sized(uint8_t *ram_ptr, size_t ram_size);
 +
++/* Opt in to a title's custom stereo DSP input pair for dry fallback output.
++ * Bins must be distinct and in 10..31. Returns 1 on success, or 0 for invalid
++ * arguments without changing the existing pair. New instances have no pair.
++ * Native EP PCM takes precedence; RECOMP_APU_MIXDOWN_ALL=0 also excludes this
++ * pair. The caller must keep d alive while setting its pair. */
++int mcpx_apu_set_stereo_fallback_pair(MCPXAPUState *d,
++                                      unsigned int left_bin,
++                                      unsigned int right_bin);
++
  /* Shut down and free the APU state. */
  void mcpx_apu_shutdown(MCPXAPUState *d);
- 
+
 +/* Where the APU's interrupt goes. Called with 1 while an enabled interrupt is
 + * pending (NV_PAPU_ISTS GINTSTS) and 0 once it is not -- on hardware, the PCI
 + * INTA line. The runtime connects it to the kernel's vector for the APU
@@ -246,7 +255,7 @@ index f7b9f8f..06754f2 100644
 +
  /* MMIO read from APU register space (addr is offset from 0xFE800000). */
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
- 
+
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
 index 459be77..f249805 100644
 --- a/src/apu/apu_core.c
@@ -1678,7 +1687,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..a62fab7 100644
+index de14f26..5d07f0f 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -1701,15 +1710,15 @@ index de14f26..a62fab7 100644
   * Copyright (c) 2012 espes
   * Copyright (c) 2019-2025 Matt Borgerson
 @@ -24,10 +13,548 @@
- 
+
  #include "apu_state.h"
  #include "fpconv.h"
 +#include "apu_dma_regs.h"
 +#include "apu_dsp_trace.h"
- 
+
  #include <stdlib.h>
  #include <string.h>
- 
+
 +#define DSP_FRAME_CYCLES 88875u
 +#define DSP_START_FRAME_INTERRUPT (1u << 1)
 +#define DSP_DMA_EOL_INTERRUPT (1u << 7)
@@ -2252,7 +2261,7 @@ index de14f26..a62fab7 100644
 @@ -79,11 +606,9 @@ static void dsp_ack_init(void)
                  s_dsp_ack_count, s_dsp_ack[0]);
  }
- 
+
 -/* SUM EVERY MIXBIN THE GUEST ROUTED TO, NOT JUST THE FIRST TWO.
 - *
 - * Default ON. RECOMP_APU_MIXDOWN_ALL=0 restores the previous two-bin read,
@@ -2264,7 +2273,40 @@ index de14f26..a62fab7 100644
  static int mcpx_apu_mixdown_all(void)
  {
      static int on = -1;
-@@ -103,7 +628,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -94,6 +619,32 @@ static int mcpx_apu_mixdown_all(void)
+     return on;
+ }
+
++int mcpx_apu_set_stereo_fallback_pair(MCPXAPUState *d,
++                                      unsigned int left_bin,
++                                      unsigned int right_bin)
++{
++    if (!d || left_bin < 10 || left_bin >= NUM_MIXBINS ||
++        right_bin < 10 || right_bin >= NUM_MIXBINS || left_bin == right_bin)
++        return 0;
++    uint32_t pair = (left_bin + 1u) | ((right_bin + 1u) << 8);
++#ifdef _MSC_VER
++    _InterlockedExchange((long volatile *)&d->stereo_fallback_pair, (long)pair);
++#else
++    __atomic_store_n(&d->stereo_fallback_pair, pair, __ATOMIC_RELAXED);
++#endif
++    return 1;
++}
++
++static uint32_t stereo_fallback_pair_read(MCPXAPUState *d)
++{
++#ifdef _MSC_VER
++    return (uint32_t)_InterlockedCompareExchange(
++        (long volatile *)&d->stereo_fallback_pair, 0, 0);
++#else
++    return __atomic_load_n(&d->stereo_fallback_pair, __ATOMIC_RELAXED);
++#endif
++}
++
+ static void dsp_ack_frame(MCPXAPUState *d)
+ {
+     int i;
+@@ -103,7 +654,11 @@ static void dsp_ack_frame(MCPXAPUState *d)
      if (!d->ram_ptr)
          return;
      for (i = 0; i < s_dsp_ack_count; i++) {
@@ -2277,10 +2319,10 @@ index de14f26..a62fab7 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +643,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +669,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
- 
+
 +extern void xbox_SetAckTick(void (*fn)(void));
 +static MCPXAPUState *s_ack_state;
 +
@@ -2307,7 +2349,7 @@ index de14f26..a62fab7 100644
 +    /* GP and EP have independent registers, memories, and DSP engines. */
      d->gp.dsp = (DSPState *)calloc(1, sizeof(DSPState));
      d->ep.dsp = (DSPState *)calloc(1, sizeof(DSPState));
- 
+
      if (d->gp.dsp) d->gp.dsp->is_gp = true;
      if (d->ep.dsp) d->ep.dsp->is_gp = false;
 +    if (d->gp.dsp) {
@@ -2336,10 +2378,10 @@ index de14f26..a62fab7 100644
 +        d->ep.dsp->dma.fifo_rw = dsp_dma_fifo_rw;
 +        d->ep.dsp->dma.is_gp = false;
 +    }
- 
+
      d->gp.realtime = false;
      d->ep.realtime = false;
- 
+
 -    fprintf(stderr, "[APU] DSP GP/EP initialized (STUBBED - passthrough mode)\n");
 +    fprintf(stderr, "[APU] DSP GP/EP initialized (GP=%s EP=%s; "
 +                    "direct-mixdown output fallback active)\n",
@@ -2374,9 +2416,9 @@ index de14f26..a62fab7 100644
 +    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
 +    d->monitor.ep_fifo_frame_valid = false;
  }
- 
+
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,66 +743,72 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,66 +769,79 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2396,9 +2438,11 @@ index de14f26..a62fab7 100644
 +    /* Run GP effects and EP encoding for this 32-sample tick. A complete
 +     * native EP PCM block owns the eight-tick monitor epoch; otherwise
 +     * direct mixdown supplies each tick's fallback stereo slice. */
- 
+
      int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
- 
++    /* Both channels use one atomic configuration snapshot for this tick. */
++    uint32_t fallback_pair = stereo_fallback_pair_read(d);
++
 +    if (mixbins && d->gp.dsp && d->gp.dsp->engine_ready &&
 +        (d->gp.regs[NV_PAPU_GPRST] &
 +         (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
@@ -2409,7 +2453,7 @@ index de14f26..a62fab7 100644
 +                    float_to_24b(mixbins[b][i]);
 +            }
 +        }
-+
+
 +        dsp_run_frame(d->gp.dsp, true);
 +        g_dbg.gp.cycles = d->gp.dsp->core.cycle_count;
 +    }
@@ -2424,13 +2468,14 @@ index de14f26..a62fab7 100644
 +    /* Retain the compatibility handshake for command behavior beyond the
 +     * modeled DSP execution and DMA path. */
      dsp_ack_frame(d);
- 
+
 -    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
 +    if (d->trace_output && d->monitor.ep_fifo_frame_valid)
 +        ++d->output_native_ticks;
 +    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
 +        !d->monitor.ep_fifo_frame_valid) {
 +        if (d->trace_output) ++d->output_dry_ticks;
++        bool wide = mcpx_apu_mixdown_all();
          for (int i = 0; i < NUM_SAMPLES_PER_FRAME; i++) {
 -            /* Bins 2..31 used to be computed and then dropped on the floor.
 -             * On hardware the GP and EP mix the submixes down; here they are
@@ -2466,23 +2511,27 @@ index de14f26..a62fab7 100644
 +             * a submix input. They are inputs to DSP processing, not extra
 +             * speakers: summing them by parity made a right-hand source's
 +             * reverb send play dry on the left, duplicated voices and caused
-+             * premature clipping. Native EP PCM remains authoritative above;
-+             * this path intentionally provides dry audio without inventing
-+             * an effect graph when no complete native block is available. */
++             * premature clipping. A title can explicitly designate a custom
++             * stereo input pair for its dry fallback. Other DSP inputs stay
++             * excluded, and native EP PCM remains authoritative above. */
              float left, right;
-             if (mcpx_apu_mixdown_all()) {
+-            if (mcpx_apu_mixdown_all()) {
 -                left = 0.0f;
 -                right = 0.0f;
 -                for (int b = 0; b < NUM_MIXBINS; ++b) {
 -                    if (b & 1) right += mixbins[b][i];
 -                    else       left  += mixbins[b][i];
--                }
++            if (wide) {
 +                const float center_gain = 0.7071067811865476f;
 +                float center = center_gain * (mixbins[2][i] + mixbins[3][i]);
 +                left = mixbins[0][i] + mixbins[4][i] +
 +                       mixbins[6][i] + mixbins[8][i] + center;
 +                right = mixbins[1][i] + mixbins[5][i] +
 +                        mixbins[7][i] + mixbins[9][i] + center;
++                if (fallback_pair) {
++                    left += mixbins[(fallback_pair & 0xffu) - 1u][i];
++                    right += mixbins[((fallback_pair >> 8) & 0xffu) - 1u][i];
+                 }
              } else {
                  left = mixbins[0][i];
                  right = mixbins[1][i];
@@ -2495,10 +2544,10 @@ index de14f26..a62fab7 100644
              if (left > 1.0f) left = 1.0f;
              if (left < -1.0f) left = -1.0f;
              if (right > 1.0f) right = 1.0f;
-@@ -213,6 +821,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+@@ -213,6 +854,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
- 
+
 -    g_dbg.gp.cycles = 0;
 -    g_dbg.ep.cycles = 0;
  }
@@ -2886,7 +2935,7 @@ index dd6bec1..23502c4 100644
  
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..8c56324 100644
+index 651b334..44226dd 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -2895,13 +2944,13 @@ index 651b334..8c56324 100644
  #include "apu_debug.h"
 +#include "apu_dsp_engine.h"
 +#include "apu_dma.h"
- 
+
  /* ============================================================
   * DSP CPU registers
 @@ -105,36 +107,28 @@ typedef struct dsp_core_s {
   * DSP DMA State (from dsp_dma.h)
   * ============================================================ */
- 
+
 -typedef void (*dsp_scratch_rw_func)(
 -    void *opaque, uint8_t *ptr, uint32_t addr, size_t len, bool dir);
 -typedef void (*dsp_fifo_rw_func)(
@@ -2926,7 +2975,7 @@ index 651b334..8c56324 100644
  /* ============================================================
   * DSP State (from dsp_state.h)
   * ============================================================ */
- 
+
  typedef struct DSPState {
 +    struct MCPXAPUState *apu;
      dsp_core_t core;
@@ -2947,7 +2996,7 @@ index 651b334..8c56324 100644
 +    bool ep_fifo_frame_ready;
      bool is_gp;
  } DSPState;
- 
+
 @@ -373,6 +367,14 @@ typedef struct MCPXAPUVoiceFilter {
      uint16_t voice;
      float resample_buf[NUM_SAMPLES_PER_FRAME * 2];
@@ -2963,8 +3012,8 @@ index 651b334..8c56324 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +469,19 @@ struct MCPXAPUState {
- 
+@@ -467,6 +469,21 @@ struct MCPXAPUState {
+
      MemoryRegion *ram;
      uint8_t *ram_ptr;
 +    size_t ram_size; /* Actual readable physical backing; not the VA aperture. */
@@ -2972,6 +3021,8 @@ index 651b334..8c56324 100644
 +    bool trace_dsp_boot; /* Opt-in, initialized before the frame thread starts. */
 +    bool trace_dsp_state; /* Opt-in frame-boundary DSP state samples. */
 +    bool trace_output; /* Opt-in loss/clipping/timing counters, device-thread owned. */
++    /* Atomic pair of (bin + 1) bytes, left then right; zero disables it. */
++    uint32_t stereo_fallback_pair;
 +    uint64_t output_native_ticks, output_dry_ticks, output_clipped_samples;
 +    uint64_t output_blocks, output_rebases;
 +    uint64_t output_nonzero_samples, output_silent_blocks;
@@ -2981,17 +3032,17 @@ index 651b334..8c56324 100644
 +    uint64_t dsp_trace_ep_fifo_bytes;
 +    uint64_t dsp_trace_ep_fifo_captured;
      MemoryRegion mmio;
- 
+
      MCPXAPUVPState vp;
-@@ -480,6 +495,7 @@ struct MCPXAPUState {
+@@ -480,6 +497,7 @@ struct MCPXAPUState {
      int frame_count;
      int64_t frame_count_time_ms;
      int64_t next_frame_time_us;
 +    unsigned next_frame_time_fraction;
- 
+
      struct {
          struct {
-@@ -498,6 +514,7 @@ struct MCPXAPUState {
+@@ -498,6 +516,7 @@ struct MCPXAPUState {
      struct {
          McpxApuDebugMonitorPoint point;
          int16_t frame_buf[256][2];
@@ -2999,10 +3050,10 @@ index 651b334..8c56324 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +530,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -513,11 +532,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
- 
+
 -/* DSP functions (stubbed) */
 +/* DSP functions */
  void mcpx_apu_dsp_init(MCPXAPUState *d);
@@ -3010,7 +3061,7 @@ index 651b334..8c56324 100644
 +void mcpx_apu_dsp_reset(MCPXAPUState *d);
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d);
  void mcpx_apu_dsp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
- 
+
 +/* Output consumes one completed eight-tick EP epoch. */
 +void mcpx_apu_monitor_frame(MCPXAPUState *d);
 +
@@ -7644,11 +7695,11 @@ index 0000000..5532be8
 +    }
 +}
 diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
-index 53d8c75..071d567 100644
+index 53d8c75..9d80b57 100644
 --- a/src/kernel/xbox_memory_layout.c
 +++ b/src/kernel/xbox_memory_layout.c
 @@ -14,6 +14,8 @@
- 
+
  #include "xbox_memory_layout.h"
  #include "kernel.h"
 +#include "../nv2a/kelvin/kelvin.h"
@@ -7659,7 +7710,7 @@ index 53d8c75..071d567 100644
 @@ -84,6 +86,11 @@ static void *g_tiled_view = NULL;
   * the same numbers for MmClaimGpuInstanceMemory. */
  static void *g_contig_memory = NULL;
- 
+
 +/* Low RAM as physical memory: the same section as the low guest addresses,
 + * viewed again right above the contiguous window (see MemoryLayoutInit). */
 +#define XBOX_LOWRAM_PHYS_VA  (XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)  /* 0x84000000 */
@@ -7671,7 +7722,7 @@ index 53d8c75..071d567 100644
 @@ -154,6 +161,17 @@ static size_t xbox_TiledApertureSize(void)
  static HANDLE g_nv2a_ack_thread = NULL;
  static volatile LONG g_nv2a_ack_stop = 0;
- 
+
 +static int nv2a_ack_stopped(void)
 +{
 +    /* Shutdown publishes the stop with InterlockedExchange. This is an
@@ -7687,13 +7738,13 @@ index 53d8c75..071d567 100644
   * NV2A busy-bit acknowledgement.
   *
 @@ -625,11 +643,12 @@ void xbox_Nv2aFrameCounterFlip(void)
- 
+
  static void frame_counters_tick(void)
  {
 -    DWORD now = GetTickCount();
 +    DWORD now;
      int i;
- 
+
      if (!g_frame_counter_count)
          return;
 +    now = GetTickCount();
@@ -7708,7 +7759,7 @@ index 53d8c75..071d567 100644
 +    DWORD now;
      uint32_t sum = 0, nonzero = 0, i, n;
      const uint32_t *p;
- 
+
      if (!s_nv2a_trace || !s_fb_va || !s_fb_pitch)
          return;
 +    now = GetTickCount();
@@ -7718,7 +7769,7 @@ index 53d8c75..071d567 100644
 @@ -744,13 +764,27 @@ static void framebuffer_probe_tick(void)
      fflush(stderr);
  }
- 
+
 +extern void xbox_PinThread(const char *role);
 +
 +/* Something else that wants a poll on every turn of the acknowledger's loop (the audio DSP's command doorbell, which the
@@ -7791,7 +7842,7 @@ index 53d8c75..071d567 100644
  static uint32_t *s_watchdog_regs[6];
 +static uint16_t *s_watchdog_fp_control;
  static unsigned  s_watchdog_secs;
- 
+
  /* Can RECOMP_PEEK dereference this guest address?
 @@ -1110,6 +1152,7 @@ static int peek_readable(uint32_t va)
          { g_nv2a_memory,   XBOX_NV2A_BASE,    XBOX_NV2A_SIZE },
@@ -7800,11 +7851,11 @@ index 53d8c75..071d567 100644
 +        { g_lowram_phys_view, XBOX_LOWRAM_PHYS_VA, (uint64_t)g_memory_size },
      };
      size_t i;
- 
+
 @@ -1154,6 +1197,23 @@ void xbox_PeekSample(const char *label)
      fflush(stderr);
  }
- 
+
 +/* What device models add to a hang report: the watchdog calls each before
 + * it exits, so a model can say what state it was left in -- the half of a
 + * hang the guest's registers and stacks cannot show. */
@@ -7865,17 +7916,17 @@ index 53d8c75..071d567 100644
 +        /* The main thread's id (ETHREAD.UniqueThread); see
 +         * xbox_AllocThreadObject for the others. */
 +        MEM32_INIT(FAKE_TLS_VA + 0x12C, xbox_NewThreadId());
- 
+
          /*
           * XBE TLS directory.
 @@ -2017,8 +2092,18 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
- 
+
      if (g_nv2a_memory) {
          xbox_Nv2aAckStart();
 +        /* RECOMP_NV2A_KELVIN: execute the title's pushbuffer on the CPU. */
 +        kelvin_start();
      }
- 
+
 +    /* RECOMP_USB: the USB host controllers inside the MCPX aperture, which
 +     * is how a title's own XAPI reaches its gamepad. */
 +    if (g_mcpx_memory)
@@ -7890,7 +7941,7 @@ index 53d8c75..071d567 100644
 @@ -2126,6 +2211,41 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
                  (int)((mirrors_ok + 1) * g_memory_size / (1024 * 1024)));
      }
- 
+
 +    /*
 +     * Low RAM as physical memory, at 0x84000000.
 +     *
@@ -7929,10 +7980,10 @@ index 53d8c75..071d567 100644
      /*
       * Tiled / write-combined aperture at 0xF0000000.
       *
-@@ -2367,6 +2487,39 @@ ptrdiff_t xbox_GetMemoryOffset(void)
+@@ -2367,6 +2487,54 @@ ptrdiff_t xbox_GetMemoryOffset(void)
      return g_memory_offset;
  }
- 
+
 +/* Physical address 0 as a device sees it: the contiguous window, where
 + * MmGetPhysicalAddress's answers point and where the GPU model resolves its
 + * DMA (KELVIN_PHYS_WINDOW). It is separate storage from the low guest
@@ -7941,6 +7992,21 @@ index 53d8c75..071d567 100644
 +void *xbox_GetPhysicalMemoryBase(void)
 +{
 +    return g_contig_memory;
++}
++
++/* The device aperture begins with the contiguous arena. Retail low RAM is
++ * mapped immediately after it at its own physical addresses, when that view
++ * was successfully created. A missing view must not be advertised as backing
++ * storage to devices that bounds-check their DMA transfers. */
++size_t xbox_GetPhysicalMemorySize(void)
++{
++    uintptr_t base = (uintptr_t)g_contig_memory;
++    if (!base) return 0;
++    if (base <= UINTPTR_MAX - XBOX_CONTIG_SIZE &&
++        (uintptr_t)g_lowram_phys_view == base + XBOX_CONTIG_SIZE &&
++        g_memory_size <= SIZE_MAX - XBOX_CONTIG_SIZE)
++        return XBOX_CONTIG_SIZE + g_memory_size;
++    return XBOX_CONTIG_SIZE;
 +}
 +
 +/* The physical address a device should be given for guest address va.
@@ -7969,10 +8035,10 @@ index 53d8c75..071d567 100644
  /* ── Dynamic heap allocator ────────────────────────────────
   *
   * Simple bump allocator for MmAllocateContiguousMemory and similar.
-@@ -2426,8 +2579,17 @@ uint32_t xbox_AllocThreadTib(void)
+@@ -2426,8 +2594,17 @@ uint32_t xbox_AllocThreadTib(void)
      const uint32_t tib_size = 0x40;
      uint32_t tib, block, thread_data, total;
- 
+
 -    if (!g_tls_total)
 -        return 0;                    /* image has no TLS; nothing to copy */
 +    /* An image without TLS still needs a TIB of its own per thread: fs:[0x28]
@@ -7986,13 +8052,13 @@ index 53d8c75..071d567 100644
 +        *(uint32_t *)TIB_VA(tib + 0x00) = 0xFFFFFFFFu;   /* own SEH chain */
 +        return tib;
 +    }
- 
+
      total = g_tls_total;
      tib = xbox_HeapAlloc(tib_size + total + g_tls_thread_size, 16);
-@@ -2450,6 +2612,53 @@ uint32_t xbox_AllocThreadTib(void)
+@@ -2450,6 +2627,53 @@ uint32_t xbox_AllocThreadTib(void)
      #undef TIB_VA
  }
- 
+
 +/* The current-thread object: what fs:[0x28] points at, the KTHREAD/ETHREAD a
 + * title reaches through PsGetCurrentThread() -- XAPI's GetCurrentThreadId() is
 + * [[fs:[0x28]] + 0x12C], ETHREAD.UniqueThread.
@@ -8044,10 +8110,10 @@ index 53d8c75..071d567 100644
  {
      uint32_t base;
 diff --git a/src/kernel/xbox_memory_layout.h b/src/kernel/xbox_memory_layout.h
-index 23df8b2..d0652fd 100644
+index 23df8b2..208f81e 100644
 --- a/src/kernel/xbox_memory_layout.h
 +++ b/src/kernel/xbox_memory_layout.h
-@@ -211,6 +211,23 @@ void *xbox_GetMemoryBase(void);
+@@ -211,6 +211,30 @@ void *xbox_GetMemoryBase(void);
   * Returns 0 if memory is mapped at original Xbox addresses (ideal case).
   */
  ptrdiff_t xbox_GetMemoryOffset(void);
@@ -8061,6 +8127,13 @@ index 23df8b2..d0652fd 100644
 +void *xbox_GetPhysicalMemoryBase(void);
 +
 +/**
++ * Bytes of mapped backing reachable from xbox_GetPhysicalMemoryBase().
++ * Includes the low-RAM physical view only when it is mapped immediately
++ * after the contiguous arena. Returns 0 if the arena is not mapped.
++ */
++size_t xbox_GetPhysicalMemorySize(void);
++
++/**
 + * The physical address a device should be given for a guest address: the
 + * contiguous window maps to 0..64 MB, low RAM (and its mirrors) to its own
 + * view at 64 MB + X. Adding 0x80000000 to the answer gives a guest address
@@ -8071,8 +8144,8 @@ index 23df8b2..d0652fd 100644
  /* Bytes of guest address space mapped, for bounds-checking a guest pointer
   * that came out of guest memory rather than from this side. */
  size_t xbox_GetMappedSize(void);
-@@ -312,12 +329,14 @@ typedef union RecompMmx {
- 
+@@ -312,12 +336,14 @@ typedef union RecompMmx {
+
  #ifndef RECOMP_XMM_DEFINED
  #define RECOMP_XMM_DEFINED
 +#include <emmintrin.h>
@@ -8085,11 +8158,11 @@ index 23df8b2..d0652fd 100644
 +    __m128   m;
  } RecompXmm;
  #endif
- 
-@@ -442,6 +461,20 @@ extern RECOMP_TLS uint32_t g_fs_base;
+
+@@ -442,6 +468,20 @@ extern RECOMP_TLS uint32_t g_fs_base;
   */
  uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment);
- 
+
 +/* RECOMP_WATCH=<addr>[,<bytes>]: log each access to a guest range with the
 + * function making it (memory_watch.c). Called once the memory is mapped. */
 +void xbox_MemoryWatchInit(void);

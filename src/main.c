@@ -182,7 +182,10 @@ static void print_guest_context(void *rip)
  * Declared rather than included so this does not depend on src/apu being on
  * the include path. */
 typedef struct MCPXAPUState MCPXAPUState;
-extern MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr);
+extern MCPXAPUState *mcpx_apu_init_standalone_sized(uint8_t *ram_ptr, size_t ram_size);
+extern int mcpx_apu_set_stereo_fallback_pair(MCPXAPUState *d,
+                                             unsigned int left_bin,
+                                             unsigned int right_bin);
 extern void mcpx_apu_dump_state(void);
 extern void xbox_AddHangReport(void (*report)(void));
 extern unsigned long mcpx_apu_frame_thread_id(void);
@@ -484,11 +487,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
      * low guest addresses, which are separate storage, so DirectSound's
      * voice links, samples and notifiers never reached it or came back. */
     if (getenv("RECOMP_AC97_READY")) {
-        g_apu_state = mcpx_apu_init_standalone(
-            (uint8_t *)xbox_GetPhysicalMemoryBase());
+        g_apu_state = mcpx_apu_init_standalone_sized(
+            (uint8_t *)xbox_GetPhysicalMemoryBase(),
+            xbox_GetPhysicalMemorySize());
         /* Its interrupt goes to the kernel's APU vector, where DirectSound
          * connects the ISR that completes stream packets. */
         if (g_apu_state) {
+            /* BLACK sends its primary stereo mix to custom DSP bins 19/20. */
+            mcpx_apu_set_stereo_fallback_pair(g_apu_state, 19, 20);
             /* Register before the title can activate or connect the APU ISR.
              * The APU stays alive until process exit; if explicit retirement
              * is added, stop kernel delivery before removing this guard. */
@@ -499,8 +505,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             xbox_AddHangReport(mcpx_apu_dump_state);
             xbox_AddHangThread(mcpx_apu_frame_thread_id(), "APU frame");
         }
-        fprintf(stderr, "[BOOT] emulated APU %s\n",
-                g_apu_state ? "up" : "FAILED to initialise");
+        fprintf(stderr, "[BOOT] emulated APU %s (physical RAM backing=%zu bytes)\n",
+                g_apu_state ? "up" : "FAILED to initialise",
+                xbox_GetPhysicalMemorySize());
     }
 
     /* Step 3: Initialize Xbox kernel */
