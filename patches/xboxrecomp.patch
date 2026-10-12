@@ -7,7 +7,7 @@ index 1436912..ca45250 100644
  *.pyo
  .venv/
 +.work/
- 
+
  # Tool output (regenerated per-game)
  tools/disasm/output/
 diff --git a/NOTICE b/NOTICE
@@ -35,13 +35,13 @@ index f2a4948..ff68d2d 100644
 +                          and glsl/vsh.c
 +        kelvin_pixel.c    output merger state after gl/draw.c
 +        psh_regs.h        (c) 2013 espes, unchanged apart from includes
- 
+
    src/apu/apu_shim.h is this project's own file but is released under the
    same licence, because it exists only to host the extracted APU code.
 @@ -59,6 +76,16 @@ Derived algorithms — credited, independently implemented
      NV2A register-combiner translation. Cites xemu's pgraph combiner
      implementation as a reference for the hardware's behaviour.
- 
+
 +  src/nv2a/kelvin/kelvin_pixel.c, kelvin_render.c, kelvin_vsh.c
 +    The texture-shader and register-combiner arithmetic, the depth value
 +    and the handling of a transform program's screen-space output compute
@@ -57,7 +57,7 @@ index f2a4948..ff68d2d 100644
    real and should be visible even where no licence obligation attaches. If
 @@ -68,6 +95,18 @@ Derived algorithms — credited, independently implemented
    label.
- 
+
  
 +Public domain and permissive -- vendored
 +----------------------------------------
@@ -73,7 +73,7 @@ index f2a4948..ff68d2d 100644
 +
  Reference material (no code taken)
  -----------------------------------
- 
+
 diff --git a/src/apu/CMakeLists.txt b/src/apu/CMakeLists.txt
 index 0bd4ebd..698cb3e 100644
 --- a/src/apu/CMakeLists.txt
@@ -85,7 +85,7 @@ index 0bd4ebd..698cb3e 100644
 -# Global Processor (GP): Stub - effects bypass
 -# Encode Processor (EP): Stub - direct mixbin passthrough
 +# Global/Encode Processors (GP/EP): DSP56300 execution and MCPX DMA
- 
+
  add_library(xbox_apu STATIC
      apu_core.c
      apu_vp.c
@@ -95,9 +95,9 @@ index 0bd4ebd..698cb3e 100644
      apu_mmio_hook.c
      apu_xaudio2.c
  )
- 
+
  target_include_directories(xbox_apu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
- 
+
 +# DSP56300 is a separately maintained MIT-licensed Rust core with a C ABI.
 +# Keep its source pinned by scripts/setup.ps1; build the static library into
 +# this CMake tree so the runtime and standalone APU tests use the same engine.
@@ -171,15 +171,15 @@ index 04c6b06..1d013fe 100644
 +++ b/src/apu/README.md
 @@ -3,8 +3,8 @@
  Hardware emulation of the Xbox's MCPX APU (Audio Processing Unit), extracted from [xemu](https://github.com/xemu-project/xemu). The APU is a custom chip with three processors:
- 
+
  - **VP (Voice Processor)** — 256 hardware voices, ADPCM/PCM decode, pitch shifting, envelopes, HRTF 3D audio
 -- **GP (Global Processor)** — DSP for global effects (reverb, chorus). Currently **stubbed** — effects bypass.
 -- **EP (Encode Processor)** — DSP for AC3/DTS encoding. Currently **stubbed** — passthrough.
 +- **GP (Global Processor)** — loaded DSP56300 programs execute with separate X/Y/P memory, timer/frame peripherals, and scratch/FIFO DMA.
 +- **EP (Encode Processor)** — loaded DSP56300 programs execute with DMA and PCM FIFO output capture. Direct mixdown remains a fallback; full in-game audio fidelity is not yet verified.
- 
+
  Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
- 
+
 @@ -17,7 +17,9 @@ Audio output uses Windows `waveOut` at 48kHz stereo 16-bit.
  | `apu_regs.h` | 366 | MCPX APU register definitions and field masks |
  | `apu_core.c` | 762 | MMIO handlers, frame thread, waveOut output, test tone |
@@ -257,20 +257,20 @@ index f7b9f8f..79b537b 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
 
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..f249805 100644
+index 459be77..09f2a10 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
- 
+
  #include "apu_state.h"
  #include "apu.h"
 +#include "apu_dsp_trace.h"
  #include "apu_xaudio2.h"
  #include "fpconv.h"
- 
+
 @@ -55,11 +56,54 @@ void mcpx_debug_begin_frame(void) {}
  void mcpx_debug_end_frame(void) {}
- 
+
  /* ============================================================
 - * IRQ handling (stubbed - no PCI bus in standalone)
 + * IRQ handling
@@ -278,7 +278,7 @@ index 459be77..f249805 100644
 + * xemu asserts the device's PCI line; here the line is whatever the runtime
 + * connected with mcpx_apu_set_irq_line.
   * ============================================================ */
- 
+
 +static void (*s_irq_line)(int asserted);
 +
 +void mcpx_apu_set_irq_line(void (*line)(int asserted))
@@ -342,11 +342,11 @@ index 459be77..f249805 100644
 +        }
      }
  }
- 
+
 @@ -85,6 +133,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
      MCPXAPUState *d = (MCPXAPUState *)opaque;
      uint64_t r = 0;
- 
+
 +    qemu_mutex_lock(&d->lock);
      switch (addr) {
      case NV_PAPU_XGSCNT:
@@ -358,11 +358,11 @@ index 459be77..f249805 100644
 +    qemu_mutex_unlock(&d->lock);
      return r;
  }
- 
+
 @@ -115,6 +165,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
       */
      (void)size;
- 
+
 +    qemu_mutex_lock(&d->lock);
      switch (addr) {
      case NV_PAPU_ISTS:
@@ -373,17 +373,223 @@ index 459be77..f249805 100644
      }
 +    qemu_mutex_unlock(&d->lock);
  }
- 
+
  /* ============================================================
-@@ -203,10 +255,18 @@ typedef struct {
- 
+@@ -203,10 +255,225 @@ typedef struct {
+
  static WaveOutState g_waveout = { 0 };
- 
+
 +/* Aggregate EP blocks without changing their sample rate or chronology. */
 +static struct {
 +    int16_t samples[WAVEOUT_BUF_SAMPLES][2];
 +    int used;
++    uint64_t waited_packets, timed_out_packets, dropped_samples, gated_waits;
 +} g_monitor_packet;
++
++/* A one-shot software-mixer voice can finish between output packets. Flush
++ * its final partial packet only after native production is gated. Submit one
++ * silence packet to prime XA2 when it retained one buffer; a second silent
++ * submission is allowed only to retry an observed failed Start. */
++static struct {
++    bool pending;
++    bool prime_pending;
++    bool start_retry_pending;
++} g_mixer_output_tail;
++
++static bool mixer_output_tail_pending(void)
++{
++    return g_mixer_output_tail.pending;
++}
++
++static void mixer_output_tail_reset(void)
++{
++    memset(&g_mixer_output_tail, 0, sizeof(g_mixer_output_tail));
++}
++
++static void mixer_output_tail_packet_submitted(int accepted, int xa2_active,
++                                               unsigned queued_buffers,
++                                               uint64_t start_failed_delta,
++                                               int prime_packet)
++{
++    if (!g_mixer_output_tail.pending) return;
++    if (!accepted || g_mixer_active_count || g_test_tone.active) {
++        mixer_output_tail_reset();
++        return;
++    }
++    /* xa2_submit_samples owns accepted PCM even when Start fails. A single
++     * later silent submit retries Start on those already queued buffers; its
++     * own error/acceptance ends this bounded recovery attempt. */
++    if (start_failed_delta && !g_mixer_output_tail.start_retry_pending) {
++        g_mixer_output_tail.prime_pending = true;
++        g_mixer_output_tail.start_retry_pending = true;
++        return;
++    }
++    if (g_mixer_output_tail.prime_pending) {
++        /* A data-bearing packet that leaves one retained buffer still needs
++         * a prime, even if the old buffer drained during submission. A
++         * zero-only prime ends this bounded attempt. */
++        if (xa2_active && !prime_packet && queued_buffers == 1) {
++            g_mixer_output_tail.start_retry_pending = false;
++            return;
++        }
++        mixer_output_tail_reset();
++        return;
++    }
++    /* A zero queue means the accepted source packet has already drained. Do
++     * not leave an unstarted silence buffer behind; only one retained packet
++     * needs a second packet to start XA2. */
++    if (xa2_active && queued_buffers == 1) {
++        g_mixer_output_tail.prime_pending = true;
++        return;
++    }
++    mixer_output_tail_reset();
++}
++
++/* A catch-up burst must not throw away chronological PCM just because the
++ * healthy device still owns all three ring slots. Wait outside the APU lock
++ * in short, interruptible slices. A stopped device cannot freeze gameplay. */
++static int monitor_submit_xaudio2(MCPXAPUState *d, const int16_t *samples,
++                                  int sample_count)
++{
++    const int64_t deadline = qemu_clock_get_us(QEMU_CLOCK_REALTIME) + 64000;
++    bool waited = false;
++    for (;;) {
++        if (qatomic_read(&d->exiting) ||
++            (d->pause_requested && !g_test_tone.active && !g_mixer_active_count &&
++             !mixer_output_tail_pending())) {
++            g_monitor_packet.dropped_samples += sample_count;
++            return XA2_SUBMIT_ERROR;
++        }
++        int result = xa2_submit_samples(samples, sample_count);
++        if (result != XA2_SUBMIT_BACKPRESSURE) {
++            if (result != XA2_SUBMIT_ACCEPTED)
++                g_monitor_packet.dropped_samples += sample_count;
++            return result;
++        }
++        if (!waited) {
++            ++g_monitor_packet.waited_packets;
++            waited = true;
++        }
++        int64_t remaining = deadline - qemu_clock_get_us(QEMU_CLOCK_REALTIME);
++        if (remaining <= 0) {
++            ++g_monitor_packet.timed_out_packets;
++            g_monitor_packet.dropped_samples += sample_count;
++            return XA2_SUBMIT_ERROR;
++        }
++        int wait_ms = remaining > 2000 ? 2 : (int)((remaining + 999) / 1000);
++        qemu_cond_timedwait(&d->cond, &d->lock, wait_ms);
++    }
++}
++
++static void monitor_submit_packet(MCPXAPUState *d, int packet_samples,
++                                  int prime_packet)
++{
++    int xa2_active = xa2_is_active();
++    int accepted = 0;
++    unsigned queued_buffers = 0;
++    uint64_t start_failed_delta = 0;
++
++    if (xa2_active) {
++        Xa2OutputStats before;
++        xa2_get_output_stats(&before);
++        int result = monitor_submit_xaudio2(
++            d, (const int16_t *)g_monitor_packet.samples, packet_samples);
++        Xa2OutputStats stats;
++        xa2_get_output_stats(&stats);
++        accepted = result == XA2_SUBMIT_ACCEPTED;
++        queued_buffers = stats.queued_buffers;
++        start_failed_delta = stats.start_failed - before.start_failed;
++    } else if (g_waveout.initialized) {
++        int idx = g_waveout.next_buf;
++        WAVEHDR *hdr = &g_waveout.hdrs[idx];
++        /* Never overwrite a packet still owned by waveOut. */
++        if (!(hdr->dwFlags & WHDR_INQUEUE) || (hdr->dwFlags & WHDR_DONE)) {
++            memcpy(g_waveout.bufs[idx], g_monitor_packet.samples,
++                   packet_samples * 2 * sizeof(int16_t));
++            hdr->dwFlags &= ~WHDR_DONE;
++            if (waveOutWrite(g_waveout.hwo, hdr, sizeof(WAVEHDR)) == MMSYSERR_NOERROR) {
++                g_waveout.next_buf = (idx + 1) % WAVEOUT_NUM_BUFS;
++                g_waveout.frames_written++;
++                accepted = 1;
++            }
++        }
++    }
++
++    g_monitor_packet.used = 0;
++    mixer_output_tail_packet_submitted(accepted, xa2_active, queued_buffers,
++                                       start_failed_delta, prime_packet);
++}
++
++/* Finish a pending host packet without advancing the guest's EP/VP timeline. */
++static void mixer_output_tail_flush(MCPXAPUState *d)
++{
++    if (!g_mixer_output_tail.pending || g_mixer_active_count || g_test_tone.active)
++        return;
++
++    int xa2_active = xa2_is_active();
++    int packet_samples = xa2_active ? xa2_get_buffer_size() : WAVEOUT_BUF_SAMPLES;
++    if ((!xa2_active && !g_waveout.initialized) ||
++        packet_samples < MIXER_FRAME_SAMPLES ||
++        packet_samples > WAVEOUT_BUF_SAMPLES ||
++        packet_samples % MIXER_FRAME_SAMPLES) {
++        g_monitor_packet.used = 0;
++        mixer_output_tail_reset();
++        return;
++    }
++
++    int prime_packet = 0;
++    if (g_mixer_output_tail.prime_pending && g_monitor_packet.used == 0) {
++        if (!xa2_active) {
++            mixer_output_tail_reset();
++            return;
++        }
++        Xa2OutputStats stats;
++        xa2_get_output_stats(&stats);
++        /* A drained source packet needs no silent startup buffer. Two queued
++         * packets mean the bounded call below is retrying a failed Start. */
++        if (stats.queued_buffers == 0 || stats.queued_buffers >= 3) {
++            mixer_output_tail_reset();
++            return;
++        }
++        memset(g_monitor_packet.samples, 0,
++               packet_samples * 2 * sizeof(int16_t));
++        g_monitor_packet.used = packet_samples;
++        prime_packet = 1;
++    } else if (g_monitor_packet.used > 0 &&
++               g_monitor_packet.used < packet_samples) {
++        memset(g_monitor_packet.samples + g_monitor_packet.used, 0,
++               (packet_samples - g_monitor_packet.used) * 2 * sizeof(int16_t));
++        g_monitor_packet.used = packet_samples;
++    } else if (g_monitor_packet.used != packet_samples) {
++        mixer_output_tail_reset();
++        return;
++    }
++
++    monitor_submit_packet(d, packet_samples, prime_packet);
++}
++
++/* Append one mixed monitor block without changing native EP chronology. A
++ * partial tail remains queued until the frame loop gates native production. */
++static void mixer_output_tail_collect_frame(MCPXAPUState *d,
++                                            int16_t frame_buf[][2],
++                                            int packet_samples,
++                                            bool mixer_was_active)
++{
++    if (mixer_was_active && !g_mixer_active_count)
++        g_mixer_output_tail.pending = true;
++
++    memcpy(g_monitor_packet.samples + g_monitor_packet.used, frame_buf,
++           MIXER_FRAME_SAMPLES * 2 * sizeof(int16_t));
++    memset(frame_buf, 0, MIXER_FRAME_SAMPLES * 2 * sizeof(int16_t));
++    g_monitor_packet.used += MIXER_FRAME_SAMPLES;
++    if (g_monitor_packet.used < packet_samples) return;
++    if (g_monitor_packet.used != packet_samples) {
++        g_monitor_packet.used = 0;
++        mixer_output_tail_reset();
++        return;
++    }
++    monitor_submit_packet(d, packet_samples, 0);
++}
 +
  void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
  {
@@ -391,19 +597,21 @@ index 459be77..f249805 100644
      d->monitor.stream = NULL;
 +    d->monitor.ep_fifo_frame_valid = false;
 +    memset(&g_monitor_packet, 0, sizeof(g_monitor_packet));
++    mixer_output_tail_reset();
      d->monitor.queued_bytes_low = 1024;
      d->monitor.queued_bytes_high = 3072;
- 
-@@ -252,6 +312,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+
+@@ -252,6 +519,8 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
  void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  {
      (void)d;
 +    memset(&g_monitor_packet, 0, sizeof(g_monitor_packet));
++    mixer_output_tail_reset();
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +331,139 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
- 
+@@ -270,96 +539,127 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
 -    if ((d->ep_frame_div + 1) % 8) {
@@ -419,14 +627,17 @@ index 459be77..f249805 100644
 +        if (++d->output_blocks % 938 == 0) {
 +            Xa2OutputStats stats;
 +            xa2_get_output_stats(&stats);
-+            fprintf(stderr, "[AUDIO] elapsed-us=%lld produced-samples=%llu native-ticks=%llu dry-ticks=%llu clipped=%llu source-nonzero=%llu silent-blocks=%llu muted=%d submitted=%llu played=%llu queued=%u queue-full=%llu submit-failed=%llu start-failed=%llu stop-failed=%llu empty-queue=%llu reprimes=%llu critical-errors=%u critical-status=%08X recovery-attempts=%llu recoveries=%llu recovery-failed=%llu discarded-samples=%llu rebases=%llu\n",
++            fprintf(stderr, "[AUDIO] elapsed-us=%lld produced-samples=%llu native-ticks=%llu dry-ticks=%llu overloaded=%llu limited=%llu clipped=%llu source-nonzero=%llu silent-blocks=%llu muted=%d mixer-active=%d submitted=%llu played=%llu queued=%u queue-full=%llu submit-failed=%llu start-failed=%llu stop-failed=%llu empty-queue=%llu reprimes=%llu critical-errors=%u critical-status=%08X recovery-attempts=%llu recoveries=%llu recovery-failed=%llu discarded-samples=%llu rebases=%llu backpressure-packets=%llu backpressure-timeouts=%llu producer-dropped=%llu mmcss=%u gated-waits=%llu\n",
 +                    (long long)(now - d->output_started_us),
 +                    (unsigned long long)(d->output_blocks * MIXER_FRAME_SAMPLES),
 +                    (unsigned long long)d->output_native_ticks,
 +                    (unsigned long long)d->output_dry_ticks,
++                    (unsigned long long)d->output_overloaded_samples,
++                    (unsigned long long)d->output_limited_samples,
 +                    (unsigned long long)d->output_clipped_samples,
 +                    (unsigned long long)d->output_nonzero_samples,
 +                    (unsigned long long)d->output_silent_blocks, g_audio_muted,
++                    (int)g_mixer_active_count,
 +                    (unsigned long long)stats.submitted_samples,
 +                    (unsigned long long)stats.played_samples, stats.queued_buffers,
 +                    (unsigned long long)stats.queue_full,
@@ -440,11 +651,16 @@ index 459be77..f249805 100644
 +                    (unsigned long long)stats.recoveries,
 +                    (unsigned long long)stats.recovery_failed,
 +                    (unsigned long long)stats.discarded_samples,
-+                    (unsigned long long)d->output_rebases);
++                    (unsigned long long)d->output_rebases,
++                    (unsigned long long)g_monitor_packet.waited_packets,
++                    (unsigned long long)g_monitor_packet.timed_out_packets,
++                    (unsigned long long)g_monitor_packet.dropped_samples,
++                    stats.mmcss_registered,
++                    (unsigned long long)g_monitor_packet.gated_waits);
 +        }
      }
 +    d->monitor.ep_fifo_frame_valid = false;
- 
+
 -    /* XAudio2 path: render and submit a buffer */
 -    if (xa2_is_active()) {
 -        int buf_size = xa2_get_buffer_size();
@@ -475,7 +691,7 @@ index 459be77..f249805 100644
 +        d->ep.dsp->ep_fifo_frame_bytes_used = 0;
 +        d->ep.dsp->ep_fifo_frame_ready = false;
 +    }
- 
+
 -            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
 -            out_offset += chunk;
 -            remaining -= chunk;
@@ -508,9 +724,23 @@ index 459be77..f249805 100644
 -        Sleep(1);
 -        qemu_mutex_lock(&d->lock);
 -        if (++wait_loops > 50) break;
++    int mixer_was_active = g_mixer_active_count != 0;
++    if (mixer_was_active) mixer_output_tail_reset();
 +    mixer_render(d->monitor.frame_buf, MIXER_FRAME_SAMPLES);
++    if (mixer_was_active && !g_mixer_active_count) {
++        g_mixer_output_tail.pending = true;
+     }
+-
+-    /* Fill the large waveOut buffer by rendering multiple 256-sample frames */
+-    int16_t *out = (int16_t *)g_waveout.bufs[idx];
+-    int remaining = WAVEOUT_BUF_SAMPLES;
+-    int out_offset = 0;
+-
+-    while (remaining > 0) {
+-        int chunk = (remaining < MIXER_FRAME_SAMPLES) ? remaining : MIXER_FRAME_SAMPLES;
+-
 +    if (g_audio_muted) {
-+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+         memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
 +        /* Also silence earlier, not-yet-submitted slices of this packet. */
 +        memset(g_monitor_packet.samples, 0, sizeof(g_monitor_packet.samples));
 +    }
@@ -521,15 +751,17 @@ index 459be77..f249805 100644
 +                nonzero += d->monitor.frame_buf[i][channel] != 0;
 +        d->output_nonzero_samples += nonzero;
 +        if (!nonzero) ++d->output_silent_blocks;
-     }
- 
--    /* Fill the large waveOut buffer by rendering multiple 256-sample frames */
--    int16_t *out = (int16_t *)g_waveout.bufs[idx];
--    int remaining = WAVEOUT_BUF_SAMPLES;
--    int out_offset = 0;
--
--    while (remaining > 0) {
--        int chunk = (remaining < MIXER_FRAME_SAMPLES) ? remaining : MIXER_FRAME_SAMPLES;
++    }
+
+-        /* Test tone (skip if muted) */
+-        if (g_test_tone.active && !g_audio_muted) {
+-            for (int i = 0; i < chunk; i++) {
+-                int16_t s = (int16_t)(sin(g_test_tone.phase) * g_test_tone.amplitude);
+-                d->monitor.frame_buf[i][0] = s;
+-                d->monitor.frame_buf[i][1] = s;
+-                g_test_tone.phase += g_test_tone.phase_inc;
+-                if (g_test_tone.phase >= 2.0 * M_PI)
+-                    g_test_tone.phase -= 2.0 * M_PI;
 +    if (d->trace_dsp_state) {
 +        uint64_t block = ++d->dsp_trace_audio_blocks;
 +        if (mcpx_dsp_trace_audio_sample_due(block)) {
@@ -543,7 +775,7 @@ index 459be77..f249805 100644
 +                    if (magnitude > peak) peak = magnitude;
 +                    square_sum += (uint64_t)magnitude * magnitude;
 +                }
-+            }
+             }
 +            fprintf(stderr, "[DSPTRACE] event=audio-block block=%llu nonzero=%u/%u peak=%u mean-square=%llu ep-fifo-writes=%llu ep-fifo-bytes=%llu ep-fifo-captured=%llu monitor-point=%u\n",
 +                    (unsigned long long)block, nonzero,
 +                    (unsigned int)(MIXER_FRAME_SAMPLES * 2), peak,
@@ -552,51 +784,6 @@ index 459be77..f249805 100644
 +                    (unsigned long long)d->dsp_trace_ep_fifo_bytes,
 +                    (unsigned long long)d->dsp_trace_ep_fifo_captured,
 +                    (unsigned int)d->monitor.point);
-+        }
-+    }
- 
-+    int packet_samples = xa2_is_active() ? xa2_get_buffer_size() : WAVEOUT_BUF_SAMPLES;
-+    if ((!xa2_is_active() && !g_waveout.initialized) ||
-+        packet_samples < MIXER_FRAME_SAMPLES || packet_samples > WAVEOUT_BUF_SAMPLES ||
-+        packet_samples % MIXER_FRAME_SAMPLES) {
-+        g_monitor_packet.used = 0;
-         memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-+        return;
-+    }
-+    memcpy(g_monitor_packet.samples + g_monitor_packet.used,
-+           d->monitor.frame_buf, sizeof(d->monitor.frame_buf));
-+    /* VP debug monitoring accumulates; every consumed epoch starts clean. */
-+    memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-+    g_monitor_packet.used += MIXER_FRAME_SAMPLES;
-+    if (g_monitor_packet.used < packet_samples) return;
- 
--        /* Test tone (skip if muted) */
--        if (g_test_tone.active && !g_audio_muted) {
--            for (int i = 0; i < chunk; i++) {
--                int16_t s = (int16_t)(sin(g_test_tone.phase) * g_test_tone.amplitude);
--                d->monitor.frame_buf[i][0] = s;
--                d->monitor.frame_buf[i][1] = s;
--                g_test_tone.phase += g_test_tone.phase_inc;
--                if (g_test_tone.phase >= 2.0 * M_PI)
--                    g_test_tone.phase -= 2.0 * M_PI;
-+    if (xa2_is_active()) {
-+        /* The backend copies accepted PCM into its own bounded ring. On a
-+         * full queue drop this packet, keeping playback time and memory
-+         * bounded instead of replaying old samples at the next opportunity. */
-+        xa2_submit_samples((const int16_t *)g_monitor_packet.samples, packet_samples);
-+    } else {
-+        int idx = g_waveout.next_buf;
-+        WAVEHDR *hdr = &g_waveout.hdrs[idx];
-+        /* Never overwrite a packet still owned by waveOut, and never wait
-+         * for the host audio device while holding the APU device lock. */
-+        if (!(hdr->dwFlags & WHDR_INQUEUE) || (hdr->dwFlags & WHDR_DONE)) {
-+            memcpy(g_waveout.bufs[idx], g_monitor_packet.samples,
-+                   packet_samples * 2 * sizeof(int16_t));
-+            hdr->dwFlags &= ~WHDR_DONE;
-+            if (waveOutWrite(g_waveout.hwo, hdr, sizeof(WAVEHDR)) == MMSYSERR_NOERROR) {
-+                g_waveout.next_buf = (idx + 1) % WAVEOUT_NUM_BUFS;
-+                g_waveout.frames_written++;
-             }
          }
 -
 -        /* Mix software voices (skip if muted) */
@@ -608,21 +795,31 @@ index 459be77..f249805 100644
 -        out_offset += chunk;
 -        remaining -= chunk;
      }
--
+
 -    /* Submit to waveOut */
 -    hdr->dwFlags &= ~WHDR_DONE;
 -    waveOutWrite(g_waveout.hwo, hdr, sizeof(WAVEHDR));
 -
 -    g_waveout.next_buf = (idx + 1) % WAVEOUT_NUM_BUFS;
 -    g_waveout.frames_written++;
-+    g_monitor_packet.used = 0;
++    int packet_samples = xa2_is_active() ? xa2_get_buffer_size() : WAVEOUT_BUF_SAMPLES;
++    if ((!xa2_is_active() && !g_waveout.initialized) ||
++        packet_samples < MIXER_FRAME_SAMPLES || packet_samples > WAVEOUT_BUF_SAMPLES ||
++        packet_samples % MIXER_FRAME_SAMPLES) {
++        g_monitor_packet.used = 0;
++        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
++        mixer_output_tail_reset();
++        return;
++    }
++    mixer_output_tail_collect_frame(d, d->monitor.frame_buf, packet_samples,
++                                    mixer_was_active);
  }
- 
+
  /* ============================================================
-@@ -374,10 +478,9 @@ static void throttle(MCPXAPUState *d)
- 
+@@ -374,10 +674,9 @@ static void throttle(MCPXAPUState *d)
+
      int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
- 
+
 -    if (d->next_frame_time_us == 0 ||
 -        now_us - d->next_frame_time_us > EP_FRAME_US) {
 -        d->next_frame_time_us = now_us;
@@ -630,23 +827,23 @@ index 459be77..f249805 100644
 +    if (mcpx_apu_rebase_deadline(&d->next_frame_time_us,
 +                               &d->next_frame_time_fraction, now_us))
 +        ++d->output_rebases;
- 
+
      while (!d->pause_requested) {
          now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
-@@ -388,7 +491,8 @@ static void throttle(MCPXAPUState *d)
+@@ -388,7 +687,8 @@ static void throttle(MCPXAPUState *d)
              break;
          }
      }
 -    d->next_frame_time_us += EP_FRAME_US;
 +    mcpx_apu_advance_deadline(&d->next_frame_time_us,
 +                            &d->next_frame_time_fraction);
- 
+
      d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
  }
-@@ -432,11 +536,34 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,13 +732,37 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
- 
+
 +/* How the frame thread spends its frames, for a hang report: running the
 + * voice processor, or only the monitor because the front end is off, halted
 + * or trapped. */
@@ -666,7 +863,7 @@ index 459be77..f249805 100644
  {
      MCPXAPUState *d = MCPX_APU_DEVICE(arg);
      qemu_mutex_lock(&d->lock);
- 
+
 +    /* The submission thread owns the output graph and its COM apartment.
 +     * Startup waits for this thread's idle signal after initialization. */
 +    Error *local_err = NULL;
@@ -676,12 +873,20 @@ index 459be77..f249805 100644
 +    }
 +
      while (!qatomic_read(&d->exiting)) {
-         if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count) {
+-        if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count) {
++        if (d->pause_requested && !g_test_tone.active && !g_mixer_active_count &&
++            !mixer_output_tail_pending()) {
              d->is_idle = true;
-@@ -446,6 +573,25 @@ static void *mcpx_apu_frame_thread(void *arg)
+             qemu_cond_signal(&d->idle_cond);
+             qemu_cond_wait(&d->cond, &d->lock);
+@@ -446,10 +770,24 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
- 
+
+-        /* Always run the audio output loop — the software mixer and test tone
+-         * need continuous frame delivery regardless of APU register state.
+-         * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
+-        throttle(d);
 +        /* Interrupts, as xemu's frame thread raises them: a front end that
 +         * is off, trapped or halted has something to report, and a frame
 +         * that wrote a voice notifier set set_irq. Either way the line is
@@ -700,12 +905,47 @@ index 459be77..f249805 100644
 +                d->set_irq = false;
 +            }
 +        }
+
+         int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
+                                 NV_PAPU_SECTL_XCNTMODE);
+@@ -458,16 +796,59 @@ static void *mcpx_apu_frame_thread(void *arg)
+                           !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
+                           !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
+
++        /* A front-end trap is serviced by the guest ISR. Advancing a silent
++         * tick here creates a global gap and keeps that ISR behind our lock.
++         * Preserve this EP epoch and let the guest clear the trap instead.
++         * Explicit host voices/test tone still need output when the APU is off. */
++        if (!apu_active && !g_test_tone.active && !g_mixer_active_count &&
++            !mixer_output_tail_pending()) {
++            if (d->trace_output) ++g_monitor_packet.gated_waits;
++            qemu_cond_timedwait(&d->cond, &d->lock, 5);
++            continue;
++        }
 +
-         /* Always run the audio output loop — the software mixer and test tone
-          * need continuous frame delivery regardless of APU register state.
-          * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
-@@ -460,14 +606,23 @@ static void *mcpx_apu_frame_thread(void *arg)
- 
++        throttle(d);
++        if (qatomic_read(&d->exiting) ||
++            (d->pause_requested && !g_test_tone.active && !g_mixer_active_count &&
++             !mixer_output_tail_pending()))
++            continue;
++        /* The condition wait in throttle can release the lock too. Recheck
++         * guest control writes before consuming any source samples. */
++        xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
++                           NV_PAPU_SECTL_XCNTMODE);
++        fectl = qatomic_read(&d->regs[NV_PAPU_FECTL]);
++        apu_active = (xcntmode != NV_PAPU_SECTL_XCNTMODE_OFF) &&
++                     !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
++                     !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
++        if (!apu_active && !g_test_tone.active && !g_mixer_active_count &&
++            !mixer_output_tail_pending())
++            continue;
++
++        if (!apu_active && !g_test_tone.active && !g_mixer_active_count &&
++            mixer_output_tail_pending()) {
++            mixer_output_tail_flush(d);
++            continue;
++        }
++
          if (apu_active && !g_test_tone.active) {
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
 +            g_apu_frames_full++;
@@ -723,22 +963,22 @@ index 459be77..f249805 100644
              d->ep_frame_div++;
          }
      }
- 
+
 +    mcpx_apu_monitor_finalize(d);
      qemu_mutex_unlock(&d->lock);
      return NULL;
  }
-@@ -499,6 +654,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +880,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
 +    mcpx_apu_dsp_reset(d);
- 
+
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +672,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +898,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
- 
+
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
 +{
 +    return mcpx_apu_init_standalone_sized(ram_ptr, 64u * 1024u * 1024u);
@@ -748,7 +988,7 @@ index 459be77..f249805 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +687,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +913,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -760,13 +1000,13 @@ index 459be77..f249805 100644
 +        const char *trace = getenv("RECOMP_APU_TRACE_OUTPUT");
 +        d->trace_output = trace && strcmp(trace, "1") == 0;
 +    }
- 
+
      d->set_irq = false;
      d->exiting = false;
-@@ -546,13 +715,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -546,13 +941,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      /* Init software mixer for DirectSound bridge */
      mixer_init();
- 
+
 -    /* Init monitor (waveOut output) */
 -    Error *local_err = NULL;
 -    mcpx_apu_monitor_init(d, &local_err);
@@ -777,16 +1017,16 @@ index 459be77..f249805 100644
      /* Start background frame thread */
      qemu_thread_create(&d->apu_thread, "mcpx.apu_thread",
                         mcpx_apu_frame_thread, d, QEMU_THREAD_JOINABLE);
-@@ -581,7 +743,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
- 
+@@ -581,7 +969,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
 -    mcpx_apu_monitor_finalize(d);
 +    mcpx_apu_dsp_finalize(d);
- 
+
      free(d);
      g_state = NULL;
-@@ -614,8 +776,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -614,8 +1002,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -798,9 +1038,9 @@ index 459be77..f249805 100644
 -    /* GP (0x30000) and EP (0x50000) regions ignored for now */
 +    /* Other regions retain their zero/ignored fallback. */
  }
- 
+
  /* ============================================================
-@@ -630,6 +796,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +1022,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -1687,7 +1927,7 @@ index 0000000..356a5f4
 +
 +#endif
 diff --git a/src/apu/apu_dsp.c b/src/apu/apu_dsp.c
-index de14f26..5d07f0f 100644
+index de14f26..dfdec69 100644
 --- a/src/apu/apu_dsp.c
 +++ b/src/apu/apu_dsp.c
 @@ -1,17 +1,6 @@
@@ -2319,7 +2559,7 @@ index de14f26..5d07f0f 100644
          if (*slot) {
              static int shown[APU_DSP_ACK_MAX];
              if (shown[i]++ < 3)
-@@ -114,21 +669,94 @@ static void dsp_ack_frame(MCPXAPUState *d)
+@@ -114,21 +669,96 @@ static void dsp_ack_frame(MCPXAPUState *d)
      }
  }
 
@@ -2338,6 +2578,7 @@ index de14f26..5d07f0f 100644
 -    /* Allocate minimal DSP state for GP and EP.
 -     * We need these to exist so reset doesn't crash,
 -     * but they won't actually run DSP programs. */
++    d->fallback_limiter_gain = 1.0;
 +    s_ack_state = d;
 +    if (!getenv("RECOMP_APU_DSP_ACK_FRAME_ONLY")) xbox_SetAckTick(dsp_ack_poll);
 +    const char *trace = getenv("RECOMP_APU_TRACE_DSP_BOOT");
@@ -2412,13 +2653,14 @@ index de14f26..5d07f0f 100644
 +void mcpx_apu_dsp_reset(MCPXAPUState *d)
 +{
 +    if (!d) return;
++    d->fallback_limiter_gain = 1.0;
 +    if (d->gp.dsp) dsp_reset_core(d->gp.dsp);
 +    if (d->ep.dsp) dsp_reset_core(d->ep.dsp);
 +    d->monitor.ep_fifo_frame_valid = false;
  }
 
  void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
-@@ -141,66 +769,79 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
+@@ -141,66 +771,108 @@ void mcpx_apu_update_dsp_preference(MCPXAPUState *d)
  void mcpx_apu_dsp_frame(MCPXAPUState *d,
                           float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME])
  {
@@ -2442,7 +2684,7 @@ index de14f26..5d07f0f 100644
      int off = (d->ep_frame_div % 8) * NUM_SAMPLES_PER_FRAME;
 +    /* Both channels use one atomic configuration snapshot for this tick. */
 +    uint32_t fallback_pair = stereo_fallback_pair_read(d);
-+
+
 +    if (mixbins && d->gp.dsp && d->gp.dsp->engine_ready &&
 +        (d->gp.regs[NV_PAPU_GPRST] &
 +         (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
@@ -2453,7 +2695,7 @@ index de14f26..5d07f0f 100644
 +                    float_to_24b(mixbins[b][i]);
 +            }
 +        }
-
++
 +        dsp_run_frame(d->gp.dsp, true);
 +        g_dbg.gp.cycles = d->gp.dsp->core.cycle_count;
 +    }
@@ -2472,6 +2714,9 @@ index de14f26..5d07f0f 100644
 -    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP) {
 +    if (d->trace_output && d->monitor.ep_fifo_frame_valid)
 +        ++d->output_native_ticks;
++    if (d->monitor.point == MCPX_APU_DEBUG_MON_VP ||
++        d->monitor.ep_fifo_frame_valid)
++        d->fallback_limiter_gain = 1.0;
 +    if (d->monitor.point != MCPX_APU_DEBUG_MON_VP &&
 +        !d->monitor.ep_fifo_frame_valid) {
 +        if (d->trace_output) ++d->output_dry_ticks;
@@ -2484,10 +2729,7 @@ index de14f26..5d07f0f 100644
 -             *
 -             * Measured on Jet Set Radio Future, one 200 s gameplay run, with
 -             * a positive control moving beside it:
-+            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
-+             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
-+             * and fold the two non-directional channels equally into stereo.
-              *
+-             *
 -             *     [APU-BIN] 2D heard=557466 lost=0
 -             *               3D heard=0      lost=377768
 -             *               lost by bin: 6,7,8,9,10
@@ -2499,7 +2741,10 @@ index de14f26..5d07f0f 100644
 -             * lands in bins 0 and 1, which is why the music was always
 -             * audible and no effect ever was. Every instrument upstream of
 -             * this line read healthy.
--             *
++            /* DirectSound speaker bins are FL/FR/C/LFE/BL/BR (0..5);
++             * 6..9 are the 3D front/back L/R submixes. Keep their handedness
++             * and fold the two non-directional channels equally into stereo.
+              *
 -             * Gating the HRTF submix override was tried first and did not fix
 -             * it, so the defect is the width of this mixdown and nothing else.
 -             *
@@ -2536,7 +2781,34 @@ index de14f26..5d07f0f 100644
                  left = mixbins[0][i];
                  right = mixbins[1][i];
              }
-             /* Clamp to [-1, 1] range */
+-            /* Clamp to [-1, 1] range */
++            /* Peak limiting belongs after the complete dry sum and before
++             * PCM quantization. Link both channels so overlap peaks retain
++             * their stereo image. Quiet audio has unity gain until an actual
++             * overload; attack is immediate and release has a 100 ms time
++             * constant at 48 kHz. Retain gain across 32-sample ticks without
++             * buffering or adding latency. Native EP/VP output bypasses it. */
++            if (!isfinite(left)) left = 0.0f;
++            if (!isfinite(right)) right = 0.0f;
++            double peak = fmax(fabs((double)left), fabs((double)right));
++            double gain = d->fallback_limiter_gain;
++            if (!isfinite(gain) || gain <= 0.0 || gain > 1.0) gain = 1.0;
++            if (d->trace_output) {
++                if (left > 1.0f || left < -1.0f) ++d->output_overloaded_samples;
++                if (right > 1.0f || right < -1.0f) ++d->output_overloaded_samples;
++            }
++            const double release = 0.9997916883665486; /* exp(-1 / 4800) */
++            double required = peak > 1.0 ? 1.0 / peak : 1.0;
++            gain = fmin(required, 1.0 - (1.0 - gain) * release);
++            d->fallback_limiter_gain = gain;
++            if (d->trace_output && gain < 1.0) {
++                d->output_limited_samples += left != 0.0f;
++                d->output_limited_samples += right != 0.0f;
++            }
++            left = (float)((double)left * gain);
++            right = (float)((double)right * gain);
++            /* Retain a final safety clamp for floating-point roundoff. The
++             * clipped counter measures only post-limit hard saturation. */
 +            if (d->trace_output) {
 +                if (left > 1.0f || left < -1.0f) ++d->output_clipped_samples;
 +                if (right > 1.0f || right < -1.0f) ++d->output_clipped_samples;
@@ -2544,7 +2816,7 @@ index de14f26..5d07f0f 100644
              if (left > 1.0f) left = 1.0f;
              if (left < -1.0f) left = -1.0f;
              if (right > 1.0f) right = 1.0f;
-@@ -213,6 +854,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
+@@ -213,6 +885,4 @@ void mcpx_apu_dsp_frame(MCPXAPUState *d,
          }
      }
 
@@ -2849,7 +3121,7 @@ index 2742fa2..8756189 100644
 +++ b/src/apu/apu_mmio_hook.c
 @@ -6,6 +6,7 @@
   */
- 
+
  #include "apu.h"
 +#include "apu_state.h"
  #include <stdio.h>
@@ -2870,10 +3142,10 @@ index dd6bec1..23502c4 100644
 +++ b/src/apu/apu_shim.h
 @@ -21,6 +21,7 @@
  #include "../nv2a/qemu_shim.h"
- 
+
  #include <math.h>
 +#include "apu_timing.h"
- 
+
  /* ============================================================
   * Additional atomic ops needed by APU code
 @@ -48,7 +49,7 @@ static inline int64_t qemu_clock_get_us(int type) {
@@ -2884,11 +3156,11 @@ index dd6bec1..23502c4 100644
 +    return mcpx_apu_clock_microseconds(count.QuadPart, freq.QuadPart);
  }
  #endif
- 
+
 @@ -93,34 +94,41 @@ static inline void qemu_thread_join(QemuThread *t) {
   * We access Xbox RAM via a global pointer, same as NV2A.
   * ============================================================ */
- 
+
 -extern uint8_t *g_apu_ram_ptr; /* Set at init to point at Xbox 64MB RAM */
 +/* Physical address 0 as the APU sees it (xbox_GetPhysicalMemoryBase): the
 + * title's DirectSound hands the APU physical addresses from
@@ -2898,7 +3170,7 @@ index dd6bec1..23502c4 100644
 +/* Physical addresses decode through 128 MB: the contiguous window's 64 MB,
 + * then low RAM's own view above it (xbox_PhysicalAddressOf). */
 +#define APU_PHYS_MASK 0x07FFFFFFu
- 
+
  /* Little-endian physical memory reads */
  static inline uint32_t ldl_le_phys(void *as, hwaddr addr) {
      (void)as;
@@ -2915,7 +3187,7 @@ index dd6bec1..23502c4 100644
 -    return *(uint8_t *)(g_apu_ram_ptr + (addr & 0x03FFFFFF));
 +    return *(uint8_t *)(g_apu_ram_ptr + (addr & APU_PHYS_MASK));
  }
- 
+
  /* Little-endian physical memory writes */
  static inline void stl_le_phys(void *as, hwaddr addr, uint32_t val) {
      (void)as;
@@ -2932,10 +3204,10 @@ index dd6bec1..23502c4 100644
 -    *(uint8_t *)(g_apu_ram_ptr + (addr & 0x03FFFFFF)) = val;
 +    *(uint8_t *)(g_apu_ram_ptr + (addr & APU_PHYS_MASK)) = val;
  }
- 
+
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..44226dd 100644
+index 651b334..fa9ac32 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -3012,7 +3284,7 @@ index 651b334..44226dd 100644
      sv_filter svf[2];
      HrtfFilter hrtf;
  } MCPXAPUVoiceFilter;
-@@ -467,6 +469,21 @@ struct MCPXAPUState {
+@@ -467,6 +469,24 @@ struct MCPXAPUState {
 
      MemoryRegion *ram;
      uint8_t *ram_ptr;
@@ -3023,7 +3295,10 @@ index 651b334..44226dd 100644
 +    bool trace_output; /* Opt-in loss/clipping/timing counters, device-thread owned. */
 +    /* Atomic pair of (bin + 1) bytes, left then right; zero disables it. */
 +    uint32_t stereo_fallback_pair;
++    /* Fallback-only stereo-linked peak gain, owned by the APU frame thread. */
++    double fallback_limiter_gain;
 +    uint64_t output_native_ticks, output_dry_ticks, output_clipped_samples;
++    uint64_t output_overloaded_samples, output_limited_samples;
 +    uint64_t output_blocks, output_rebases;
 +    uint64_t output_nonzero_samples, output_silent_blocks;
 +    int64_t output_started_us;
@@ -3034,7 +3309,7 @@ index 651b334..44226dd 100644
      MemoryRegion mmio;
 
      MCPXAPUVPState vp;
-@@ -480,6 +497,7 @@ struct MCPXAPUState {
+@@ -480,6 +500,7 @@ struct MCPXAPUState {
      int frame_count;
      int64_t frame_count_time_ms;
      int64_t next_frame_time_us;
@@ -3042,7 +3317,7 @@ index 651b334..44226dd 100644
 
      struct {
          struct {
-@@ -498,6 +516,7 @@ struct MCPXAPUState {
+@@ -498,6 +519,7 @@ struct MCPXAPUState {
      struct {
          McpxApuDebugMonitorPoint point;
          int16_t frame_buf[256][2];
@@ -3050,7 +3325,7 @@ index 651b334..44226dd 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +532,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -513,11 +535,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
 
@@ -3077,13 +3352,13 @@ index 651b334..44226dd 100644
  extern MCPXAPUState *g_state;
  extern struct McpxApuDebug g_dbg, g_dbg_cache;
 diff --git a/src/apu/apu_vp.c b/src/apu/apu_vp.c
-index b9f429e..a75c023 100644
+index b9f429e..60348eb 100644
 --- a/src/apu/apu_vp.c
 +++ b/src/apu/apu_vp.c
 @@ -66,9 +66,21 @@ static void set_notify_status(MCPXAPUState *d, uint32_t v, int notifier,
   * Filter helpers
   * ============================================================ */
- 
+
 -static void voice_reset_filters(MCPXAPUState *d, uint16_t v)
 +static void voice_reset_resample(MCPXAPUState *d, uint16_t v)
  {
@@ -3103,10 +3378,97 @@ index b9f429e..a75c023 100644
      memset(&d->vp.filters[v].svf, 0, sizeof(d->vp.filters[v].svf));
      hrtf_filter_clear_history(&d->vp.filters[v].hrtf);
      if (d->vp.filters[v].resampler) {
-@@ -178,12 +190,49 @@ static void set_hrir_coeff_tar(MCPXAPUState *d, int channel, int coeff_idx,
+@@ -120,12 +132,86 @@ static void voice_set_mask(MCPXAPUState *d, uint16_t voice_handle,
+                 v | ((val << ctz32(mask)) & mask));
+ }
+
++/* Opt-in lifecycle diagnostics for short menu sounds that process polling
++ * misses. No per-sample output: cap the events for a whole process. The
++ * playback endpoints are auxiliary trace state, not guest/APU state. */
++static float s_voice_trace_last[MCPX_HW_MAX_VOICES][2];
++static float s_voice_trace_peak[MCPX_HW_MAX_VOICES];
++static bool s_voice_trace_played[MCPX_HW_MAX_VOICES];
++
++static unsigned voice_event_trace_limit(void)
++{
++    static int limit = -1;
++    if (limit < 0) {
++        const char *enabled = getenv("RECOMP_APU_TRACE_VOICE_EVENTS");
++        limit = 0;
++        if (enabled && strcmp(enabled, "1") == 0) {
++            const char *maximum = getenv("RECOMP_APU_TRACE_VOICE_EVENTS_MAX");
++            long requested = maximum ? strtol(maximum, NULL, 10) : 512;
++            if (requested < 1) requested = 512;
++            if (requested > 16384) requested = 16384;
++            limit = (int)requested;
++        }
++    }
++    return (unsigned)limit;
++}
++
++static void voice_event_trace(MCPXAPUState *d, uint16_t v,
++                              const char *event)
++{
++    static unsigned events;
++    unsigned limit = voice_event_trace_limit();
++    if (!limit || events >= limit || v >= MCPX_HW_MAX_VOICES) return;
++    MCPXAPUVoiceFilter *f = &d->vp.filters[v];
++    ++events;
++    fprintf(stderr, "[VPEVENT] n=%u us=%lld tick=%u event=%s v=%u"
++            " FECTL=%08X FMT=%08X MISC=%08X STATE=%08X BA=%08X"
++            " LBO=%08X OFFSET=%08X NEXT=%08X PITCH=%08X ECNT=%08X"
++            " ENV0=%08X ENVA=%08X ENV1=%08X ENVF=%08X LFO=%08X"
++            " FCA=%08X FCB=%08X VBIN=%08X VOLA=%08X VOLB=%08X VOLC=%08X"
++            " queued=%d phase=%.9g cached=%d/%d fetched=%llu index=%llu eof=%u"
++            " pair=%u%u notices=%u played=%u last=%.9g,%.9g peak=%.9g\n",
++            events, (long long)qemu_clock_get_us(QEMU_CLOCK_REALTIME),
++            d->ep_frame_div, event, v, d->regs[NV_PAPU_FECTL],
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_FMT,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_MISC,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_PAR_STATE,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CUR_PSL_START,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CUR_PSH_SAMPLE,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_PAR_OFFSET,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_PAR_NEXT,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_PITCH_LINK,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CUR_ECNT,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_ENV0,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_ENVA,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_ENV1,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_ENVF,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_LFO_ENV,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_FCA,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_FCB,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_CFG_VBIN,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_VOLA,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_VOLB,0xffffffffu),
++            voice_get_mask(d,v,NV_PAVS_VOICE_TAR_VOLC,0xffffffffu),
++            d->vp.voice_work_dispatch.queue_len,
++            f->resample_phase, f->resample_pos, f->resample_count,
++            (unsigned long long)f->resample_fetched,
++            (unsigned long long)f->resample_index, f->resample_source_done,
++            f->resample_have_current, f->resample_have_next,
++            f->resample_notify_pending, s_voice_trace_played[v],
++            s_voice_trace_last[v][0], s_voice_trace_last[v][1],
++            s_voice_trace_peak[v]);
++    if (events == limit)
++        fprintf(stderr, "[VPEVENT] event limit reached (%u)\n", limit);
++}
++
+ /* ============================================================
+  * Voice off / lock
+  * ============================================================ */
+
+ static void voice_off(MCPXAPUState *d, uint16_t v)
+ {
++    voice_event_trace(d, v, "off");
+     voice_set_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
+                    NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+
+@@ -178,12 +264,49 @@ static void set_hrir_coeff_tar(MCPXAPUState *d, int channel, int coeff_idx,
   * Front-End method dispatch
   * ============================================================ */
- 
+
 +/* RECOMP_APU_TRACE_IRQ: the first front-end methods, and once a second how
 + * many voices the processor found active -- together they say whether a
 + * silent title is not starting voices or the voices are not being run. */
@@ -3124,7 +3486,7 @@ index b9f429e..a75c023 100644
  static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
  {
      unsigned int slot;
- 
+
 -    d->regs[NV_PAPU_FEDECMETH] = method;
 -    d->regs[NV_PAPU_FEDECPARAM] = argument;
 +    if (apu_trace() && method != SE2FE_IDLE_VOICE) {
@@ -3153,19 +3515,62 @@ index b9f429e..a75c023 100644
 +        return;
 +    }
      unsigned int selected_handle, list;
- 
+
      switch (method) {
-@@ -415,6 +464,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+@@ -197,6 +320,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+
+     case NV1BA0_PIO_VOICE_ON: {
+         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
++        voice_event_trace(d, (uint16_t)selected_handle, "on-before");
+
+         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
+         if (!locked) voice_lock(d, (uint16_t)selected_handle, true);
+@@ -276,12 +400,21 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+         voice_set_mask(d, (uint16_t)selected_handle, NV_PAVS_VOICE_PAR_STATE,
+                        NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+
++        if (voice_event_trace_limit()) {
++            s_voice_trace_played[selected_handle] = false;
++            s_voice_trace_peak[selected_handle] = 0;
++            s_voice_trace_last[selected_handle][0] = 0;
++            s_voice_trace_last[selected_handle][1] = 0;
++        }
++        voice_event_trace(d, (uint16_t)selected_handle, "on-after");
++
+         if (!locked) voice_lock(d, (uint16_t)selected_handle, false);
+         break;
+     }
+
+     case NV1BA0_PIO_VOICE_RELEASE: {
+         selected_handle = argument & NV1BA0_PIO_VOICE_ON_HANDLE;
++        voice_event_trace(d, (uint16_t)selected_handle, "release");
+
+         bool locked = is_voice_locked(d, (uint16_t)selected_handle);
+         if (!locked) voice_lock(d, (uint16_t)selected_handle, true);
+@@ -308,6 +441,7 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+     }
+
+     case NV1BA0_PIO_VOICE_OFF:
++        voice_event_trace(d, (uint16_t)(argument & NV1BA0_PIO_VOICE_OFF_HANDLE), "pio-off");
+         voice_off(d, (uint16_t)(argument & NV1BA0_PIO_VOICE_OFF_HANDLE));
+         break;
+
+@@ -412,9 +546,12 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+                        NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, argument);
+         break;
+     case NV1BA0_PIO_SET_VOICE_BUF_CBO:
++        voice_event_trace(d, (uint16_t)d->regs[NV_PAPU_FECV], "seek-before");
          voice_set_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
                         NV_PAVS_VOICE_PAR_OFFSET,
                         NV_PAVS_VOICE_PAR_OFFSET_CBO, argument);
 +        voice_reset_resample(d, (uint16_t)d->regs[NV_PAPU_FECV]);
++        voice_event_trace(d, (uint16_t)d->regs[NV_PAPU_FECV], "seek-after");
          break;
      case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
          voice_set_mask(d, (uint16_t)d->regs[NV_PAPU_FECV],
-@@ -487,12 +537,25 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
+@@ -487,12 +624,26 @@ static void fe_method(MCPXAPUState *d, uint32_t method, uint32_t argument)
          break;
- 
+
      case SE2FE_IDLE_VOICE:
 +        if (apu_trace()) {
 +            static unsigned said_idle;
@@ -3188,15 +3593,16 @@ index b9f429e..a75c023 100644
 +             * with a barrier so the payload stores precede it on the host. */
 +            InterlockedExchange((volatile LONG *)&d->regs[NV_PAPU_FECTL],
 +                                (LONG)fectl);
++            voice_event_trace(d, (uint16_t)argument, "idle-trap");
              d->set_irq = true;
 +            g_vp_idle_traps++;
          }
          break;
- 
-@@ -567,8 +630,13 @@ void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val,
+
+@@ -567,8 +718,13 @@ void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val,
      MCPXAPUState *d = (MCPXAPUState *)opaque;
      (void)size;
- 
+
 -    /* Dispatch known methods through fe_method */
 +    /* The frame thread holds this lock while publishing an idle trap. PIO
 +     * calls arrive from several host threads, unlike the original CPU, and
@@ -3206,9 +3612,9 @@ index b9f429e..a75c023 100644
      fe_method(d, (uint32_t)addr, (uint32_t)val);
 +    qemu_mutex_unlock(&d->lock);
  }
- 
+
  /* ============================================================
-@@ -797,7 +865,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -797,7 +953,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
              d->vp.ssl[v].ssl_seg = 0;
              if (!persist) {
                  d->vp.ssl[v].ssl_index = 0;
@@ -3217,7 +3623,7 @@ index b9f429e..a75c023 100644
              } else {
                  set_notify_status(d, v, MCPX_HW_NOTIFIER_SSLA_DONE +
                                    d->vp.ssl[v].ssl_index,
-@@ -843,7 +911,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -843,7 +999,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                  uint32_t linear_addr = block_index * (uint32_t)block_size;
                  if (stream) {
                      hwaddr addr = segment_offset + linear_addr;
@@ -3226,17 +3632,17 @@ index b9f429e..a75c023 100644
                             block_size);
                  } else {
                      linear_addr += ba;
-@@ -911,7 +979,8 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -911,7 +1067,8 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
          }
      }
- 
+
 -    if (cbo >= ebo) {
 +    /* EBO is inclusive: reaching its sample does not finish it yet. */
 +    if (cbo > ebo) {
          if (stream) {
              d->vp.ssl[v].ssl_seg += 1;
              cbo = 0;
-@@ -921,15 +990,19 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -921,15 +1078,19 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                  int next_index = (ssl_index + 1) % 2;
                  d->vp.ssl[v].ssl_index = next_index;
                  d->vp.ssl[v].ssl_seg = 0;
@@ -3259,9 +3665,9 @@ index b9f429e..a75c023 100644
              }
          }
      }
-@@ -940,32 +1013,109 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -940,32 +1101,122 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
  }
- 
+
  /* ============================================================
 - * Voice resampling (simplified - no libsamplerate)
 - *
@@ -3272,7 +3678,7 @@ index b9f429e..a75c023 100644
 + * loop and SSL boundaries. Decode in blocks to avoid repeatedly decoding
 + * an ADPCM block for every output sample.
   * ============================================================ */
- 
+
 +static bool voice_resample_source(MCPXAPUState *d, uint16_t v, float sample[2])
 +{
 +    MCPXAPUVoiceFilter *filter = &d->vp.filters[v];
@@ -3329,6 +3735,7 @@ index b9f429e..a75c023 100644
 +                        NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE)) return -1;
 +
 +    double step = 1.0 / (double)rate;
++    bool trace_playback = voice_event_trace_limit() != 0;
      int sample_count = 0;
 +    if (!filter->resample_have_current) {
 +        if (!voice_resample_source(d, v, filter->resample_current)) {
@@ -3361,6 +3768,17 @@ index b9f429e..a75c023 100644
 +            float b = filter->resample_have_next ? filter->resample_next[ch] : a;
 +            samples[sample_count][ch] = a + (b - a) * fraction;
 +        }
++        if (trace_playback) {
++            s_voice_trace_last[v][0] = samples[sample_count][0];
++            s_voice_trace_last[v][1] = samples[sample_count][1];
++            s_voice_trace_peak[v] = fmaxf(s_voice_trace_peak[v],
++                fmaxf(fabsf(samples[sample_count][0]),
++                      fabsf(samples[sample_count][1])));
++            if (!s_voice_trace_played[v]) {
++                s_voice_trace_played[v] = true;
++                voice_event_trace(d, v, "first-output");
++            }
++        }
 +        sample_count++;
 +        filter->resample_phase += step;
 +        double played = (double)filter->resample_index + filter->resample_phase;
@@ -3377,6 +3795,7 @@ index b9f429e..a75c023 100644
 +        if (filter->resample_source_done &&
 +            played >= (double)filter->resample_fetched) {
 +            filter->resample_have_current = false;
++            voice_event_trace(d, v, "playback-eof");
 +            voice_off(d, v);
 +            break;
 +        }
@@ -3385,9 +3804,9 @@ index b9f429e..a75c023 100644
 -    return sample_count;
 +    return sample_count ? sample_count : -1;
  }
- 
+
  /* ============================================================
-@@ -1041,7 +1191,7 @@ static void voice_process(MCPXAPUState *d,
+@@ -1041,7 +1292,7 @@ static void voice_process(MCPXAPUState *d,
          for (int sample_count = 0; sample_count < NUM_SAMPLES_PER_FRAME;) {
              int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
                                          NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
@@ -3396,10 +3815,10 @@ index b9f429e..a75c023 100644
              int count = voice_resample(d, v, &samples[sample_count],
                                         NUM_SAMPLES_PER_FRAME - sample_count, rate);
              if (count < 0) break;
-@@ -1049,10 +1199,6 @@ static void voice_process(MCPXAPUState *d,
+@@ -1049,10 +1300,6 @@ static void voice_process(MCPXAPUState *d,
          }
      }
- 
+
 -    int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
 -                                NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
 -    if (!active) return;
@@ -3407,10 +3826,10 @@ index b9f429e..a75c023 100644
      /* Get volume bins */
      int bin[8];
      bin[0] = voice_get_mask(d, v, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN);
-@@ -1169,11 +1315,80 @@ static void voice_process(MCPXAPUState *d,
+@@ -1169,39 +1416,166 @@ static void voice_process(MCPXAPUState *d,
   * Simplified single-threaded version (no worker threads initially)
   * ============================================================ */
- 
+
 +/* For a hang report: the front end's state and every voice on a list, with
 + * the bits that decide whether it will ever leave -- active, paused, and
 + * where its envelopes are. A stop that never completes is a voice that stays
@@ -3476,7 +3895,7 @@ index b9f429e..a75c023 100644
 +    }
 +
      memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
- 
+
 +    /* Walk the lists first and process after, as xemu's voice_work_dispatch
 +     * does, so the frame can wait for voices the title has locked. A title
 +     * locks a voice (NV1BA0_PIO_VOICE_LOCK, and VOICE_ON/VOICE_RELEASE lock it
@@ -3485,39 +3904,66 @@ index b9f429e..a75c023 100644
 +     * write lands last wins. Single-threaded, this port had dropped xemu's
 +     * wait along with its worker threads. */
 +    vwd->queue_len = 0;
++    bool idle_trap_pending = false;
      for (int list = 0; list < 3; list++) {
          hwaddr top, current, next;
          top = voice_list_regs[list].top;
-@@ -1195,14 +1410,64 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
+         current = voice_list_regs[list].current;
+         next = voice_list_regs[list].next;
+
+-        d->regs[current] = d->regs[top];
++        uint32_t cursor = d->regs[top];
++        if (!idle_trap_pending) d->regs[current] = cursor;
+
+-        for (int i = 0; d->regs[current] != 0xFFFF; i++) {
++        for (int i = 0; cursor != 0xFFFF; i++) {
+             if (i >= MCPX_HW_MAX_VOICES) {
+                 DPRINTF("Voice list contains invalid entry!\n");
+                 break;
+             }
+
+-            uint16_t v = (uint16_t)d->regs[current];
+-            d->regs[next] = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_PITCH_LINK,
++            uint16_t v = (uint16_t)cursor;
++            uint32_t next_voice = voice_get_mask(d, v, NV_PAVS_VOICE_TAR_PITCH_LINK,
+                                NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE);
++            if (!idle_trap_pending) d->regs[next] = next_voice;
+
              if (!voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
                                  NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE)) {
-                 fe_method(d, SE2FE_IDLE_VOICE, v);
+-                fe_method(d, SE2FE_IDLE_VOICE, v);
 -            } else {
 -                /* Process voice directly (single-threaded) */
 -                voice_process(d, mixbins, d->vp.sample_buf, v, list);
-+                /* One pending trap has one payload. Leave later idle voices
-+                 * on their lists until the title unlinks this one and
-+                 * releases the trap; the next frame walks the updated tops. */
-+                if ((qatomic_read(&d->regs[NV_PAPU_FECTL]) &
-+                     NV_PAPU_FECTL_FEMETHMODE) ==
-+                    NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
-+                    goto voices_queued;
++                if (!idle_trap_pending) {
++                    fe_method(d, SE2FE_IDLE_VOICE, v);
++                    /* Keep the one trap payload and its unlink cursors, but
++                     * finish this tick's active-voice queue with a local
++                     * cursor. Stopping here discarded ongoing voices later
++                     * in this list and every following list for 32 samples.
++                     * Later idle voices remain linked for a future trap. */
++                    if ((qatomic_read(&d->regs[NV_PAPU_FECTL]) &
++                         NV_PAPU_FECTL_FEMETHMODE) ==
++                        NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
++                        idle_trap_pending = true;
++                        voice_event_trace(d, v, "trap-queue-continue");
++                    }
 +                }
 +            } else if (vwd->queue_len < MCPX_HW_MAX_VOICES) {
 +                vwd->queue[vwd->queue_len].voice = v;
 +                vwd->queue[vwd->queue_len].list = list;
 +                vwd->queue_len++;
-             }
-             d->regs[current] = d->regs[next];
-         }
-     }
- 
-+voices_queued:
++            }
++            cursor = next_voice;
++            if (!idle_trap_pending) d->regs[current] = cursor;
++        }
++    }
++
 +    /* Wait, with d->lock released, until the title unlocks every voice about
 +     * to be processed. */
 +    for (;;) {
 +        int i, locked = 0;
-+        if (qatomic_read(&d->pause_requested)) {
++        if (qatomic_read(&d->pause_requested) || qatomic_read(&d->exiting)) {
 +            vwd->queue_len = 0;
 +            break;
 +        }
@@ -3548,15 +3994,15 @@ index b9f429e..a75c023 100644
 +                                " (last voice %u, list %d)\n",
 +                        (unsigned long long)processed, v, list);
 +                last_ms = now;
-+            }
-+        }
-+    }
+             }
+-            d->regs[current] = d->regs[next];
+         }
+     }
 +    vwd->queue_len = 0;
-+
+
      /* VP monitor output */
      if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
-         int16_t isamp[NUM_SAMPLES_PER_FRAME * 2];
-@@ -1243,5 +1508,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
+@@ -1243,5 +1617,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
      memset(d->vp.voice_locked, 0, sizeof(d->vp.voice_locked));
      for (int v = 0; v < MCPX_HW_MAX_VOICES; v++) {
          hrtf_filter_init(&d->vp.filters[v].hrtf);
@@ -3568,12 +4014,12 @@ index 7888785..b671854 100644
 --- a/src/d3d/d3d8_gl.c
 +++ b/src/d3d/d3d8_gl.c
 @@ -47,11 +47,11 @@
- 
+
  /* Window title for the SDL window, configurable per title via
   * xbox_D3D8SetWindowTitle(). Default is a generic name. */
 -static const char *g_window_title = "Xbox Game";
 +static const char *g_window_title = "PC Game";
- 
+
  void xbox_D3D8SetWindowTitle(const char *title)
  {
 -    g_window_title = (title && title[0]) ? title : "Xbox Game";
@@ -3586,12 +4032,12 @@ index caef326..161c0eb 100644
 --- a/src/input/CMakeLists.txt
 +++ b/src/input/CMakeLists.txt
 @@ -2,6 +2,7 @@
- 
+
  add_library(xbox_input STATIC
      xinput_device.c
 +    pc_input.c
  )
- 
+
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
@@ -5335,7 +5781,7 @@ index 90060bd..a7a837a 100644
      nv2a_pb_exec.c
 +    thread_placement.c
  )
- 
+
  add_library(xbox_kernel STATIC ${KERNEL_SOURCES})
 diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
 index e515377..1da5904 100644
@@ -5348,7 +5794,7 @@ index e515377..1da5904 100644
 +/* Where an ISR runs here: any device level, since only "above DISPATCH_LEVEL"
 + * is modelled (see kernel_hal.c). */
 +#define XBOX_DEVICE_IRQL 26
- 
+
  /*
   * NTSTATUS codes - guard each against Windows SDK redefinition.
 @@ -496,6 +499,7 @@ void xbox_kernel_set_thunk_address(uint32_t xbox_va, uint32_t count);
@@ -5356,17 +5802,17 @@ index e515377..1da5904 100644
   */
  void xbox_kernel_get_thunk_address(uint32_t *xbox_va, uint32_t *count);
 +BOOL xbox_kernel_thunk_entry_is_empty(uint32_t entry);
- 
+
  extern ULONG_PTR xbox_kernel_thunk_table[XBOX_KERNEL_THUNK_TABLE_SIZE];
- 
+
 @@ -748,6 +752,8 @@ NTSTATUS __stdcall xbox_NtReleaseMutant(HANDLE MutantHandle, PLONG PreviousCount
- 
+
  LONG     __stdcall xbox_KeSetEvent(PVOID Event, LONG Increment, BOOLEAN Wait);
  NTSTATUS __stdcall xbox_KeWaitForSingleObject(PVOID Object, ULONG WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout);
 +/* An NT timeout (NULL, relative negative or absolute 100 ns) in milliseconds. */
 +DWORD xbox_nt_timeout_to_ms(PLARGE_INTEGER Timeout);
  NTSTATUS __stdcall xbox_KeWaitForMultipleObjects(ULONG Count, PVOID Objects[], ULONG WaitType, ULONG WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout, PVOID WaitBlockArray);
- 
+
  BOOLEAN  __stdcall xbox_KeCancelTimer(PXBOX_KTIMER Timer);
 @@ -778,6 +784,11 @@ BOOLEAN __stdcall xbox_HalIsResetOrShutdownPending(void);
  KIRQL   __fastcall xbox_KfRaiseIrql(KIRQL NewIrql);
@@ -5377,13 +5823,13 @@ index e515377..1da5904 100644
 +void    xbox_IrqlLeaveDpc(KIRQL saved);
 +void    xbox_IrqlEnterIsr(KIRQL *saved);
 +void    xbox_IrqlLeaveIsr(KIRQL saved);
- 
+
  VOID    __stdcall xbox_KeStallExecutionProcessor(ULONG MicroSeconds);
  LARGE_INTEGER __stdcall xbox_KeQueryPerformanceCounter(void);
 @@ -793,6 +804,22 @@ VOID    __stdcall xbox_KeBugCheckEx(ULONG BugCheckCode, ULONG_PTR Param1, ULONG_
  VOID    __stdcall xbox_KeInitializeInterrupt(PXBOX_KINTERRUPT Interrupt, PVOID ServiceRoutine, PVOID ServiceContext, ULONG Vector, KIRQL Irql, ULONG InterruptMode, BOOLEAN ShareVector);
  BOOLEAN __stdcall xbox_KeConnectInterrupt(PXBOX_KINTERRUPT Interrupt);
- 
+
 +/* A device model's interrupt line, level-triggered. Assert it while the
 + * device has an enabled interrupt pending; the kernel's interrupt thread runs
 + * the ISR connected on that vector for as long as it stays asserted. Safe to
@@ -5402,13 +5848,13 @@ index e515377..1da5904 100644
 +
  /* KeTickCount - exported as a data pointer, not a function */
  extern volatile ULONG xbox_KeTickCount;
- 
+
 @@ -959,6 +986,7 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
  #define AV_OPTION_FLICKER_FILTER        0x0B
  #define AV_OPTION_ZERO_MODE             0x0D
  #define AV_OPTION_QUERY_MODE_CAPS       0x0E
 +#define AV_OPTION_GUESS_FIELD           0x0F
- 
+
  /* ---- AV flags (for capabilities / display mode) ---- */
  #define AV_FLAGS_HDTV_480i      0x00000001
 @@ -1021,6 +1049,12 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
@@ -5421,7 +5867,7 @@ index e515377..1da5904 100644
 +#define XC_FACTORY_ONLINE_KEY     0x102
 +#define XC_FACTORY_AV_REGION      0x103
 +#define XC_FACTORY_GAME_REGION    0x104
- 
+
  /* Older spellings kept so existing call sites still build. */
  #define XC_PARENTAL_CONTROL       XC_P_CONTROL_GAMES
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
@@ -5442,7 +5888,7 @@ index 5b56513..ef93e80 100644
  #include <wctype.h>
 +/* timeBeginPeriod, for the timer thread (kernel_timer_thread). */
 +#include <timeapi.h>
- 
+
  /* Access to recompiled code registers. Per-thread: RECOMP_TLS comes from
   * xbox_memory_layout.h and must match the definitions there -- a plain extern
 @@ -394,6 +397,7 @@ static RECOMP_TLS uint32_t g_thread_stack_top = 0;
@@ -5451,7 +5897,7 @@ index 5b56513..ef93e80 100644
      uint32_t ctx1, ctx2, stack_top;
 +    uint32_t thread_obj;          /* its fs:[0x28], 0 to share the main one */
  };
- 
+
  static void bridge_write_handle(uint32_t handle_va, HANDLE h);
 @@ -426,11 +430,14 @@ static DWORD WINAPI bridge_thread_main(LPVOID param)
      g_thread_stack_top = s->stack_top;
@@ -5469,10 +5915,10 @@ index 5b56513..ef93e80 100644
 +        }
      }
      free(s);
- 
+
 @@ -446,13 +453,15 @@ static DWORD WINAPI bridge_thread_main(LPVOID param)
  }
- 
+
  static HANDLE bridge_spawn_thread(recomp_func_t fn, uint32_t ctx1,
 -                                  uint32_t ctx2, uint32_t stack_top)
 +                                  uint32_t ctx2, uint32_t stack_top,
@@ -5480,11 +5926,11 @@ index 5b56513..ef93e80 100644
  {
      struct bridge_thread_start *s = malloc(sizeof(*s));
      HANDLE th;
- 
+
      if (!s) return NULL;
      s->fn = fn; s->ctx1 = ctx1; s->ctx2 = ctx2; s->stack_top = stack_top;
 +    s->thread_obj = thread_obj;
- 
+
      th = CreateThread(NULL, 0, bridge_thread_main, s, 0, NULL);
      if (!th) free(s);
 @@ -481,6 +490,8 @@ void xbox_SetThreadMode(int mode) { g_thread_mode = mode; }
@@ -5505,7 +5951,7 @@ index 5b56513..ef93e80 100644
 +    thread_id = is_first_call ? xbox_MainThreadId() : xbox_NewThreadId();
 +    if (thread_id_ptr)
 +        BRIDGE_MEM32(thread_id_ptr) = thread_id;
- 
+
      /* Call the start routine synchronously through the recomp dispatch.
       * Xbox thread start routines receive two parameters:
 @@ -565,7 +581,8 @@ static void bridge_PsCreateSystemThreadEx(void)
@@ -5541,7 +5987,7 @@ index 5b56513..ef93e80 100644
 +        g_eax = STATUS_INVALID_PARAMETER;
 +        return;
 +    }
- 
+
 -    g_eax = (uint32_t)xbox_NtFreeVirtualMemory(
 -        XBOX_TO_NATIVE(base_ptr), XBOX_TO_NATIVE(size_ptr), free_type);
 +    if (free_type == MEM_DECOMMIT) {
@@ -5567,12 +6013,12 @@ index 5b56513..ef93e80 100644
 +
 +    g_eax = STATUS_INVALID_PARAMETER;
  }
- 
+
  /* ── ExAllocatePool / ExAllocatePoolWithTag (ordinals 15, 16) ─
 @@ -1217,17 +1273,30 @@ static void bridge_ExAllocatePoolWithTag(void)
      g_eax = xbox_va;
  }
- 
+
 +/* KPCR.Irql (fs:[0x24]), kept equal to the calling thread's modelled level.
 + * XDK code reads it directly rather than calling KeGetCurrentIrql: the lock
 + * helper in DirectSound (0x00217FF0 in BLACK) raises to DISPATCH_LEVEL only
@@ -5591,7 +6037,7 @@ index 5b56513..ef93e80 100644
      g_eax = (uint32_t)xbox_KfRaiseIrql((UCHAR)new_irql);
 +    bridge_publish_irql();
  }
- 
+
  static void bridge_KfLowerIrql(void)
  {
      uint32_t new_irql = g_ecx; /* fastcall: KIRQL is passed in CL */
@@ -5599,19 +6045,19 @@ index 5b56513..ef93e80 100644
 +    bridge_publish_irql();
      g_eax = 0;
  }
- 
+
 @@ -1235,6 +1304,7 @@ static void bridge_KfLowerIrql(void)
  static void bridge_KeRaiseIrqlToDpcLevel(void)
  {
      g_eax = (uint32_t)xbox_KeRaiseIrqlToDpcLevel();
 +    bridge_publish_irql();
  }
- 
+
  /* ── RtlInitializeCriticalSection / Enter / Leave (ordinals 291, 277, 294) ─ */
 @@ -1320,6 +1390,163 @@ static HANDLE ke_shadow_lookup(uint32_t guest_va);
  static void ke_shadow_insert(uint32_t guest_va, HANDLE host);
  static HANDLE bridge_resolve_handle(uint32_t token);
- 
+
 +/* ── Events the title initialised itself ─────────────────
 + *
 + * The XDK's KeInitializeEvent is as often an inline expansion as a call, and
@@ -5774,7 +6220,7 @@ index 5b56513..ef93e80 100644
  {
 @@ -1332,6 +1559,10 @@ static void bridge_KeSetEvent(void)
      (void)wait;
- 
+
      h = ke_shadow_lookup(guest_va);
 +    if (!h && guest_event_object(guest_va)) {
 +        g_eax = guest_event_set(guest_va);
@@ -5785,7 +6231,7 @@ index 5b56513..ef93e80 100644
      if (!h)
 @@ -1353,6 +1584,10 @@ static void bridge_KeWaitForSingleObject(void)
      HANDLE h;
- 
+
      h = ke_shadow_lookup(object);
 +    if (!h && guest_event_object(object)) {
 +        g_eax = guest_event_wait(object, timeout_ptr);
@@ -5827,7 +6273,7 @@ index 5b56513..ef93e80 100644
 +        g_eax = result;
 +    }
  }
- 
+
  /* -- KeRemoveQueueDpc (ordinal 137) ------------------------
 @@ -1878,9 +2122,12 @@ static void bridge_KeRemoveQueueDpc(void)
   * Queued properly now, and drained by the timer thread, which is the one thread
@@ -5848,7 +6294,7 @@ index 5b56513..ef93e80 100644
 @@ -1923,6 +2170,29 @@ static void bridge_KeInsertQueueDpc(void)
   */
  uint32_t xbox_GetConnectedInterrupt(uint32_t vector);   /* defined below */
- 
+
 +#define XBOX_MAX_VECTORS 32
 +typedef struct InterruptServiceGuard {
 +    void (*enter)(void *);
@@ -5894,7 +6340,7 @@ index 5b56513..ef93e80 100644
 +    }
      return (int)(g_eax & 1u);
  }
- 
+
 @@ -1961,10 +2242,16 @@ static int kernel_raise_interrupt(uint32_t vector)
   * bit 24 to say the PCRTC block is the source. Without those the handler looks,
   * finds nothing, and correctly declines.
@@ -5919,7 +6365,7 @@ index 5b56513..ef93e80 100644
 @@ -1973,25 +2260,103 @@ static int kernel_raise_interrupt(uint32_t vector)
  #define NV2A_PCRTC_INTR_VBLANK (1u << 0)
  #define NV2A_VECTOR            3u
- 
+
 +static int s_vblank_enabled = -1;
 +static LONGLONG s_vblank_next, s_vblank_period;    /* performance counter */
 +
@@ -5996,13 +6442,13 @@ index 5b56513..ef93e80 100644
 -    static long long next_ms;
 -    long long now;
 +    LARGE_INTEGER now;
- 
+
 -    if (enabled < 0)
 -        enabled = getenv("RECOMP_VBLANK") != NULL;
 -    if (!enabled)
 +    if (!vblank_enabled())
          return;
- 
+
 -    now = (long long)GetTickCount64();
 -    if (now < next_ms)
 +    QueryPerformanceCounter(&now);
@@ -6014,10 +6460,10 @@ index 5b56513..ef93e80 100644
 +    s_vblank_next += s_vblank_period;
 +    if (s_vblank_next <= now.QuadPart)
 +        s_vblank_next = now.QuadPart + s_vblank_period;
- 
+
      if (!xbox_GetConnectedInterrupt(NV2A_VECTOR))
          return;
- 
+
 +    /* With the Kelvin engine the registers have semantics: the vblank goes
 +     * through PCRTC_INTR_0, PMC_INTR_0 follows from it, and the ISR runs from
 +     * kernel_gpu_interrupts while the line is up. */
@@ -6028,11 +6474,11 @@ index 5b56513..ef93e80 100644
 +
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PCRTC_INTR_0) |= NV2A_PCRTC_INTR_VBLANK;
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PMC_INTR_0)   |= NV2A_PMC_INTR_PCRTC;
- 
+
 @@ -2006,16 +2371,86 @@ static void kernel_vblank_tick(void)
      }
  }
- 
+
 +static void kernel_drain_dpcs(void);
 +
 +/* The GPU interrupt, level-triggered, while the Kelvin engine models it.
@@ -6114,7 +6560,7 @@ index 5b56513..ef93e80 100644
 +    g_dpc_queue[tail].arg2 = arg2;
 +    g_dpc_tail = next;
  }
- 
+
  /* ── KeInitializeDpc (ordinal 107) ────────────────────────
 @@ -2044,18 +2479,20 @@ static void bridge_KeInitializeDpc(void)
  /* ── NV2A interrupt plumbing (ordinals 44, 98, 109) ───────
@@ -6140,7 +6586,7 @@ index 5b56513..ef93e80 100644
 + * connected routine on the timer thread (kernel_gpu_interrupts).
   */
 +static void kernel_timer_start(void);
- 
+
  /* ULONG HalGetInterruptVector(ULONG BusInterruptLevel, PKIRQL Irql) */
  static void bridge_HalGetInterruptVector(void)
 @@ -2098,7 +2535,6 @@ static void bridge_KeInitializeInterrupt(void)
@@ -6149,7 +6595,7 @@ index 5b56513..ef93e80 100644
   */
 -#define XBOX_MAX_VECTORS 32
  static uint32_t g_connected_isr[XBOX_MAX_VECTORS];   /* KINTERRUPT guest VA */
- 
+
  /* BOOLEAN KeConnectInterrupt(PKINTERRUPT Interrupt) */
 @@ -2115,6 +2551,9 @@ static void bridge_KeConnectInterrupt(void)
                      vector, BRIDGE_MEM32(interrupt_va + 0),
@@ -6164,7 +6610,7 @@ index 5b56513..ef93e80 100644
 @@ -2127,6 +2566,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
      return (vector < XBOX_MAX_VECTORS) ? g_connected_isr[vector] : 0;
  }
- 
+
 +/* Device interrupt lines (see xbox_SetInterruptLine in kernel.h). The event
 + * wakes the timer thread, which delivers them, as soon as one goes up. */
 +static volatile LONG g_irq_line[XBOX_MAX_VECTORS];
@@ -6211,13 +6657,13 @@ index 5b56513..ef93e80 100644
 @@ -2236,11 +2715,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
  static CRITICAL_SECTION g_timer_lock;
  static int g_timer_started;
- 
+
 +extern void xbox_PinThread(const char *role);
 +
  static DWORD WINAPI kernel_timer_thread(LPVOID unused)
  {
      int slot = xbox_worker_stack_alloc();
- 
+
      (void)unused;
 +    xbox_PinThread("VBLANK");
 +    /* Waits to the millisecond, so vblank and timers keep time. */
@@ -6226,7 +6672,7 @@ index 5b56513..ef93e80 100644
          fprintf(stderr, "  [KERNEL] timer thread has no worker stack; "
                          "timer DPCs will not run\n");
 @@ -2265,11 +2749,76 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
- 
+
      for (;;) {
          long long now;
 -        int i;
@@ -6305,12 +6751,12 @@ index 5b56513..ef93e80 100644
 +            }
 +        }
          now = (long long)GetTickCount64();
- 
+
          for (i = 0; i < XBOX_MAX_TIMERS; i++) {
 @@ -2288,23 +2837,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
                  g_timers[i].timer_va = 0;      /* one-shot, done */
              LeaveCriticalSection(&g_timer_lock);
- 
+
 -            /* Outside the lock: the routine can set or cancel timers. */
 +            /* A due timer queues its DPC, as the kernel's timer expiry does,
 +             * to run at DISPATCH_LEVEL like any other (below). */
@@ -6342,7 +6788,7 @@ index 5b56513..ef93e80 100644
          }
      }
  }
- 
+
 +/* The timer thread also delivers interrupts and runs DPCs, so it starts with
 + * the first timer or the first connected interrupt, whichever comes first.
 + * Both callers are guest threads the title serialises through its own setup;
@@ -6363,20 +6809,20 @@ index 5b56513..ef93e80 100644
 @@ -2313,11 +2880,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
      int i, free_slot = -1;
      uint32_t was_set = 0;
- 
+
 -    if (!g_timer_started) {
 -        InitializeCriticalSection(&g_timer_lock);
 -        g_timer_started = 1;
 -        CloseHandle(CreateThread(NULL, 0, kernel_timer_thread, NULL, 0, NULL));
 -    }
 +    kernel_timer_start();
- 
+
      EnterCriticalSection(&g_timer_lock);
      for (i = 0; i < XBOX_MAX_TIMERS; i++) {
 @@ -2614,6 +3177,70 @@ static int bridge_is_cdrom_device(const char *path)
      return _stricmp(path, "\\Device\\CdRom0") == 0;
  }
- 
+
 +/* Case-insensitive wildcard match: '*' any run (path separators included),
 + * '?' any one character. */
 +static int skip_wildcard(const char *pat, const char *str)
@@ -6447,7 +6893,7 @@ index 5b56513..ef93e80 100644
 @@ -2632,6 +3259,14 @@ static NTSTATUS bridge_create_file_impl(
          return STATUS_OBJECT_PATH_NOT_FOUND;
      }
- 
+
 +    if (bridge_skip_file(name.Buffer)) {
 +        fprintf(stderr, "  [FILE] %s -> skipped (RECOMP_SKIP_FILES)\n",
 +                name.Buffer);
@@ -6478,7 +6924,7 @@ index 5b56513..ef93e80 100644
                              iostatus);
 @@ -6576,6 +7221,10 @@ static void bridge_KeResetEvent(void)
      HANDLE h;
- 
+
      h = ke_shadow_lookup(guest_va);
 +    if (!h && guest_event_object(guest_va)) {
 +        g_eax = guest_event_reset(guest_va);
@@ -6496,11 +6942,11 @@ index 5b56513..ef93e80 100644
 +    g_eax = (uint32_t)xbox_KfRaiseIrql(DISPATCH_LEVEL);
 +    bridge_publish_irql();
  }
- 
+
  /* --- KeRemoveByKeyDeviceQueue (ordinal 133, 2 args = 8 bytes) --- */
 @@ -6808,6 +7459,11 @@ static void bridge_KeSetEventBoostPriority(void)
      (void)increment;
- 
+
      h = ke_shadow_lookup(guest_va);
 +    if (!h && guest_event_object(guest_va)) {
 +        guest_event_set(guest_va);
@@ -6512,7 +6958,7 @@ index 5b56513..ef93e80 100644
      if (h)
 @@ -6853,11 +7509,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
  }
- 
+
  /* --- KeGetCurrentIrql (ordinal 103, 0 args = 0 bytes)
 - * Stack-based with 0 args (not the Kf* fastcall form). IRQL is unmounted, so
 - * report PASSIVE_LEVEL. */
@@ -6523,7 +6969,7 @@ index 5b56513..ef93e80 100644
 -    g_eax = 0;  /* PASSIVE_LEVEL */
 +    g_eax = (uint32_t)xbox_GetCurrentIrql();
  }
- 
+
  /* --- KeGetCurrentThread (ordinal 104, 0 args = 0 bytes) --- */
 @@ -7260,6 +7916,8 @@ static void bridge_ObReferenceObjectByPointer(void)
  static void bridge_PsCreateSystemThread(void)
@@ -6541,7 +6987,7 @@ index 5b56513..ef93e80 100644
 +    thread_id = is_first_call ? xbox_MainThreadId() : xbox_NewThreadId();
 +    if (thread_id_ptr)
 +        BRIDGE_MEM32(thread_id_ptr) = thread_id;
- 
+
      if (start_routine) {
          recomp_func_t fn = recomp_lookup(start_routine);
 @@ -7297,7 +7958,8 @@ static void bridge_PsCreateSystemThread(void)
@@ -6557,7 +7003,7 @@ index 5b56513..ef93e80 100644
 @@ -8811,6 +9473,222 @@ static void kernel_watch_arm_once(void)
  /* Current dispatching slot */
  static RECOMP_TLS int g_kernel_dispatch_slot = -1;
- 
+
 +/* Guest threads, as a hang report needs them: which kernel call each one is
 + * inside at this moment, since when, and where its guest stack is. The main
 + * thread's registers are all the watchdog could see before, and a title whose
@@ -6804,11 +7250,11 @@ index 5b56513..ef93e80 100644
 +        }
 +    }
      g_esp += 4;
- 
+
      /* Name the bridge that corrupts a watched dword.
 @@ -8918,7 +9818,33 @@ static void kernel_thunk_dispatch(void)
      }
- 
+
      if (bridge) {
 +        /* RECOMP_KERNEL_SLOWCALL=ms: report every kernel call that takes longer than ms, with its guest
 +         * caller -- finds the wait or read that a stalled frame is sitting in. */
@@ -6843,7 +7289,7 @@ index 5b56513..ef93e80 100644
 @@ -8947,6 +9873,9 @@ static void kernel_thunk_dispatch(void)
          g_eax = 0;
      }
- 
+
 +    if (g_guest_thread_slot >= 0 && g_guest_thread_slot < XBOX_MAX_GUEST_THREADS)
 +        InterlockedExchange(&g_guest_threads[g_guest_thread_slot].in_call, 0);
 +
@@ -6853,7 +7299,7 @@ index 5b56513..ef93e80 100644
 @@ -9081,7 +10010,8 @@ void xbox_kernel_bridge_init(void)
          uint32_t va = g_thunk_table_base + i * 4;
          uint32_t current = BRIDGE_MEM32(va);
- 
+
 -        if (current & 0x80000000) {
 +        if (!xbox_kernel_thunk_entry_is_empty(current) &&
 +            (current & 0x80000000)) {
@@ -6863,7 +7309,7 @@ index 5b56513..ef93e80 100644
 @@ -9154,9 +10084,17 @@ void xbox_kernel_bridge_init(void)
              uint32_t current = BRIDGE_MEM32(va);
              int slot;
- 
+
 -            if (!(current & 0x80000000)) {
 +            if (xbox_kernel_thunk_entry_is_empty(current) ||
 +                !(current & 0x80000000)) {
@@ -6907,7 +7353,7 @@ index 842f99c..0391f4d 100644
 + * lower that the thread did not raise (an ISR entered at device level, say)
 + * release nothing it does not hold.
   * ============================================================================ */
- 
+
  static XBOX_THREAD_LOCAL KIRQL g_current_irql = PASSIVE_LEVEL;
 +static XBOX_THREAD_LOCAL int g_holds_dispatch, g_holds_interrupt;
 +static CRITICAL_SECTION g_dispatch_cs, g_interrupt_cs;
@@ -6990,13 +7436,13 @@ index 842f99c..0391f4d 100644
 +    g_holds_interrupt--;
 +    LeaveCriticalSection(&g_interrupt_cs);
 +}
- 
+
  /*
   * KfRaiseIrql - Raises IRQL to the specified level.
 @@ -45,6 +139,7 @@ KIRQL __fastcall xbox_KfRaiseIrql(KIRQL NewIrql)
              old, NewIrql);
      }
- 
+
 +    irql_move(old, NewIrql);
      g_current_irql = NewIrql;
      return old;
@@ -7004,11 +7450,11 @@ index 842f99c..0391f4d 100644
 @@ -61,6 +156,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
              g_current_irql, NewIrql);
      }
- 
+
 +    irql_move(g_current_irql, NewIrql);
      g_current_irql = NewIrql;
  }
- 
+
 @@ -70,6 +166,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
  KIRQL __stdcall xbox_KeRaiseIrqlToDpcLevel(void)
  {
@@ -7020,7 +7466,7 @@ index 842f99c..0391f4d 100644
 @@ -480,6 +577,13 @@ VOID __stdcall xbox_AvSendTVEncoderOption(
                  | AV_FLAGS_60Hz;
          break;
- 
+
 +    case AV_OPTION_GUESS_FIELD:
 +        /* The Xbox query is for interlaced field parity. The host output is
 +         * progressive, so it has no alternating fields; keep the guest's
@@ -7038,7 +7484,7 @@ index e49a219..b93ee2b 100644
 @@ -163,6 +163,8 @@ VOID __stdcall xbox_MmUnmapIoSpace(PVOID BaseAddress, ULONG NumberOfBytes)
          VirtualFree(BaseAddress, 0, MEM_RELEASE);
  }
- 
+
 +uint32_t xbox_PhysicalAddressOf(uint32_t va);   /* xbox_memory_layout.c */
 +
  ULONG_PTR __stdcall xbox_MmGetPhysicalAddress(PVOID BaseAddress)
@@ -7055,7 +7501,7 @@ index e49a219..b93ee2b 100644
 +     * xbox_PhysicalAddressOf. */
 +    return (ULONG_PTR)xbox_PhysicalAddressOf(va);
  }
- 
+
  VOID __stdcall xbox_MmPersistContiguousMemory(PVOID BaseAddress, ULONG NumberOfBytes, BOOLEAN Persist)
 diff --git a/src/kernel/kernel_sync.c b/src/kernel/kernel_sync.c
 index 21f75d1..0fb6d85 100644
@@ -7064,7 +7510,7 @@ index 21f75d1..0fb6d85 100644
 @@ -25,7 +25,7 @@
   *   - NULL = infinite wait
   * ============================================================================ */
- 
+
 -static DWORD xbox_nt_timeout_to_ms(PLARGE_INTEGER Timeout)
 +DWORD xbox_nt_timeout_to_ms(PLARGE_INTEGER Timeout)
  {
@@ -7075,9 +7521,9 @@ index 4fd7692..0ab0e1b 100644
 --- a/src/kernel/kernel_thunks.c
 +++ b/src/kernel/kernel_thunks.c
 @@ -32,6 +32,13 @@ extern ptrdiff_t g_xbox_mem_offset;
- 
+
  ULONG_PTR xbox_kernel_thunk_table[XBOX_KERNEL_THUNK_TABLE_SIZE] = {0};
- 
+
 +/* Both 0 and 0x80000000 denote an unused slot: the latter has the import
 + * marker bit set but its ordinal is zero, which is not a kernel export. */
 +BOOL xbox_kernel_thunk_entry_is_empty(uint32_t entry)
@@ -7091,7 +7537,7 @@ index 4fd7692..0ab0e1b 100644
 @@ -348,7 +355,7 @@ ULONG_PTR xbox_resolve_ordinal(ULONG ordinal)
   * runtime -- it exists to keep the table populated when there is no XBE.
   * ============================================================================ */
- 
+
 -static const ULONG g_thunk_ordinals[XBOX_KERNEL_THUNK_TABLE_SIZE] = {
 +static const ULONG g_thunk_ordinals[] = {
        1,   2,   3,   4,   8,  15,  16,  17,  23,  24,   /* 0-9   */
@@ -7105,7 +7551,7 @@ index 4fd7692..0ab0e1b 100644
 +        (ULONG)(sizeof(g_thunk_ordinals) / sizeof(g_thunk_ordinals[0]));
 +    ULONG active_count;
 +    BOOL use_xbe_thunks;
- 
+
      /* Initialize logging */
      InitializeCriticalSection(&g_log_cs);
 @@ -427,13 +438,23 @@ void xbox_kernel_init(void)
@@ -7124,7 +7570,7 @@ index 4fd7692..0ab0e1b 100644
 +
 +    for (ULONG i = 0; i < active_count; i++) {
          ULONG ordinal;
- 
+
 -        if (thunk_base && i < thunk_count && xbox_GetMemoryBase()) {
 +        if (use_xbe_thunks) {
              uint32_t entry = *(volatile uint32_t *)
@@ -7136,12 +7582,12 @@ index 4fd7692..0ab0e1b 100644
              }
              ordinal = entry & 0x7FFFFFFF;
 @@ -455,7 +476,7 @@ void xbox_kernel_init(void)
- 
+
      xbox_log(XBOX_LOG_INFO, XBOX_LOG_THUNK,
          "Thunk table: %u/%u resolved, %u unresolved",
 -        resolved, XBOX_KERNEL_THUNK_TABLE_SIZE, unresolved);
 +        resolved, active_count, unresolved);
- 
+
      if (unresolved > 0) {
          xbox_log(XBOX_LOG_WARN, XBOX_LOG_THUNK,
 diff --git a/src/kernel/kernel_xbox.c b/src/kernel/kernel_xbox.c
@@ -7151,7 +7597,7 @@ index 4ebdfb9..60b3444 100644
 @@ -72,6 +72,56 @@ XBOX_ANSI_STRING xbox_XeImageFileName = {
  static XBOX_LAUNCH_DATA_PAGE g_launch_data_page = {0};
  XBOX_LAUNCH_DATA_PAGE* xbox_LaunchDataPage = &g_launch_data_page;
- 
+
 +/* The Windows recomp has no per-console EEPROM identity to expose. Return a
 + * stable virtual image for full-image queries, matching the settings exposed
 + * individually below; private/factory identity bytes remain zero. */
@@ -7208,7 +7654,7 @@ index 4ebdfb9..60b3444 100644
 @@ -134,6 +184,16 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
      xbox_log(XBOX_LOG_DEBUG, XBOX_LOG_XBOX,
          "ExQueryNonVolatileSetting: index=0x%02X len=%u", ValueIndex, ValueLength);
- 
+
 +    if (ValueIndex == 0xFFFF) {
 +        UCHAR image[256];
 +        ULONG copy_length = ValueLength < sizeof(image) ? ValueLength : (ULONG)sizeof(image);
@@ -7225,7 +7671,7 @@ index 4ebdfb9..60b3444 100644
 @@ -193,6 +253,28 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
          }
          break;
- 
+
 +    case XC_FACTORY_GAME_REGION:
 +        /* North America (XC_GAME_REGION_NA). XGetGameRegion reads this; a
 +         * console never reports 0, and titles that key region-specific
@@ -7398,7 +7844,7 @@ index b3dcbf7..c770e4c 100644
 @@ -112,6 +112,105 @@ static uint32_t dma_resolve(uint32_t offset)
      return offset;                         /* nothing better to offer */
  }
- 
+
 +/* ── Objects and DMA contexts, as the title's D3D created them ──────────
 + *
 + * A Kelvin method in 0x180..0x1FC names an object by handle. On hardware PFIFO
@@ -7515,7 +7961,7 @@ index b3dcbf7..c770e4c 100644
 @@ -1659,6 +1762,44 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
          record_tex_reg(method, param);
          break;
- 
+
 +    case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 +        s_gpu.dma_semaphore = param;
 +        return;
@@ -8205,14 +8651,14 @@ index 20075a9..8a8d7bd 100644
 +    kelvin/nv2a_vsh_cpu/nv2a_vsh_emulator8.c
 +    kelvin/nv2a_vsh_cpu/nv2a_vsh_emulator_execution_state.c
  )
- 
+
 +# The production renderer takes its raster size from the video settings (src/video/pc_video.c); the unit tests that
 +# include kelvin_render.c directly keep the environment-only behaviour.
 +set_source_files_properties(kelvin/kelvin_render.c PROPERTIES COMPILE_DEFINITIONS KRES_PC_VIDEO=1)
 +
  target_include_directories(xbox_nv2a PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 +target_include_directories(xbox_nv2a PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
- 
+
  if(MSVC)
      target_compile_options(xbox_nv2a PRIVATE
 @@ -21,6 +42,11 @@ if(MSVC)
@@ -34048,7 +34494,7 @@ index c0dd9e0..047b146 100644
 @@ -82,6 +83,72 @@ static inline void mmio_set_flags(PCONTEXT ctx, uint64_t result, int size,
          ctx->EFlags |= 0x0001u;                                   /* CF */
  }
- 
+
 +/* A register operand of `size` bytes. Without a REX prefix, byte registers
 + * 4..7 are AH, CH, DH and BH -- bits 8..15 of RAX..RBX -- not SPL..DIL. */
 +static inline uint64_t mmio_get_reg(PCONTEXT ctx, int reg, int size,
@@ -34121,7 +34567,7 @@ index c0dd9e0..047b146 100644
 @@ -156,35 +223,68 @@ static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
          return 1;
      }
- 
+
 -    case 0x38: case 0x39: {                          /* CMP r/m, r           */
 -        uint64_t m, r, mask;
 -        if (op[0] == 0x38) size = 1;
@@ -34156,7 +34602,7 @@ index c0dd9e0..047b146 100644
          ctx->Rip += prefix + 1 + mlen;
          return 1;
      }
- 
+
 -    case 0x08: case 0x09:                            /* OR  r/m, r           */
 -        if (op[0] == 0x08) size = 1;
 +    case 0x80: case 0x81: case 0x83: {               /* ALU r/m, imm         */
@@ -34180,7 +34626,7 @@ index c0dd9e0..047b146 100644
 +        ctx->Rip += prefix + 1 + mlen + isz;
          return 1;
 +    }
- 
+
 -    case 0x20: case 0x21:                            /* AND r/m, r           */
 -        if (op[0] == 0x20) size = 1;
 +    case 0xF6: case 0xF7: {                          /* TEST r/m, imm        */
@@ -34201,7 +34647,7 @@ index c0dd9e0..047b146 100644
 +        ctx->Rip += prefix + 1 + mlen + isz;
          return 1;
 +    }
- 
+
      case 0x0F:
          if (op[1] == 0xB6 || op[1] == 0xB7) {        /* MOVZX r32, r/m8|16   */
 @@ -195,6 +295,25 @@ static inline int mmio_emulate(PCONTEXT ctx, uint32_t off, void *dev,
@@ -34228,7 +34674,7 @@ index c0dd9e0..047b146 100644
 +            return 1;
 +        }
          return 0;
- 
+
      default:
 diff --git a/src/usb/ohci.c b/src/usb/ohci.c
 index a4573be..bbc27eb 100644
@@ -34237,7 +34683,7 @@ index a4573be..bbc27eb 100644
 @@ -19,19 +19,10 @@
  /* The runtime maps guest memory at a fixed host offset. */
  extern ptrdiff_t xbox_GetMemoryOffset(void);
- 
+
 -/* Calling the title's interrupt service routine.
 - *
 - * A recompiled function reads its arguments off the guest stack and keeps its
@@ -34255,13 +34701,13 @@ index a4573be..bbc27eb 100644
 + * like every other device's: the timer thread runs the title's ISR while it
 + * is up, under the IRQL model, and drains the DPC the ISR queues. */
 +extern void xbox_SetInterruptLine(uint32_t vector, int asserted);
- 
+
  /* Declared in the generated runtime; thread-local, so the values below are
   * this thread's and not the guest thread's. */
 @@ -114,18 +105,33 @@ static void wr32(uint32_t va, uint32_t v);
  #define PORT_W_PPS_SET_POWER    0x00000100u   /* SetPortPower                */
  #define PORT_W_CLEAR_POWER      0x00000200u   /* ClearPortPower              */
- 
+
 -/* The MCPX gives each controller a small root hub. Two ports apiece covers
 - * the console's four front sockets, which is what a title enumerates over. */
 -#define OHCI_PORTS              2
@@ -34274,7 +34720,7 @@ index a4573be..bbc27eb 100644
 +
 +/* Root port (0-based) the pad appears on by default: controller 1. */
 +#define OHCI_PLAYER1_PORT       2
- 
+
  typedef struct {
      uint32_t base;                      /* Xbox VA of the register block   */
      uint32_t reg[OHCI_REG_MAX / 4];
@@ -34283,7 +34729,7 @@ index a4573be..bbc27eb 100644
 +    uint32_t done_queue;                /* retired TDs not yet written back */
      int      index;
  } OhciController;
- 
+
 +static OhciController *hc_for(uint32_t va);
 +
  static OhciController s_hc[2];
@@ -34294,7 +34740,7 @@ index a4573be..bbc27eb 100644
 +static volatile uint64_t s_reports, s_last_report_ms;
  static int s_enabled;
  static int s_trace;
- 
+
 @@ -222,8 +228,9 @@ static void ohci_write(void *dev, uint32_t off, uint64_t val, int size)
              uint32_t hcca = hc->reg[HcHCCA / 4];
              if (hcca)
@@ -34305,10 +34751,10 @@ index a4573be..bbc27eb 100644
 +            hc->acks++;
          *r &= ~v;                       /* write 1 to clear                 */
          return;
- 
+
 @@ -246,7 +253,9 @@ static void ohci_write(void *dev, uint32_t off, uint64_t val, int size)
          return;
- 
+
      case HcRhPortStatus1:
 -    case HcRhPortStatus1 + 4: {
 +    case HcRhPortStatus1 + 4:
@@ -34329,7 +34775,7 @@ index a4573be..bbc27eb 100644
 +/* Physical addresses decode through 128 MB: the window, then low RAM's own
 + * view above it (xbox_PhysicalAddressOf), both at 0x80000000 + P. */
 +#define OHCI_PHYS_SIZE   (2u * OHCI_CONTIG_SIZE)
- 
+
 -static int guest_ok(uint32_t va, uint32_t bytes)
 +/* A DMA address as the controller sees it, as the guest VA holding it.
 + *
@@ -34358,7 +34804,7 @@ index a4573be..bbc27eb 100644
 +static int guest_ok(uint32_t addr, uint32_t bytes)
 +{
 +    uint32_t va = dma_va(addr);
- 
+
 -    if (va == 0 || mapped == 0)
 +    if (va == 0)
          return 0;
@@ -34377,7 +34823,7 @@ index a4573be..bbc27eb 100644
 -    return (uint64_t)va + bytes <= (uint64_t)mapped;
 +    return (uint64_t)va + bytes <= (uint64_t)OHCI_CONTIG_BASE + OHCI_PHYS_SIZE;
  }
- 
+
 -static uint32_t rd32(uint32_t va)
 +static uint32_t rd32(uint32_t addr)
  {
@@ -34404,7 +34850,7 @@ index a4573be..bbc27eb 100644
 +    return guest_ok(addr, bytes)
 +         ? (uint8_t *)xbox_GetMemoryOffset() + dma_va(addr) : NULL;
  }
- 
+
  /* Move one transfer descriptor. Returns the condition code to report. */
 @@ -488,6 +510,8 @@ static uint32_t ohci_do_td(OhciController *hc, uint32_t ed0, uint32_t td)
              /* The pad's report, on its interrupt endpoint. */
@@ -34418,7 +34864,7 @@ index a4573be..bbc27eb 100644
 @@ -561,26 +585,33 @@ static int ohci_walk_eds(OhciController *hc, uint32_t ed, uint32_t *done_head)
      return completed;
  }
- 
+
 -/* Publish the done queue where the driver reads it and say so. */
 -static void ohci_publish_done(OhciController *hc, uint32_t done_head)
 +/* Write the done queue back, as a controller does at the end of a frame --
@@ -34434,7 +34880,7 @@ index a4573be..bbc27eb 100644
 +static void ohci_publish_done(OhciController *hc)
  {
      uint32_t hcca = hc->reg[HcHCCA / 4];
- 
+
 +    if (!hc->done_queue || (hc->reg[HcInterruptStatus / 4] & INTR_WDH))
 +        return;
      if (hcca)
@@ -34445,7 +34891,7 @@ index a4573be..bbc27eb 100644
 +    hc->reg[HcDoneHead / 4] = 0;
      hc->reg[HcInterruptStatus / 4] |= INTR_WDH;
  }
- 
+
  static int ohci_run_control_list(OhciController *hc)
  {
 -    uint32_t done_head = 0;
@@ -34458,7 +34904,7 @@ index a4573be..bbc27eb 100644
 +    return ohci_walk_eds(hc, hc->reg[HcControlHeadED / 4] & ED_PTR_MASK,
 +                         &hc->done_queue);
  }
- 
+
  /* The periodic list for the current frame.
 @@ -592,7 +623,6 @@ static int ohci_run_control_list(OhciController *hc)
  static int ohci_run_periodic_list(OhciController *hc)
@@ -34467,7 +34913,7 @@ index a4573be..bbc27eb 100644
 -    uint32_t done_head = 0;
      uint32_t slot, ed;
      int completed;
- 
+
 @@ -610,101 +640,29 @@ static int ohci_run_periodic_list(OhciController *hc)
      for (slot = 0; slot < 32u; slot++) {
          ed = rd32(hcca + slot * 4u) & ED_PTR_MASK;
@@ -34479,9 +34925,9 @@ index a4573be..bbc27eb 100644
 -        ohci_publish_done(hc, done_head);
      return completed;
  }
- 
+
  /* ---- raising an interrupt --------------------------------------------- */
- 
+
 -/* Call the title's ISR on this thread, with a guest stack under it.
 - *
 - * BOOLEAN ServiceRoutine(PKINTERRUPT Interrupt, PVOID ServiceContext), stdcall,
@@ -34562,7 +35008,7 @@ index a4573be..bbc27eb 100644
 -
 -    hc->reg[HcInterruptStatus / 4] |= source;
 +    uint32_t pending = hc->reg[HcInterruptStatus / 4] & enable & 0x7Fu;
- 
+
 -    if (!(enable & INTR_MIE) || !(enable & source))
 +    if (hc->index != 0)
          return;
@@ -34580,7 +35026,7 @@ index a4573be..bbc27eb 100644
 -    }
 +    xbox_SetInterruptLine(OHCI_VECTOR, (enable & INTR_MIE) && pending);
  }
- 
+
  /* ---- bring-up ---------------------------------------------------------- */
 @@ -741,8 +699,11 @@ static void ohci_reset(OhciController *hc, uint32_t base, int index)
       * A console detects the port change after the controller is running, so
@@ -34594,7 +35040,7 @@ index a4573be..bbc27eb 100644
 +            hc->reg[(HcRhPortStatus1 + port * 4) / 4] = PORT_PPS;
 +    }
  }
- 
+
  /* The controller, running on its own thread.
 @@ -774,7 +735,7 @@ static DWORD WINAPI ohci_thread(LPVOID unused)
      unsigned waited = 0;
@@ -34602,7 +35048,7 @@ index a4573be..bbc27eb 100644
      uint32_t last_status = 0;
 -    unsigned repeats = 0;
 +    unsigned repeats = 0, last_acks = 0;
- 
+
      (void)unused;
      {
 @@ -812,18 +773,18 @@ static DWORD WINAPI ohci_thread(LPVOID unused)
@@ -34630,7 +35076,7 @@ index a4573be..bbc27eb 100644
 +                    port + 1);
              fflush(stderr);
          }
- 
+
 @@ -867,12 +828,9 @@ static DWORD WINAPI ohci_thread(LPVOID unused)
           * there is owed the same service. */
          if ((control & 0x20u)
@@ -34643,12 +35089,12 @@ index a4573be..bbc27eb 100644
                  hc->reg[HcCommandStatus / 4] &= ~0x04u;   /* BLF consumed */
 -            }
          }
- 
+
          if ((control & 0x10u)
 @@ -881,33 +839,57 @@ static DWORD WINAPI ohci_thread(LPVOID unused)
                  hc->reg[HcCommandStatus / 4] &= ~0x02u;   /* CLF consumed */
          }
- 
+
 +        /* End of the frame: hand the driver whatever retired, if it has
 +         * taken the last batch. */
 +        ohci_publish_done(hc);
@@ -34662,7 +35108,7 @@ index a4573be..bbc27eb 100644
          status = hc->reg[HcInterruptStatus / 4] & enable & 0x7Fu;
          if (!status)
              continue;
- 
+
 -        /* A stuck source is one the handler never clears, which shows up as
 -         * the same status delivered over and over. Counting deliveries alone
 -         * would trip on a device that is simply busy. */
@@ -34690,7 +35136,7 @@ index a4573be..bbc27eb 100644
      }
      return 0;
  }
- 
+
 +#if defined(_WIN32)
 +/* The controllers' own fault handler, so a title needs no wiring of its own:
 + * an access to either trapped block is serviced here, anything else is passed
@@ -34730,14 +35176,14 @@ index a4573be..bbc27eb 100644
              LPVOID at = (LPVOID)((uintptr_t)off + s_hc[i].base);
 @@ -959,7 +947,8 @@ void xbox_OhciInit(void)
  #endif
- 
+
      fprintf(stderr, "  OHCI: two controllers at 0x%08X and 0x%08X, "
 -                    "%d ports each, one device on HC0 port 1\n",
 +                    "%d ports each, one pad on HC0 (controller 1 unless "
 +                    "RECOMP_USB_PORT picks another root port)\n",
              XBOX_OHCI0_BASE, XBOX_OHCI1_BASE, OHCI_PORTS);
      fflush(stderr);
- 
+
 @@ -999,6 +988,8 @@ int xbox_OhciHandleMmio(void *ctx, uint32_t xbox_va)
          return 0;
      ok = mmio_emulate((PCONTEXT)ctx, xbox_va - hc->base, hc,
@@ -34773,7 +35219,7 @@ index 1e4b250..959f683 100644
 +++ b/src/usb/usb_gamepad.c
 @@ -189,8 +189,178 @@ int usb_gamepad_control(const UsbSetup *setup, uint8_t *out, int max)
  /* ---- the input report -------------------------------------------------- */
- 
+
  /* The host's own pad, through the layer that already maps one to XInput.
 - * A real controller plugged into the PC drives this emulated one. */
 + * A real controller plugged into the PC drives this emulated one. The keyboard and mouse join
@@ -34948,12 +35394,12 @@ index 1e4b250..959f683 100644
 +        }
 +    }
 +}
- 
+
  /*
   * The Xbox report is 20 bytes and fixed:
 @@ -215,9 +385,15 @@ int usb_gamepad_report(uint8_t *out, int max)
      out[1] = 20;
- 
+
      /* A disconnected host pad is not an error here: the device is present on
 -     * the bus either way, it just reports nothing pressed. */
 -    if (xbox_InputGetState(0, &state) != 0)
@@ -34966,7 +35412,7 @@ index 1e4b250..959f683 100644
 +        pc_input_apply_report(out, s_script_n > 0);
          return 20;
 +    }
- 
+
      g = &state.Gamepad;
      out[2] = (uint8_t)(g->wButtons & 0xFF);
 @@ -232,5 +408,7 @@ int usb_gamepad_report(uint8_t *out, int max)
@@ -35045,7 +35491,7 @@ index 69ced11..2b2c994 100644
  #include <stdlib.h>
  #include <string.h>
 +#include <xmmintrin.h>
- 
+
 -extern ptrdiff_t xbox_GetMemoryOffset(void);
 +enum { FB_NOT_STARTED, FB_RUNNING, FB_CLOSED };
 +typedef struct FbFrame {
@@ -35098,14 +35544,14 @@ index 69ced11..2b2c994 100644
 +static uint32_t s_pin_va;
 +static const char *s_dump;
 +static RECT s_window_rect;
- 
+
 -static volatile LONG s_fb_running;
 -static uint32_t      s_fb_va, s_fb_pitch, s_fb_width = 640, s_fb_height = 480;
 -static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
 +static unsigned s_applied_w, s_applied_h;   /* the window size last set from the settings */
 +static const char *s_menu_shot;             /* RECOMP_VIDEO_MENU_SHOT: dump the back buffer whenever the page changes */
 +static unsigned s_menu_shots;
- 
+
 -void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
 +/* Everything in the presentation policy the Video Settings page can change. The window size and mode are
 + * applied separately, because they act on the window. */
@@ -35128,7 +35574,7 @@ index 69ced11..2b2c994 100644
 +    s_policy.aspect_w = num; s_policy.aspect_h = den;
 +    s_policy.borderless = v->borderless;
  }
- 
+
 -static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 +static BOOL CALLBACK fb_initialize(PINIT_ONCE once, PVOID arg, PVOID *context)
  {
@@ -35155,7 +35601,7 @@ index 69ced11..2b2c994 100644
  }
 +/* Legacy display-mode calls precede any completed pixels; do not sample RAM. */
 +void xbox_FramebufferWindowSet(uint32_t va, uint32_t pitch) { (void)va; (void)pitch; }
- 
+
 -/* The display formats an Xbox front buffer is actually set to. The pitch says
 - * how wide a row is in bytes, so pitch/width gives the pixel size; the exact
 - * component layout only matters for 16-bit, where 5:6:5 and 1:5:5:5 differ. */
@@ -35171,7 +35617,7 @@ index 69ced11..2b2c994 100644
 -        uint32_t *dst = s_rgb + (size_t)y * s_fb_width;
 +    InterlockedExchange(&s_input_by_caller, on ? 1 : 0);
 +}
- 
+
 -        if (bpp == 4) {
 -            memcpy(dst, row, (size_t)s_fb_width * 4);
 -        } else if (bpp == 2) {
@@ -35444,7 +35890,7 @@ index 69ced11..2b2c994 100644
 +static int s_ui_captured, s_ui_cursor_hidden, s_ui_sizemove;
 +static unsigned s_mouse_down_mask;
 +static RECT s_ui_clip;
- 
+
 +static void fb_capture_release(void)
 +{
 +    if (!s_ui_captured) return;
@@ -41220,12 +41666,12 @@ index 18d2633..b45e1e0 100644
      int                  has_frame;     /* current frame valid? */
 +    uint64_t             sequence;      /* advances only for decoded frames */
      enum vp_format       format;        /* decoded frame format */
- 
+
      /* Frame buffer (BGRA, uploaded to D3D texture) */
 @@ -89,6 +91,23 @@ static uint32_t next_pot(uint32_t v)
      return v + 1;
  }
- 
+
 +static void video_set_display_aspect(uint32_t width, uint32_t height,
 +                                     uint64_t pixel_aspect)
 +{
@@ -41243,13 +41689,13 @@ index 18d2633..b45e1e0 100644
 +    g_vp.aspect_height = (uint32_t)h;
 +}
 +
- 
+
  /* ================================================================
   * Public API
 @@ -130,7 +149,7 @@ void video_shutdown(void)
      }
  }
- 
+
 -int video_open(const char *path)
 +static int video_open_mode(const char *path, int pixels_only)
  {
@@ -41271,7 +41717,7 @@ index 18d2633..b45e1e0 100644
 +        fprintf(stderr, "  [VIDEO] unsupported host frame dimensions %dx%d\n", g_vp.width, g_vp.height);
 +        goto fail;
 +    }
- 
+
      /* Extract frame rate */
      {
 @@ -309,12 +340,14 @@ int video_open(const char *path)
@@ -41293,12 +41739,12 @@ index 18d2633..b45e1e0 100644
 +            goto fail;
 +        }
      }
- 
+
      g_vp.elapsed = 0.0f;
 @@ -337,6 +370,24 @@ fail:
      return -1;
  }
- 
+
 +int video_open(const char *path) { return video_open_mode(path, 0); }
 +int video_open_pixels(const char *path) { return video_open_mode(path, 1); }
 +
@@ -41327,7 +41773,7 @@ index 18d2633..b45e1e0 100644
 +        if (r > 0) ++g_vp.sequence;
          g_vp.next_frame_at += g_vp.frame_time;
      }
- 
+
 @@ -614,10 +666,12 @@ void video_close(void)
          g_vp.frame_buf = NULL;
      }
@@ -41339,7 +41785,7 @@ index 18d2633..b45e1e0 100644
      g_vp.height = 0;
 +    g_vp.aspect_width = g_vp.aspect_height = 0;
  }
- 
+
  /* Write the frame currently decoded to a 24-bit BMP.
 @@ -673,6 +727,8 @@ int video_dump_frame_bmp(const char *path)
  int  video_init(void)            { return -1; }
@@ -41356,17 +41802,17 @@ index a6a4daa..fc2891f 100644
 +++ b/src/video/video_player.h
 @@ -11,6 +11,8 @@
  #define XBOXRECOMP_VIDEO_PLAYER_H
- 
+
  #include <stdint.h>
 +#include <stddef.h>
 +#include "fb_present.h"
- 
+
  /* Initialize/shutdown Media Foundation (call once at app start/end) */
  int  video_init(void);
 @@ -19,6 +21,18 @@ void video_shutdown(void);
  /* Open a video file for playback. Returns 0 on success. */
  int  video_open(const char *path);
- 
+
 +/* Host playback can decode directly into owned BGRA pixels without creating a
 + * D3D8 texture. The legacy video_open/render path keeps its texture behavior. */
 +int  video_open_pixels(const char *path);
@@ -41383,13 +41829,13 @@ index a6a4daa..fc2891f 100644
   * Returns 1 if a new frame is ready, 0 if unchanged, -1 if finished. */
  int  video_update(float dt);
 @@ -58,8 +72,5 @@ int  video_dump_frame_bmp(const char *path);
- 
+
  /* Show the guest framebuffer in its own window (RECOMP_FB_WINDOW). Whatever
   * the title renders into guest RAM appears there; nothing else scans it out. */
 -void xbox_FramebufferWindowStart(void);
 -void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch);
 -int  xbox_FramebufferDumpBmp(const char *path);
- 
+
  #endif /* BURNOUT3_VIDEO_PLAYER_H */
 diff --git a/src/video/video_pump.c b/src/video/video_pump.c
 index 6fdf222..7495a84 100644
@@ -41424,12 +41870,12 @@ index 6fdf222..7495a84 100644
 -
 -#define VP_WINDOW_W 640
 -#define VP_WINDOW_H 480
- 
+
  static volatile LONG s_playing;
 -static char          s_path[MAX_PATH];
 +static char s_path[MAX_PATH];
 +static int s_escape_was_down;
- 
+
 -static LRESULT CALLBACK vp_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 +static int vp_skip_pressed(void)
  {
@@ -41467,7 +41913,7 @@ index 6fdf222..7495a84 100644
 +    s_escape_was_down = down;
 +    return down; /* one press skips one movie; held Escape cannot skip the next */
  }
- 
+
  static DWORD WINAPI vp_thread(LPVOID unused)
  {
 -    IDirect3D8 *d3d;
@@ -41643,7 +42089,7 @@ index dc1dae0..d50ce23 100644
 @@ -162,6 +162,14 @@ extern uint32_t g_xbox_code_hi;
  extern RECOMP_TLS uint32_t g_eax, g_ecx, g_edx, g_esp;
  extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
- 
+
 +/* Optional BLACK diagnostic hook for unresolved call-target stubs. */
 +#ifdef RECOMP_TRACE_UNRESOLVED_STUBS
 +void recomp_unresolved_stub_log(uint32_t target_va);
@@ -41729,7 +42175,7 @@ index dc1dae0..d50ce23 100644
 @@ -370,10 +435,44 @@ void recomp_trace_esp(const char *name, const char *tag);
   */
  #define XBOX_PTR(addr) ((uintptr_t)(uint32_t)(addr) + g_xbox_mem_offset)
- 
+
 +/**
 + * Is the guest range [va, va + n) ordinary RAM rather than a device aperture?
 + *
@@ -41768,11 +42214,11 @@ index dc1dae0..d50ce23 100644
 +#define STK8(addr)   (*(uint8_t  *)XBOX_PTR(addr))
 +#define STK16(addr)  (*(uint16_t *)XBOX_PTR(addr))
 +#define STK32(addr)  (*(uint32_t *)XBOX_PTR(addr))
- 
+
  /** Signed memory reads. */
  #define SMEM8(addr)  (*(volatile int8_t   *)XBOX_PTR(addr))
 @@ -406,12 +505,14 @@ void recomp_trace_esp(const char *name, const char *tag);
- 
+
  #ifndef RECOMP_XMM_DEFINED
  #define RECOMP_XMM_DEFINED
 +#include <emmintrin.h>
@@ -41785,11 +42231,11 @@ index dc1dae0..d50ce23 100644
 +    __m128   m;
  } RecompXmm;
  #endif
- 
+
 @@ -420,39 +521,51 @@ extern RECOMP_TLS RecompXmm g_xmm4, g_xmm5, g_xmm6, g_xmm7;
- 
+
  /* -- construction -- */
- 
+
 +static inline RecompXmm RecompXmmOf(__m128 v) {
 +    RecompXmm r; r.m = v; return r;
 +}
@@ -41798,31 +42244,31 @@ index dc1dae0..d50ce23 100644
 -    RecompXmm r; r.q[0] = 0; r.q[1] = 0; return r;
 +    return RecompXmmOf(_mm_setzero_ps());
  }
- 
+
  /** movss from memory: lane 0 set, upper lanes zeroed. */
  static inline RecompXmm XMM_SCALAR(float v) {
 -    RecompXmm r = XMM_ZERO(); r.f[0] = v; return r;
 +    return RecompXmmOf(_mm_set_ss(v));
  }
- 
+
  /** movsd from memory: low double set, high double zeroed. */
  static inline RecompXmm XMM_SCALAR_DOUBLE(double v) {
 -    RecompXmm r = XMM_ZERO(); r.d[0] = v; return r;
 +    return RecompXmmOf(_mm_castpd_ps(_mm_set_sd(v)));
  }
- 
+
  /** movd: 32 raw bits into lane 0, upper lanes zeroed. */
  static inline RecompXmm XMM_SCALAR_BITS(uint32_t bits) {
 -    RecompXmm r = XMM_ZERO(); r.u[0] = bits; return r;
 +    return RecompXmmOf(_mm_castsi128_ps(_mm_cvtsi32_si128((int)bits)));
  }
- 
+
  /* -- guest memory --
 - * Addresses are guest VAs, so they go through MEM32 like every other
 - * access. Done lane-wise, which is also unaligned-safe for movups. */
 + * Addresses are guest VAs. Plain RAM is one 16-byte load or store (unaligned-safe, so movaps and movups are the
 + * same); a span that reaches the device apertures goes lane by lane through MEM32, which the fault handlers decode. */
- 
+
  static inline RecompXmm XMM_MEM(uint32_t addr) {
      RecompXmm r;
 -    r.u[0] = MEM32(addr);      r.u[1] = MEM32(addr + 4);
@@ -41835,7 +42281,7 @@ index dc1dae0..d50ce23 100644
 +    }
      return r;
  }
- 
+
  static inline void XMM_STORE(uint32_t addr, RecompXmm v) {
 -    MEM32(addr)      = v.u[0]; MEM32(addr + 4)  = v.u[1];
 -    MEM32(addr + 8)  = v.u[2]; MEM32(addr + 12) = v.u[3];
@@ -41846,24 +42292,24 @@ index dc1dae0..d50ce23 100644
 +        MEM32(addr + 8)  = v.u[2]; MEM32(addr + 12) = v.u[3];
 +    }
  }
- 
+
  /* movlps/movhps move 8 bytes into or out of one half, leaving the
 @@ -476,79 +589,49 @@ static inline void recomp_xmm_store_half(uint32_t addr, RecompXmm src,
- 
+
  /** movlhps: dst high = src low. */
  static inline RecompXmm XMM_MOVE_LOW_TO_HIGH(RecompXmm a, RecompXmm b) {
 -    RecompXmm r; r.q[0] = a.q[0]; r.q[1] = b.q[0]; return r;
 +    return RecompXmmOf(_mm_movelh_ps(a.m, b.m));
  }
- 
+
  /** movhlps: dst low = src high. */
  static inline RecompXmm XMM_MOVE_HIGH_TO_LOW(RecompXmm a, RecompXmm b) {
 -    RecompXmm r; r.q[0] = b.q[1]; r.q[1] = a.q[1]; return r;
 +    return RecompXmmOf(_mm_movehl_ps(a.m, b.m));
  }
- 
+
  /* -- packed arithmetic -- */
- 
+
 -#define RECOMP_XMM_LANEWISE(name, expr)                                   \
 -    static inline RecompXmm name(RecompXmm a, RecompXmm b) {              \
 -        RecompXmm r; int i;                                               \
@@ -41904,7 +42350,7 @@ index dc1dae0..d50ce23 100644
  /* ANDNPS is ~dst & src, not dst & ~src. */
 -RECOMP_XMM_BITWISE(XMM_ANDN, (~a.u[i]) & b.u[i])
 +static inline RecompXmm XMM_ANDN(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_andnot_ps(a.m, b.m)); }
- 
+
  /* Compares produce an all-ones or all-zero mask per lane. EQ/LT/LE are
   * the ordered forms (false when either lane is NaN); NEQ is the
   * unordered form, so it is true when a lane is NaN. */
@@ -41916,14 +42362,14 @@ index dc1dae0..d50ce23 100644
 +static inline RecompXmm XMM_CMP_LT(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_cmplt_ps(a.m, b.m)); }
 +static inline RecompXmm XMM_CMP_LE(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_cmple_ps(a.m, b.m)); }
 +static inline RecompXmm XMM_CMP_NEQ(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_cmpneq_ps(a.m, b.m)); }
- 
+
  /** movmskps: the four lane sign bits, packed into the low nibble. */
  static inline uint32_t XMM_MOVEMASK(RecompXmm a) {
 -    return ((a.u[0] >> 31) & 1u) | (((a.u[1] >> 31) & 1u) << 1)
 -         | (((a.u[2] >> 31) & 1u) << 2) | (((a.u[3] >> 31) & 1u) << 3);
 +    return (uint32_t)_mm_movemask_ps(a.m);
  }
- 
+
 -/** shufps: lanes 0-1 selected out of `a`, lanes 2-3 out of `b`. */
 -static inline RecompXmm XMM_SHUFFLE(RecompXmm a, RecompXmm b, uint32_t imm) {
 -    RecompXmm r;
@@ -41933,7 +42379,7 @@ index dc1dae0..d50ce23 100644
 -}
 +/** shufps: lanes 0-1 selected out of `a`, lanes 2-3 out of `b`. The selector is always a constant. */
 +#define XMM_SHUFFLE(a, b, imm) RecompXmmOf(_mm_shuffle_ps((a).m, (b).m, (imm) & 0xFF))
- 
+
  /** unpcklps / unpckhps: interleave the low or high halves. */
 -static inline RecompXmm XMM_UNPACK_LOW(RecompXmm a, RecompXmm b) {
 -    RecompXmm r;
@@ -41948,7 +42394,7 @@ index dc1dae0..d50ce23 100644
 -}
 +static inline RecompXmm XMM_UNPACK_LOW(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_unpacklo_ps(a.m, b.m)); }
 +static inline RecompXmm XMM_UNPACK_HIGH(RecompXmm a, RecompXmm b) { return RecompXmmOf(_mm_unpackhi_ps(a.m, b.m)); }
- 
+
  /* ================================================================
   * Flag computation helpers
 @@ -696,7 +779,7 @@ static inline uint16_t ROR16(uint16_t val, int n) {
@@ -41958,17 +42404,17 @@ index dc1dae0..d50ce23 100644
 -    MEM32(sp) = _pv; \
 +    STK32(sp) = _pv; \
  } while(0)
- 
+
  /**
 @@ -714,7 +797,7 @@ static inline int recomp_parity8(uint32_t x) {
- 
+
  /** Pop a 32-bit value from the simulated stack. */
  #define POP32(sp, dst) do { \
 -    (dst) = MEM32(sp); \
 +    (dst) = STK32(sp); \
      (sp) += 4; \
  } while(0)
- 
+
 diff --git a/tests/apu_dsp_core/CMakeLists.txt b/tests/apu_dsp_core/CMakeLists.txt
 new file mode 100644
 index 0000000..345d047
@@ -43025,7 +43471,7 @@ index a2bd64c..4e22167 100644
 @@ -8,6 +8,13 @@
  #include <stdlib.h>
  #include <string.h>
- 
+
 +/* The standalone test has no kernel acknowledgement loop. The production
 + * frame entry point also calls the DSP acknowledgement directly. */
 +void xbox_SetAckTick(void (*fn)(void))
@@ -43045,7 +43491,7 @@ index 9392fe3..a91106e 100644
  #include <stdlib.h>
  #include <string.h>
 +#include <io.h>
- 
+
  /* Provided by the generated title; a regression harness has no title, and a
   * static archive resolves only what gets pulled in. Nothing here calls a
 @@ -57,8 +58,17 @@ static void check(int ok, const char *what, const char *detail)
@@ -43060,15 +43506,15 @@ index 9392fe3..a91106e 100644
 +    check(!xbox_kernel_thunk_entry_is_empty(0x80000001u),
 +          "nonzero kernel ordinal remains an import",
 +          "a valid encoded ordinal was mistaken for an empty slot");
- 
+
      const uint32_t THUNK_VA = 0x10000, STACK_VA = 0x20000;
 +    const uint32_t BASE_PTR_VA = 0x30000, SIZE_PTR_VA = 0x30004;
- 
+
      uint8_t *mem = VirtualAlloc(NULL, 16 * 1024 * 1024,
                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 @@ -70,10 +80,35 @@ int main(void)
      g_xbox_mem_offset = (ptrdiff_t)mem;
- 
+
      /* One import, in the form an XBE stores it: 0x80000000 | ordinal. */
 +    *(uint32_t *)(mem + THUNK_VA - 0x10) = 0x80000000u | 52u;
 +    *(uint32_t *)(mem + THUNK_VA - 0x20) = 0x80000000u; /* empty ordinal-zero slot */
@@ -43080,7 +43526,7 @@ index 9392fe3..a91106e 100644
 +    *(uint32_t *)(mem + THUNK_VA + 12) = 0x80000000u; /* unused declared slot */
 +    xbox_kernel_set_thunk_address(THUNK_VA, 3);
      xbox_kernel_bridge_init();
- 
+
 +    /* The bounded lookbehind exists for real XBE runs (e.g. ordinals 52,
 +     * 51, and 5), but arbitrary data can also resemble a thunk marker. */
 +    uint32_t valid_preceding = *(uint32_t *)(mem + THUNK_VA - 0x10);
@@ -43106,7 +43552,7 @@ index 9392fe3..a91106e 100644
 @@ -103,6 +138,91 @@ int main(void)
                "ordinal 173 pops its stdcall argument", detail);
      }
- 
+
 +    /* Xbox uses 32-bit guest pointers and SIZE_T, even when the host is
 +     * 64-bit. Decommit is a successful no-op because mapped guest RAM is
 +     * already committed as one host region. */
@@ -43201,11 +43647,11 @@ index cfe279f..3b99486 100644
 +++ b/tools/disasm/engine.py
 @@ -14,6 +14,7 @@ from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CsInsn
  from capstone import CS_OP_IMM, CS_OP_MEM, CS_OP_REG
- 
+
  from . import config
 +from .jump_tables import CodeView, JumpTableSpan, proven_index_span
  from .loader import BinaryImage, SectionInfo
- 
+
  
 @@ -37,7 +38,10 @@ class Instruction:
      call_target: Optional[int] = None     # For direct calls
@@ -43217,7 +43663,7 @@ index cfe279f..3b99486 100644
 +    # moves it to the real table start when the index is proven negative.
 +    jump_table: Optional[int] = None
      imm_ref: Optional[int] = None         # For `push offset x` / `mov reg, offset x`
- 
+
      @property
 @@ -95,6 +99,8 @@ class DisasmEngine:
          # recorded during the sweep.
@@ -43225,7 +43671,7 @@ index cfe279f..3b99486 100644
          self._jt_candidates: Set[int] = set()
 +        # Operand displacement -> addresses of the jumps that index it.
 +        self._jt_dispatchers: Dict[int, Set[int]] = {}
- 
+
      def _classify_instruction(self, cs_insn: CsInsn) -> Instruction:
          """Convert a Capstone instruction to our Instruction type."""
 @@ -144,6 +150,8 @@ class DisasmEngine:
@@ -43234,13 +43680,13 @@ index cfe279f..3b99486 100644
                          self._jt_candidates.add(disp)
 +                        self._jt_dispatchers.setdefault(
 +                            disp, set()).add(insn.address)
- 
+
              # Check for memory references in non-branch instructions
              if not (insn.is_call or insn.is_branch) and insn.memory_ref is None:
 @@ -253,10 +261,28 @@ class DisasmEngine:
          real code back up. A table entry must point into an executable section
          for the table to keep growing, which is what bounds it.
- 
+
 +        A dispatch whose index is proven to go negative, or to skip the slot
 +        at its displacement (see jump_tables.py), reads a table that does not
 +        start there. Those are measured first, from what bounds the index,
@@ -43269,7 +43715,7 @@ index cfe279f..3b99486 100644
 @@ -279,19 +305,64 @@ class DisasmEngine:
                  # would delete real instructions.
                  continue
- 
+
 -            end = tbl + entries * 4
 -            for insn in self.get_instructions_in_range(
 -                    tbl - 16, end):
@@ -43281,9 +43727,9 @@ index cfe279f..3b99486 100644
 -            self.decode_at(end)
 +            self._mark_table(tbl, tbl + entries * 4)
              resynced += 1
- 
+
          return resynced
- 
+
 +    def _mark_table(self, tbl: int, end: int) -> None:
 +        """Record [tbl, end) as table data and decode the code after it."""
 +        for insn in self.get_instructions_in_range(tbl - 16, end):
@@ -43341,7 +43787,7 @@ index cfe279f..3b99486 100644
          """Code pointers held by a resynced jump table, or [] if unknown."""
          end = self.jump_tables.get(tbl)
 @@ -424,9 +495,23 @@ class DisasmEngine:
- 
+
          limit = addr + len(data)
          count = 0
 +        has_frame = False
@@ -43391,7 +43837,7 @@ index cfe279f..3b99486 100644
 +            if nxt.mnemonic == "sub" and nxt.op_str.startswith("esp,"):
 +                return True
 +            return False
- 
+
          # A function whose frame __SEH_prolog builds:
          #
 diff --git a/tools/disasm/jump_tables.py b/tools/disasm/jump_tables.py
@@ -43834,13 +44280,13 @@ index 9eba707..39fc5a7 100644
          self.executable = executable
          self.name = ".text"
 +        self.data = data
- 
+
  
  class _Image:
 @@ -49,6 +50,13 @@ class _Image:
      def get_section_data(self, section):
          return section.data
- 
+
 +    def read_bytes_at_va(self, va, size):
 +        section = self.get_section_at_va(va)
 +        if section is None:
@@ -43848,12 +44294,12 @@ index 9eba707..39fc5a7 100644
 +        offset = va - section.virtual_addr
 +        return section.data[offset:offset + size]
 +
- 
+
  def _engine(va, data, executable=True):
      s = _Section(va, data, executable)
 @@ -150,6 +158,26 @@ def test_probe_follows_a_tail_jump():
      assert eng.probes_as_function_body(BASE)
- 
+
  
 +def test_hotpatch_nop_needs_a_real_prologue_after_it():
 +    #  mov edi,edi; push ebp; mov ebp,esp; ret
@@ -43884,7 +44330,7 @@ index 55fec47..06d2342 100644
 +++ b/tools/recomp/__main__.py
 @@ -349,6 +349,7 @@ def main():
              funcs = funcs[:args.max_funcs]
- 
+
          manual = set()
 +        wrapped = {}    # {addr: wrapper name}, from --exclude-manual
          if args.manual_functions:
@@ -43895,7 +44341,7 @@ index 55fec47..06d2342 100644
              for addr in wrap & known:
                  translator.func_db[addr]["name"] = f"sub_{addr:08X}_gen"
 +                wrapped[addr] = f"sub_{addr:08X}"
- 
+
              # skip - wrap: defined by hand and not wrapped -> declare-only, which
              # is exactly what membership in `manual` produces.
 @@ -430,6 +432,7 @@ def main():
@@ -43904,7 +44350,7 @@ index 55fec47..06d2342 100644
              manual=manual,
 +            wrapped=wrapped,
          )
- 
+
          t_translate = time.time() - t0
 diff --git a/tools/recomp/analyze_unresolved.py b/tools/recomp/analyze_unresolved.py
 index fa0a9e6..cdb4de0 100644
@@ -43914,13 +44360,13 @@ index fa0a9e6..cdb4de0 100644
  #!/usr/bin/env python3
 -import json, bisect, os
 +import argparse, json, bisect, os
- 
+
  SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
  REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
 @@ -8,36 +8,44 @@ UNRESOLVED_PATH = os.path.join(SCRIPT_DIR, 'output', 'unresolved_symbols.txt')
  FUNCTIONS_PATH = os.path.join(REPO_ROOT, 'tools', 'disasm', 'output', 'functions.json')
  OUTPUT_PATH = os.path.join(SCRIPT_DIR, 'output', 'missing_functions.json')
- 
+
 -SECTIONS = [
 -    {'name': '.text', 'va': 0x00011000, 'size': 2863616},
 -    {'name': 'XMV', 'va': 0x002CC200, 'size': 163124},
@@ -43959,7 +44405,7 @@ index fa0a9e6..cdb4de0 100644
 +        if start <= addr < start + section_size(s):
              return s['name']
      return None
- 
+
  
 -def main():
 +def main(argv=None):
@@ -43985,11 +44431,11 @@ index fa0a9e6..cdb4de0 100644
 -    with open(FUNCTIONS_PATH) as f:
 +    with open(args.functions, encoding='utf-8') as f:
          raw_funcs = json.load(f)
- 
+
      functions = []
 @@ -53,7 +61,7 @@ def main():
      print(f'  Range: 0x{functions[0][0]:08X} - 0x{functions[-1][1]:08X}')
- 
+
      print('Loading unresolved symbols...')
 -    with open(UNRESOLVED_PATH) as f:
 +    with open(args.unresolved, encoding='utf-8') as f:
@@ -43998,16 +44444,16 @@ index fa0a9e6..cdb4de0 100644
              line = line.strip()
 @@ -75,7 +83,7 @@ def main():
      missing_functions = []
- 
+
      for addr in unresolved:
 -        section = find_section(addr)
 +        section = find_section(addr, sections)
- 
+
          if section is None:
              results['unknown'].append(addr)
 @@ -88,8 +96,8 @@ def main():
              continue
- 
+
          if section != '.text':
 -            sec_info = next(s for s in SECTIONS if s['name'] == section)
 -            sec_end = sec_info['va'] + sec_info['size']
@@ -44018,7 +44464,7 @@ index fa0a9e6..cdb4de0 100644
              continue
 @@ -97,8 +105,8 @@ def main():
          idx = bisect.bisect_right(func_starts, addr) - 1
- 
+
          if idx < 0:
 -            next_start = func_starts[0] if func_starts else TEXT_END
 -            results['gap'].append((addr, TEXT_START, next_start, next_start - addr))
@@ -44026,9 +44472,9 @@ index fa0a9e6..cdb4de0 100644
 +            results['gap'].append((addr, text_start, next_start, next_start - addr))
              missing_functions.append({'address': f'0x{addr:08X}', 'type': 'gap', 'next_func_start': f'0x{next_start:08X}', 'estimated_end': f'0x{next_start:08X}', 'gap_size': next_start - addr})
              continue
- 
+
 @@ -111,7 +119,7 @@ def main():
- 
+
          if addr == func_end:
              next_idx = idx + 1
 -            next_start = functions[next_idx][0] if next_idx < len(functions) else TEXT_END
@@ -44038,11 +44484,11 @@ index fa0a9e6..cdb4de0 100644
              missing_functions.append({'address': f'0x{addr:08X}', 'type': 'continuation', 'parent_func': f'0x{func_start:08X}', 'parent_name': func_name, 'estimated_end': f'0x{next_start:08X}', 'gap_size': gap_to_next})
 @@ -122,7 +130,7 @@ def main():
              continue
- 
+
          next_idx = idx + 1
 -        next_start = functions[next_idx][0] if next_idx < len(functions) else TEXT_END
 +        next_start = functions[next_idx][0] if next_idx < len(functions) else text_end
- 
+
          if func_end <= addr < next_start:
              gap_size = next_start - addr
 @@ -193,9 +201,9 @@ def main():
@@ -44066,16 +44512,16 @@ index fa0a9e6..cdb4de0 100644
 +            sec = find_section(a, sections)
              print(f'      0x{a:08X}  ({sec})')
      print()
- 
+
 @@ -249,16 +257,18 @@ def main():
- 
+
      if lib:
          lib_sections_used = set(sec for _, sec in lib)
 -        total_lib_bytes = sum(next(s for s in SECTIONS if s['name'] == sec)['size'] for sec in lib_sections_used)
 +        total_lib_bytes = sum(section_size(next(s for s in sections if s['name'] == sec)) for sec in lib_sections_used)
          print(f'  Total library section bytes (all used sections): {total_lib_bytes:,} ({total_lib_bytes/1024:.1f} KB)')
      print()
- 
+
 -    print(f'\nWriting {len(missing_functions)} entries to {OUTPUT_PATH}...')
 -    with open(OUTPUT_PATH, 'w') as f:
 +    os.makedirs(args.output_dir, exist_ok=True)
@@ -44084,7 +44530,7 @@ index fa0a9e6..cdb4de0 100644
 +    with open(output_path, 'w', encoding='utf-8') as f:
          json.dump(missing_functions, f, indent=2)
      print('Done.')
- 
+
 -    quick_add_path = os.path.join(SCRIPT_DIR, 'output', 'addable_functions.json')
 +    quick_add_path = os.path.join(args.output_dir, 'addable_functions.json')
      addable = []
@@ -44098,14 +44544,14 @@ index fa0a9e6..cdb4de0 100644
 +    with open(quick_add_path, 'w', encoding='utf-8') as f:
          json.dump(addable, f, indent=2)
      print('Done.')
- 
+
 diff --git a/tools/recomp/config.py b/tools/recomp/config.py
 index 159f56c..39d74a2 100644
 --- a/tools/recomp/config.py
 +++ b/tools/recomp/config.py
 @@ -178,6 +178,11 @@ def configured_from() -> Optional[str]:
      return _configured_from
- 
+
  
 +def sections():
 +    """The installed section layout, in XBE order."""
@@ -44117,7 +44563,7 @@ index 159f56c..39d74a2 100644
      for s in _SECTIONS:
 @@ -199,6 +204,19 @@ def is_code_address(va):
      return False
- 
+
  
 +def code_bytes_end(va):
 +    """End VA of the file-backed bytes of the code section holding va, or None.
@@ -44150,12 +44596,12 @@ index 014b04d..88fa9f5 100644
      for va, flags in sorted(db.items()):
 @@ -297,7 +297,7 @@ def cmd_seeds(args):
      return 0
- 
+
  
 -def _decode_probe(xbe_path):
 +def _decode_probe(xbe_path, analysis_json=None):
      """Return a callable(va) -> bool backed by the disassembler's own probe.
- 
+
      None when no XBE was given, which leaves cmd_seeds on the alignment filter.
 @@ -306,7 +306,7 @@ def _decode_probe(xbe_path):
          return None
@@ -44272,7 +44718,7 @@ index f0ba077..2a5be14 100644
 @@ -3180,6 +3205,14 @@ class Lifter:
          # FPU is complex. We translate common patterns to double operations.
          # Full accuracy would require an x87 stack emulator.
- 
+
 +        # x87 TOP rotations change only the circular index, never values.
 +        # FFREE is tag-only; this untagged model retains its existing no-op.
 +        # FPTAN; FFREE ST(0); FINCSTP discards the implicit 1.0 before FSTP.
@@ -44285,7 +44731,7 @@ index f0ba077..2a5be14 100644
              if len(ops) >= 1:
                  if ops[0].type == "mem":
 @@ -3274,8 +3307,14 @@ class Lifter:
- 
+
              def _combine(dst, src):
                  if cop in ("+", "*") or not reverse:
 -                    return f"{dst} = {dst} {cop} {src};"
@@ -44298,7 +44744,7 @@ index f0ba077..2a5be14 100644
 +                # it compare unequal to its own later single-precision store.
 +                return (f"{dst} = recomp_fp_precision({expr}, "
 +                        "g_fp_control_word);")
- 
+
              # Memory operand: dst is st0, no pop (memory forms never pop).
              if ops and ops[0].type == "mem":
 @@ -3322,7 +3361,8 @@ class Lifter:
@@ -44314,7 +44760,7 @@ index f0ba077..2a5be14 100644
 @@ -3534,6 +3574,29 @@ def lift_basic_block(lifter, bb, flag_state=None):
              i += consumed
              continue
- 
+
 +        # `lahf` after an x87 compare-to-EFLAGS is the SSE-era float branch
 +        # idiom: `fucompi st(1); fstp st(0); lahf; test ah, 0x44; jnp`.
 +        # The compare's CF/ZF/PF have to land in AH, or the test reads
@@ -44428,7 +44874,7 @@ index 4c840a1..0cf3c14 100644
  import os
 +import re
  import struct
- 
+
  # Import the functions, not the VA constants: configure_from_xbe() rebinds those
 @@ -22,11 +23,21 @@ import struct
  from .config import va_to_file_offset, is_code_address
@@ -44438,7 +44884,7 @@ index 4c840a1..0cf3c14 100644
  from .lifter import (Lifter, lift_basic_block, detect_seh_helpers,
                       _RESULT_SNAPSHOT_SETTERS,
                       detect_setjmp_helpers, _func_ident, _operand_width)
- 
+
  
 +def _render_unresolved_stub(addr, name, popped):
 +    """Emit a diagnostic hook before the stub consumes the guest return."""
@@ -44451,7 +44897,7 @@ index 4c840a1..0cf3c14 100644
 +
  def _merge_flag_states(states):
      """Merge comparable snapshots without requiring identical source operands.
- 
+
 @@ -48,9 +59,24 @@ def _merge_flag_states(states):
              if (_operand_width(ops[0]) or _operand_width(ops[1])) != width:
                  return None
@@ -44467,7 +44913,7 @@ index 4c840a1..0cf3c14 100644
 +        if all(state[0] in family for state in states):
 +            return first
      return _merge_zero_flag(states)
- 
+
  
 +_SSE_COMPARES = frozenset(("comiss", "ucomiss", "comisd", "ucomisd"))
 +_X87_COMPARES = frozenset(("fcomi", "fcomip", "fcompi", "fucomi", "fucomip",
@@ -44476,7 +44922,7 @@ index 4c840a1..0cf3c14 100644
 +
  def _merge_zero_flag(states):
      """Predecessors that disagree on the operation but not on the zero flag.
- 
+
 @@ -310,19 +336,41 @@ class FunctionTranslator:
          self.recovered_function_starts = set()
          self._recovered_cfg = {}
@@ -44509,12 +44955,12 @@ index 4c840a1..0cf3c14 100644
 +                                              insn.address)
 +            yield start, instructions
 +        self.code_immediates = immediates
- 
+
      def discover_static_indirect_targets(self):
          """Recover function entries from bounded static callback tables."""
          original_starts = sorted(self.func_db)
          recovered_callers = {}
- 
+
 -        for caller, func_info in list(self.func_db.items()):
 -            end = func_info.get("end", caller)
 -            raw_bytes = self._read_func_bytes(caller, end)
@@ -44527,9 +44973,9 @@ index 4c840a1..0cf3c14 100644
                  targets = self._read_static_callback_table(
                      lower, upper, original_starts)
 @@ -371,6 +419,208 @@ class FunctionTranslator:
- 
+
          return self.recovered_function_starts
- 
+
 +    # Instructions compiled title code does not contain. Data decoded as code
 +    # produces them readily (a table of floats makes `mov eax, cr1` without
 +    # trying), so reaching one is the tell that a region is not a function.
@@ -44738,7 +45184,7 @@ index 4c840a1..0cf3c14 100644
 @@ -551,6 +801,36 @@ class FunctionTranslator:
                      cfg_targets.update(targets)
                  return instructions, jump_tables, cfg_targets
- 
+
 +    def undetected_entry_end(self, addr, starts):
 +        """Where a function entered at an undetected address `addr` ends.
 +
@@ -44771,11 +45217,11 @@ index 4c840a1..0cf3c14 100644
 +
      def _stub_ret_bytes(self, addr, max_insns=48):
          """Bytes the code at `addr` would have popped beyond the return address.
- 
+
 @@ -610,6 +890,39 @@ class FunctionTranslator:
          backward.reverse()
          return backward + forward
- 
+
 +    def _read_u32(self, va):
 +        offset = va_to_file_offset(va)
 +        if offset is None or offset + 4 > len(self.xbe_data):
@@ -44820,13 +45266,13 @@ index 4c840a1..0cf3c14 100644
 -            recovered["jump_tables"] if recovered else {})
 +        jump_tables = dict(recovered["jump_tables"]) if recovered else {}
 +        self.lifter.jump_table_targets = jump_tables
- 
+
          # Disassemble
          instructions = (recovered["instructions"] if recovered else
 @@ -720,6 +1033,15 @@ class FunctionTranslator:
          if not instructions:
              return [], []
- 
+
 +        # The lifter reads a switch table forward from the jump's
 +        # displacement. When the index is proven negative the table ends
 +        # there instead, and when it provably skips the displacement slot
@@ -44849,10 +45295,10 @@ index 4c840a1..0cf3c14 100644
 +            print(f"Recovered {pointed} functions only a data pointer leads to",
 +                  file=sys.stderr)
          self.translator.discover_cfg_ownership()
- 
+
      def get_functions_by_category(self, categories=None, exclude_categories=None):
 @@ -1480,7 +1807,8 @@ class BatchTranslator:
- 
+
      def translate_batch_split(self, func_list, output_dir, chunk_size=1000,
                                header_name="recomp_funcs.h",
 -                              prefix="recomp", verbose=False, manual=None):
@@ -44860,11 +45306,11 @@ index 4c840a1..0cf3c14 100644
 +                              wrapped=None):
          """
          Translate functions into multiple .c files + a shared header.
- 
+
 @@ -1497,6 +1825,12 @@ class BatchTranslator:
          is how a game replaces a recompiled XDK routine (a D3D8 entry point,
          say) with one that drives the host runtime instead of the hardware.
- 
+
 +        wrapped: {addr: name} for functions the project wraps -- it defines
 +        `name` by hand and calls the generated body, which func_db names
 +        name_gen. Direct calls and the dispatch table resolve to the wrapper,
@@ -44881,12 +45327,12 @@ index 4c840a1..0cf3c14 100644
 +        wrapped = dict(wrapped or {})
 +        self.translator.lifter.wrapped_functions = wrapped
          manual_decls = {}
- 
+
          # Translate all functions first, collecting results
 @@ -1545,6 +1881,19 @@ class BatchTranslator:
                  translations.append((addr, name, stub))
                  stats["failed"] += 1
- 
+
 +        # Code reached by a call or a tail jump where no function was
 +        # detected is translated as a function of its own rather than stubbed.
 +        # Its stub "returned" having done nothing, and popped only the return
@@ -44914,7 +45360,7 @@ index 4c840a1..0cf3c14 100644
 @@ -1596,6 +1946,13 @@ class BatchTranslator:
                  header_lines.append(
                      f"void {manual_decls[addr]}(void);  /* 0x{addr:08X} */")
- 
+
 +        if wrapped:
 +            header_lines.append("")
 +            header_lines.append("/* Hand-written wrappers around generated bodies */")
@@ -44937,7 +45383,7 @@ index 4c840a1..0cf3c14 100644
 +                stub_lines.append(_render_unresolved_stub(
 +                    addr, unresolved[addr], popped))
              stub_lines.append("")
- 
+
              write_if_changed(stub_path, "\n".join(stub_lines))
 @@ -1760,9 +2114,11 @@ class BatchTranslator:
          # _initterm and atexit. The header already declares them.
@@ -44956,7 +45402,7 @@ index 4c840a1..0cf3c14 100644
 @@ -1773,6 +2129,51 @@ class BatchTranslator:
          stats["chunk_size"] = chunk_size
          return stats
- 
+
 +    def _translate_undetected_targets(self, translations, manual_decls,
 +                                      wrapped, stats, max_rounds=16):
 +        """Translate referenced addresses nothing defines, where they are code.
@@ -45037,7 +45483,7 @@ index 0000000..e2153bc
 +
 +#endif
 diff --git a/src/apu/apu_xaudio2.c b/src/apu/apu_xaudio2.c
-index cd69e57..afa81f6 100644
+index cd69e57..e139d2e 100644
 --- a/src/apu/apu_xaudio2.c
 +++ b/src/apu/apu_xaudio2.c
 @@ -26,6 +26,7 @@
@@ -45045,10 +45491,10 @@ index cd69e57..afa81f6 100644
  #define XA2_BUF_SAMPLES   1024   /* ~21ms per submission */
  #define XA2_NUM_BUFS      3
 +#define XA2_RECOVERY_RETRY_MS 1000
- 
+
  static IXAudio2               *g_xa2 = NULL;
  static IXAudio2MasteringVoice *g_xa2_master = NULL;
-@@ -33,22 +34,78 @@ static IXAudio2SourceVoice    *g_xa2_source = NULL;
+@@ -33,22 +34,112 @@ static IXAudio2SourceVoice    *g_xa2_source = NULL;
  static int16_t                 g_xa2_bufs[XA2_NUM_BUFS][XA2_BUF_SAMPLES][2];
  static int                     g_xa2_next_buf = 0;
  static int                     g_xa2_initialized = 0;
@@ -45065,8 +45511,50 @@ index cd69e57..afa81f6 100644
 +static uint64_t                g_xa2_played_base;
 +static uint64_t                g_xa2_generation_submitted;
 +static uint64_t                g_xa2_generation_played;
- 
+
 -int xa2_init(void)
++/* The APU producer, rather than only XAudio2's engine, needs scheduling
++ * headroom under a busy renderer. Optional MMCSS ownership follows the
++ * submission thread and does not change graph recovery or COM ownership. */
++typedef HANDLE (WINAPI *Xa2AvSetCharacteristics)(LPCWSTR, LPDWORD);
++typedef BOOL (WINAPI *Xa2AvRevertCharacteristics)(HANDLE);
++static HMODULE g_xa2_avrt;
++static HANDLE g_xa2_mmcss;
++static Xa2AvRevertCharacteristics g_xa2_av_revert;
++
++static void xa2_register_producer(void)
+ {
+-    HRESULT hr;
+-    int com_initialized;
+-    WAVEFORMATEX wfx = { 0 };
++    DWORD task_index = 0;
++    g_xa2_avrt = LoadLibraryExW(L"avrt.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
++    if (g_xa2_avrt) {
++        Xa2AvSetCharacteristics av_set = (Xa2AvSetCharacteristics)
++            GetProcAddress(g_xa2_avrt, "AvSetMmThreadCharacteristicsW");
++        g_xa2_av_revert = (Xa2AvRevertCharacteristics)
++            GetProcAddress(g_xa2_avrt, "AvRevertMmThreadCharacteristics");
++        if (av_set && g_xa2_av_revert)
++            g_xa2_mmcss = av_set(L"Pro Audio", &task_index);
++    }
++    fprintf(stderr, "[XA2] APU producer MMCSS Pro Audio %s\n",
++            g_xa2_mmcss ? "registered" : "unavailable");
++}
+
+-    if (g_xa2_initialized) return 1;
++static void xa2_unregister_producer(void)
++{
++    if (g_xa2_mmcss) g_xa2_av_revert(g_xa2_mmcss);
++    g_xa2_mmcss = NULL;
++    g_xa2_av_revert = NULL;
++    if (g_xa2_avrt) FreeLibrary(g_xa2_avrt);
++    g_xa2_avrt = NULL;
++}
+
+-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+-    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+-        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
+-        return 0;
 +/* Audio callbacks must not log, wait or take the APU lock. The submission
 + * thread reports these atomic observations with the other output counters. */
 +static void STDMETHODCALLTYPE xa2_pass_start(IXAudio2EngineCallback *callback)
@@ -45074,12 +45562,7 @@ index cd69e57..afa81f6 100644
 +static void STDMETHODCALLTYPE xa2_pass_end(IXAudio2EngineCallback *callback)
 +{ (void)callback; }
 +static void STDMETHODCALLTYPE xa2_critical_error(IXAudio2EngineCallback *callback, HRESULT error)
- {
--    HRESULT hr;
--    int com_initialized;
--    WAVEFORMATEX wfx = { 0 };
--
--    if (g_xa2_initialized) return 1;
++{
 +    (void)callback;
 +    InterlockedExchange(&g_xa2_critical_status, (LONG)error);
 +    InterlockedIncrement(&g_xa2_critical_errors);
@@ -45089,11 +45572,7 @@ index cd69e57..afa81f6 100644
 +    xa2_pass_start, xa2_pass_end, xa2_critical_error
 +};
 +static IXAudio2EngineCallback g_xa2_callback = { &g_xa2_callback_vtable };
- 
--    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
--    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
--        fprintf(stderr, "[XA2] CoInitializeEx failed: 0x%08lX\n", hr);
--        return 0;
++
 +/* DestroyVoice waits until the voice can no longer read its PCM buffers.
 + * Release the whole old graph before any ring slot can be reused. */
 +static void xa2_release_graph(void)
@@ -45135,13 +45614,13 @@ index cd69e57..afa81f6 100644
 +{
 +    HRESULT hr;
 +    WAVEFORMATEX wfx = { 0 };
- 
+
      hr = XAudio2Create(&g_xa2, 0, XAUDIO2_DEFAULT_PROCESSOR);
      if (FAILED(hr) || !g_xa2) {
-@@ -56,6 +113,13 @@ int xa2_init(void)
+@@ -56,6 +147,13 @@ int xa2_init(void)
          goto fail;
      }
- 
+
 +    hr = IXAudio2_RegisterForCallbacks(g_xa2, &g_xa2_callback);
 +    if (FAILED(hr)) {
 +        fprintf(stderr, "[XA2] RegisterForCallbacks failed: 0x%08lX\n", hr);
@@ -45152,10 +45631,10 @@ index cd69e57..afa81f6 100644
      hr = IXAudio2_CreateMasteringVoice(g_xa2, &g_xa2_master,
          XA2_CHANNELS, XA2_SAMPLE_RATE, 0, NULL, NULL, 0);
      if (FAILED(hr)) {
-@@ -77,47 +141,58 @@ int xa2_init(void)
+@@ -77,47 +175,60 @@ int xa2_init(void)
          goto fail;
      }
- 
+
 -    hr = IXAudio2SourceVoice_Start(g_xa2_source, 0, XAUDIO2_COMMIT_NOW);
 -    if (FAILED(hr)) {
 -        fprintf(stderr, "[XA2] Start failed: 0x%08lX\n", hr);
@@ -45170,7 +45649,7 @@ index cd69e57..afa81f6 100644
 -            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
 +    g_xa2_started = 0;
      return 1;
- 
+
  fail:
 -    xa2_shutdown();
 -    /* Failed initialization still runs on the COM-initializing thread. */
@@ -45178,7 +45657,7 @@ index cd69e57..afa81f6 100644
 +    xa2_release_graph();
      return 0;
  }
- 
+
 -void xa2_shutdown(void)
 +int xa2_init(void)
  {
@@ -45219,15 +45698,17 @@ index cd69e57..afa81f6 100644
 +        return 0;
      }
 +    g_xa2_initialized = 1;
++    xa2_register_producer();
 +    fprintf(stderr, "[XA2] XAudio2 initialized (%d Hz stereo 16-bit, %d x %d-sample buffers)\n",
 +            XA2_SAMPLE_RATE, XA2_NUM_BUFS, XA2_BUF_SAMPLES);
 +    return 1;
 +}
- 
+
 +void xa2_shutdown(void)
 +{
 +    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId()) return;
 +    xa2_release_graph();
++    xa2_unregister_producer();
 +    InterlockedExchange(&g_xa2_critical_pending, 0);
      if (g_xa2_initialized)
          fprintf(stderr, "[XA2] Shut down (%d frames written)\n", g_xa2_frames_written);
@@ -45236,12 +45717,12 @@ index cd69e57..afa81f6 100644
 +    g_xa2_com_initialized = 0;
 +    g_xa2_owner_thread = 0;
  }
- 
+
  int xa2_is_active(void)
-@@ -125,6 +200,52 @@ int xa2_is_active(void)
+@@ -125,6 +236,52 @@ int xa2_is_active(void)
      return g_xa2_initialized;
  }
- 
+
 +static int xa2_recover_if_needed(void)
 +{
 +    if (InterlockedCompareExchange(&g_xa2_critical_pending, 0, 0)) {
@@ -45291,15 +45772,15 @@ index cd69e57..afa81f6 100644
  /* Submit a buffer of mixed samples to XAudio2.
   * Called from APU frame thread. Returns 1 if buffer was submitted. */
  int xa2_submit_samples(const int16_t *samples, int num_samples)
-@@ -135,11 +256,33 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+@@ -135,11 +292,33 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
      int copy_samples;
      HRESULT hr;
- 
+
 -    if (!g_xa2_initialized || !g_xa2_source) return 0;
 +    if (!g_xa2_initialized || g_xa2_owner_thread != GetCurrentThreadId() ||
 +        !samples || num_samples <= 0) return 0;
 +    if (!xa2_recover_if_needed()) return 0;
- 
+
      IXAudio2SourceVoice_GetState(g_xa2_source, &state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
 -    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) return 0;
 -
@@ -45323,21 +45804,21 @@ index cd69e57..afa81f6 100644
 +    if (!xa2_start_if_primed(state.BuffersQueued)) return 0;
 +    if ((int)state.BuffersQueued >= XA2_NUM_BUFS) {
 +        ++g_xa2_stats.queue_full;
-+        return 0;
++        return XA2_SUBMIT_BACKPRESSURE;
 +    }
      idx = g_xa2_next_buf;
      copy_samples = (num_samples > XA2_BUF_SAMPLES) ? XA2_BUF_SAMPLES : num_samples;
      memcpy(g_xa2_bufs[idx], samples, copy_samples * XA2_CHANNELS * sizeof(int16_t));
-@@ -149,11 +292,20 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
+@@ -149,11 +328,21 @@ int xa2_submit_samples(const int16_t *samples, int num_samples)
      xbuf.pAudioData = (const BYTE *)g_xa2_bufs[idx];
- 
+
      hr = IXAudio2SourceVoice_SubmitSourceBuffer(g_xa2_source, &xbuf, NULL);
 -    if (FAILED(hr)) return 0;
 +    if (FAILED(hr)) {
 +        ++g_xa2_stats.submit_failed;
 +        return 0;
 +    }
- 
+
      g_xa2_next_buf = (idx + 1) % XA2_NUM_BUFS;
      g_xa2_frames_written++;
 -    return 1;
@@ -45347,17 +45828,19 @@ index cd69e57..afa81f6 100644
 +     * of a single packet. Ordinary scheduling jitter could exhaust it even
 +     * when no packets were rejected. Prime two packets (42.7 ms capacity)
 +     * before playback, preserving one packet of scheduling headroom. */
-+    return xa2_start_if_primed(state.BuffersQueued + 1);
++    xa2_start_if_primed(state.BuffersQueued + 1);
++    return XA2_SUBMIT_ACCEPTED;
  }
- 
+
  int xa2_get_buffer_size(void)
-@@ -161,6 +313,21 @@ int xa2_get_buffer_size(void)
+@@ -161,6 +350,22 @@ int xa2_get_buffer_size(void)
      return XA2_BUF_SAMPLES;
  }
- 
+
 +void xa2_get_output_stats(Xa2OutputStats *stats)
 +{
 +    *stats = g_xa2_stats;
++    stats->mmcss_registered = g_xa2_mmcss != NULL;
 +    stats->critical_errors = (unsigned)InterlockedCompareExchange(&g_xa2_critical_errors, 0, 0);
 +    stats->critical_error_status = (int32_t)InterlockedCompareExchange(&g_xa2_critical_status, 0, 0);
 +    if (g_xa2_initialized && g_xa2_source) {
@@ -45371,43 +45854,48 @@ index cd69e57..afa81f6 100644
 +}
 +
  #else /* !_WIN32 -- POSIX stubs (no audio output yet) */
- 
+
  int  xa2_init(void)                                   { return 0; }
-@@ -168,5 +335,6 @@ void xa2_shutdown(void)                               {}
+@@ -168,5 +373,6 @@ void xa2_shutdown(void)                               {}
  int  xa2_is_active(void)                              { return 0; }
  int  xa2_submit_samples(const int16_t *s, int n)      { (void)s; (void)n; return 0; }
  int  xa2_get_buffer_size(void)                        { return 0; }
 +void xa2_get_output_stats(Xa2OutputStats *s)           { memset(s, 0, sizeof(*s)); }
- 
+
  #endif /* _WIN32 */
 diff --git a/src/apu/apu_xaudio2.h b/src/apu/apu_xaudio2.h
-index 83e652d..1b637cb 100644
+index 83e652d..cdbc611 100644
 --- a/src/apu/apu_xaudio2.h
 +++ b/src/apu/apu_xaudio2.h
-@@ -6,19 +6,32 @@
- 
+@@ -6,19 +6,38 @@
+
  #include <stdint.h>
- 
+
 -/* Initialize XAudio2. Returns 1 on success, 0 on failure. */
 +/* Initialize and shut down on the APU submission thread. Returns 1 on success,
 + * 0 on failure. That thread owns the COM apartment and all graph resources. */
  int xa2_init(void);
- 
+
  /* Shut down XAudio2 and release all resources. */
  void xa2_shutdown(void);
- 
+
 -/* Returns 1 if XAudio2 is active. */
 +/* Returns 1 while selected, including a confirmed device-error recovery. */
  int xa2_is_active(void);
- 
+
 -/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted. */
-+/* Submit interleaved stereo 16-bit samples. Returns 1 if accepted and started
-+ * when primed. A failed Start may leave accepted PCM queued: do not replay it. */
++enum {
++    XA2_SUBMIT_ERROR = 0,
++    XA2_SUBMIT_ACCEPTED = 1,
++    XA2_SUBMIT_BACKPRESSURE = -1
++};
++/* Accepted means the backend owns this PCM, even if the subsequent Start
++ * fails. Retry only BACKPRESSURE; ERROR preserves device recovery semantics. */
  int xa2_submit_samples(const int16_t *samples, int num_samples);
- 
+
  /* Get the preferred buffer size in samples. */
  int xa2_get_buffer_size(void);
- 
+
 +typedef struct Xa2OutputStats {
 +    uint64_t submitted_samples, played_samples, queue_full, submit_failed;
 +    uint64_t start_failed, stop_failed, empty_queue, reprimes;
@@ -45415,6 +45903,7 @@ index 83e652d..1b637cb 100644
 +    unsigned critical_errors;
 +    int32_t critical_error_status;
 +    unsigned queued_buffers;
++    unsigned mmcss_registered;
 +} Xa2OutputStats;
 +/* Read only on the APU submission thread (or after that thread has joined). */
 +void xa2_get_output_stats(Xa2OutputStats *stats);
