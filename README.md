@@ -70,6 +70,21 @@ submission thread and primes fresh samples; failed retries are limited to once
 per second. Set `RECOMP_APU_TRACE_OUTPUT=1` for five-second source, clipping,
 queue, playback and recovery counters when investigating an audio problem.
 
+BLACK also routes its primary stereo audio through custom DSP bins 19/20.
+The dry fallback includes that explicit pair when native EP PCM is unavailable,
+restoring soundtracks and level sounds that have no standard speaker send.
+Other effect sends stay excluded to avoid duplicated or reversed dry audio.
+The [spatial regression](tests/apu_spatial/README.md) checks channel direction,
+auxiliary sends, and native PCM ownership.
+
+The APU also receives the size of the runtime's actual physical mappings,
+including the second view of low guest RAM when it is present. This lets GP/EP
+bootstrap and DMA reach valid audio pages above the 64 MB contiguous arena
+while retaining bounds checks for unmapped memory. The [physical backing
+regression](tests/apu_physical_memory/README.md) covers both DSPs and their
+scratch/FIFO transfers. Cutscene soundtracks use the same guest audio pipeline;
+they are stored separately from the native XMV video files.
+
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function
 bodies, recordings, and prebuilt executables are excluded.
