@@ -38,6 +38,14 @@ second finished voice's later trap after simulated ISR cleanup. It also covers
 an invalid idle cycle and pause/shutdown while a queued voice stays locked.
 Neither cancellation path may process source samples.
 
+The IRQ-dependent continuation fixture also compiles the actual core IRQ
+publication code. A finished voice raises a trap while an ongoing voice is
+locked; only the connected ISR can unlock it. The ISR must receive the paired
+trap payload and cursors before the VP finishes its frame, and all continuing
+voices must then consume exactly one complete tick. The old code misses a
+one-second deadline; the test cancels its own worker so the negative control
+fails without hanging the suite.
+
 For a negative control, set `-DAPU_VP_TEST_SOURCE=<absolute baseline apu_vp.c>`.
 Place that copied source in its own folder without a baseline `apu_state.h`;
 the harness uses the current state header. The old raw-fetch implementation

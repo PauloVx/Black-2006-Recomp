@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "core_irq.inc"
 
 uint8_t *g_apu_ram_ptr;
 MCPXAPUState *g_state;
@@ -399,6 +400,7 @@ int main(void)
     adpcm_cases();
     idle_trap_queue_case();
     locked_trap_queue_case();
+    irq_unlocks_trap_queue_case();
     free(ram);
     free(d);
     if (failures) {

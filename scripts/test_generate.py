@@ -298,7 +298,56 @@ def test_feedback_merge_with_runtime_parser():
         assert merged == {0x12000: 1, 0x13000: 2}, merged
 
 
+def test_audio_completion_enqueue_boundary():
+    operations = ("l_ecx = MEM32(l_esi + 8);", "l_eax = l_esi + 0x54;",
+                  "l_ecx = l_ecx + 0x4A0;", "MEM32(l_eax) = l_ecx;",
+                  "l_ecx = MEM32(l_ecx + 4);", "MEM32(l_eax + 4) = l_ecx;",
+                  "MEM32(l_ecx) = l_eax;", "l_ecx = MEM32(l_eax);",
+                  "MEM32(l_ecx + 4) = l_eax;")
+    prefix = "    native_status_write();\nloc_0021EE37: ;\n"
+    suffix = ("    l_eax = MEM32(l_esi + 8);\n"
+              "    MEM32(l_eax + 0x4B8) |= 0x40;\n"
+              "    native_dpc_notification();\n")
+    body = prefix + "\n".join("    " + op for op in operations) + "\n" + suffix
+    hooked = generate.audio_completion_queue("sub_0021EC97", body)
+    assert hooked == prefix + "    l_ecx = black_audio_queue_completion(l_esi);\n" + suffix
+    assert generate.audio_completion_queue("sub_0021EC97", hooked) == hooked
+    assert generate.audio_completion_queue("unrelated", body) == body
+    for changed in (
+            *(body.replace(op, "changed();", 1) for op in operations),
+            body.replace("loc_0021EE37: ;", "loc_changed: ;"),
+            body + suffix, body.replace(operations[0], operations[0] + "\n    unrelated_side_effect();")):
+        try:
+            generate.audio_completion_queue("sub_0021EC97", changed)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Changed native enqueue contract must fail closed")
+
+    generated = ("void sub_0021C7EF_gen(void)\n{\n}\n"
+                 "l_ecx = black_audio_queue_completion(l_esi);\n"
+                 "RECOMP_ABI_CALL(0x0021C7EFu, sub_0021C7EF);\n"
+                 "{ 0x0021C7EFu, (recomp_func_t)sub_0021C7EF },\n")
+    with TemporaryDirectory() as temp:
+        directory = Path(temp)
+        source = directory / "recomp.c"
+        source.write_text(generated, encoding="utf-8")
+        generate.audit_audio_completion_boundary(directory)
+        for line in generated.splitlines():
+            if "0021C7EF" not in line and "black_audio_queue_completion" not in line:
+                continue
+            for changed in (generated.replace(line + "\n", "", 1), generated + generated):
+                source.write_text(changed, encoding="utf-8")
+                try:
+                    generate.audit_audio_completion_boundary(directory)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Missing or duplicate audio binding must fail closed")
+
+
 if __name__ == "__main__":
+    test_audio_completion_enqueue_boundary()
     test_disasm_forwards_feedback_seeds()
     test_post_transform_audit_describes_final_sources()
     test_empty_feedback_is_a_noop()
@@ -311,4 +360,4 @@ if __name__ == "__main__":
     test_native_lab_loadout_boundary()
     test_native_lab_streaming_boundary()
     test_scope_mask_native_boundary()
-    print("12 checks passed")
+    print("13 checks passed")

@@ -159,3 +159,92 @@ static void locked_trap_queue_case(void)
         close_voice();
     }
 }
+
+static HANDLE trap_irq_event;
+static volatile LONG trap_irq_assertions;
+
+static void trap_irq_line(int asserted)
+{
+    if (asserted) {
+        InterlockedIncrement(&trap_irq_assertions);
+        SetEvent(trap_irq_event);
+    }
+}
+
+typedef struct {
+    int delivered;
+    int payload_and_cursors;
+} TrapIrqContext;
+
+static DWORD WINAPI trap_irq_thread(LPVOID opaque)
+{
+    TrapIrqContext *ctx = opaque;
+    /* Model the kernel's connected ISR: it runs only after the real core
+     * asserts its enabled device line, and enters the production guard. */
+    if (WaitForSingleObject(trap_irq_event, 750) != WAIT_OBJECT_0) return 0;
+    mcpx_apu_irq_service_begin(d);
+    ctx->delivered = 1;
+    ctx->payload_and_cursors =
+        d->regs[NV_PAPU_FEDECMETH] == SE2FE_IDLE_VOICE &&
+        d->regs[NV_PAPU_FEDECPARAM] == 65 &&
+        d->regs[NV_PAPU_CVL2D] == 65 && d->regs[NV_PAPU_NVL2D] == 66;
+    /* This interrupt is the sole owner allowed to release the continuing
+     * voice. Its PIO write must preserve the still-pending trap payload. */
+    mcpx_apu_vp_write(d, NV1BA0_PIO_VOICE_LOCK, 0, 4);
+    d->regs[NV_PAPU_FECTL] = NV_PAPU_FECTL_FEMETHMODE_FREE_RUNNING;
+    d->regs[NV_PAPU_ISTS] &= ~NV_PAPU_ISTS_FETINTSTS;
+    update_irq(d);
+    mcpx_apu_irq_service_end(d);
+    return 0;
+}
+
+static void irq_unlocks_trap_queue_case(void)
+{
+    init_trap_queue_voice();
+    d->regs[NV_PAPU_IEN] = NV_PAPU_ISTS_GINTSTS | NV_PAPU_ISTS_FETINTSTS;
+    voice_lock(d, VOICE, true);
+    trap_irq_assertions = 0;
+    trap_irq_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!trap_irq_event) { check(0, "create IRQ delivery event"); exit(2); }
+    mcpx_apu_set_irq_line(trap_irq_line);
+    TrapIrqContext irq = {0};
+    TrapWaitContext ctx = {{{0}}};
+    HANDLE handler = CreateThread(NULL, 0, trap_irq_thread, &irq, 0, NULL);
+    HANDLE worker = CreateThread(NULL, 0, trap_wait_thread, &ctx, 0, NULL);
+    if (!handler || !worker) { check(0, "create IRQ continuation workers"); exit(2); }
+    DWORD status = WaitForSingleObject(worker, 1000);
+    int completed = status == WAIT_OBJECT_0;
+    check(completed, "fresh idle trap reaches ISR before locked continuing voice wait completes");
+    if (!completed) {
+        /* A negative control must report the missed deadline and cancel its
+         * own worker, rather than leave the suite hanging on the old wait. */
+        qemu_mutex_lock(&d->lock);
+        d->pause_requested = true;
+        qemu_cond_signal(&d->cond);
+        qemu_mutex_unlock(&d->lock);
+        status = WaitForSingleObject(worker, 1000);
+        if (status != WAIT_OBJECT_0) exit(3);
+    }
+    if (WaitForSingleObject(handler, 1000) != WAIT_OBJECT_0) exit(3);
+    check(irq.delivered && trap_irq_assertions == 1,
+          "enabled production core trap IRQ is published once before source processing");
+    check(irq.payload_and_cursors, "ISR receives original paired idle payload and unlink cursors");
+    check(d->regs[NV_PAPU_FEDECMETH] == SE2FE_IDLE_VOICE &&
+          d->regs[NV_PAPU_FEDECPARAM] == 65 &&
+          d->regs[NV_PAPU_CVL2D] == 65 && d->regs[NV_PAPU_NVL2D] == 66,
+          "IRQ unlock and continuation preserve captured trap payload and cursors");
+    check(!d->set_irq && !is_voice_locked(d, VOICE),
+          "IRQ-dependent voice unlock completes without leaving a pending publication");
+    check_trap_tick(ctx.mixbins);
+    check(d->vp.filters[64].resample_fetched == 32 &&
+          d->vp.filters[66].resample_fetched == 32 &&
+          d->vp.filters[68].resample_fetched == 32 &&
+          d->vp.filters[69].resample_fetched == 32,
+          "IRQ unlock processes each continuing voice exactly once");
+    mcpx_apu_set_irq_line(NULL);
+    CloseHandle(worker);
+    CloseHandle(handler);
+    CloseHandle(trap_irq_event);
+    trap_irq_event = NULL;
+    close_voice();
+}
