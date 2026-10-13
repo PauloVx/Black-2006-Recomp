@@ -138,15 +138,15 @@ are marked as machine-draft translations and still need fluent-speaker review.
 Before each run, the launcher installs the selected bank at
 `game/language/strings/MainUS.bin` and passes that language to the game. The
 launcher build preserves the recognized original English bank at
-`local/language-banks/en-US/MainUS.bin` and generates the four new language banks
-on a fresh setup. The launcher also preserves English before applying another language. If the
+`local/language-banks/en-US/MainUS.bin` and generates the Brazilian Portuguese
+bank plus four machine-draft language banks on a fresh setup. The launcher also preserves English before applying another language. If the
 installed bank was previously translated or changed and no English copy exists,
 restore the original English `MainUS.bin` from supported retail files to that
 source path before launching. The reference English bank SHA-256 is
 `B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB`.
 English and Brazilian Portuguese banks come from the user's local game files.
-The build can generate Spanish, French, German, and Italian banks under
-`local/language-banks/` when the preserved English bank is present. No licensed
+The build can generate Brazilian Portuguese, Spanish, French, German, and Italian
+banks under `local/language-banks/` when the preserved English bank is present. No licensed
 bank is included in Git. A missing selected bank leaves the installed text
 unchanged, and a new or invalid language setting defaults to English.
 

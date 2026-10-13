@@ -385,10 +385,9 @@ static uint32_t bnm_bound(uint32_t ui, uint32_t table_offset, uint32_t hash, uin
     return 0;
 }
 
-/* The game's localized string for a key hash (sub_001F3A80's lookup, without calling it). */
-static uint32_t bnm_string(uint32_t hash)
+/* Search the same manager instance passed to sub_001F3A80. */
+static uint32_t bnm_string_from_manager(uint32_t tm, uint32_t hash)
 {
-    const uint32_t tm = black_pc_ram_span(0x002D45D8u, 4u) ? GUEST32(0x002D45D8u) : 0u;
     unsigned t;
     if (!tm || !black_pc_ram_span(0x002F3B0Eu, 1u) || !*(const uint8_t *)((uintptr_t)g_xbox_mem_offset + 0x002F3B0Eu) ||
         !black_pc_ram_span(tm + 0xCE8u, 44u)) return 0;
@@ -412,6 +411,13 @@ static uint32_t bnm_string(uint32_t hash)
         }
     }
     return 0;
+}
+
+/* Native menu helpers without an explicit manager use BLACK's global instance. */
+static uint32_t bnm_string(uint32_t hash)
+{
+    const uint32_t tm = black_pc_ram_span(0x002D45D8u, 4u) ? GUEST32(0x002D45D8u) : 0u;
+    return bnm_string_from_manager(tm, hash);
 }
 
 static int bnm_utf8_to_utf16(uint32_t at, uint16_t *out, unsigned cap)

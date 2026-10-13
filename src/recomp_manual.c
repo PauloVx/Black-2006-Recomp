@@ -2839,27 +2839,46 @@ static uint32_t black_pc_brand_guest(uint32_t source)
 /* END BLACK_PC_BRANDING_RUNTIME */
 
 #include "black_native_menu.inc"
+#include "black_localization.h"
 
-/* Some frontend banks leave these keys unresolved and return the token itself.
- * Substitute the matching localized MainUS record instead of drawing the key. */
-static uint32_t black_pc_localized_fallback(uint32_t source)
+/* Retry the two known frontend labels with the exact caller-supplied manager.
+ * FE__LOADING is an alias: its text is stored under FE_LOADING in MainUS.bin. */
+static uint32_t black_pc_localized_fallback(uint32_t manager, uint32_t query, uint32_t source)
 {
-    static const char legal_screen[] = "$FE_LEGALSCREENTEXT";
-    static const char loading[] = "$FE___LOADING";
-    uint32_t record_id;
-    if (black_pc_ram_span(source, (uint32_t)sizeof(legal_screen)) &&
-        memcmp((const void *)((uintptr_t)g_xbox_mem_offset + source), legal_screen, sizeof(legal_screen)) == 0) {
-        record_id = 0x3A7C7126u;
-    } else if (black_pc_ram_span(source, (uint32_t)sizeof(loading)) &&
-        memcmp((const void *)((uintptr_t)g_xbox_mem_offset + source), loading, sizeof(loading)) == 0) {
-        record_id = 0x444D1E5Fu;
-    } else {
-        return source;
+    const uint32_t record_id = black_localization_fallback_record(query);
+    const uint32_t localized = record_id ? bnm_string_from_manager(manager, record_id) : 0u;
+    static int trace_enabled = -1;
+    static unsigned trace_count;
+    if (trace_enabled < 0) {
+        const char *e = getenv("RECOMP_BLACK_LOCALIZATION_TRACE");
+        trace_enabled = e && *e && *e != '0';
     }
+    if (trace_enabled && record_id && trace_count < 32u) {
+        fprintf(stderr, "[LOC-FALLBACK] query=%08X manager=%08X record=%08X source=%08X result=%08X\n",
+                query, manager, record_id, source, localized);
+        ++trace_count;
+    }
+    return localized ? localized : source;
+}
+
+/* Bounded opt-in trace for the two PT-BR front-end labels under investigation. */
+static void black_pc_localized_trace(uint32_t query, uint32_t result)
+{
+    static int enabled = -1;
+    static unsigned count;
+    const uint32_t record_id = black_localization_fallback_record(query);
+    char text[80];
+    unsigned i;
+    if (enabled < 0) { const char *e = getenv("RECOMP_BLACK_LOCALIZATION_TRACE"); enabled = e && *e && *e != '0'; }
+    if (!enabled || !record_id || count >= 32u || !black_pc_ram_span(result, 1u)) return;
+    text[0] = 0;
     {
-        const uint32_t localized = bnm_string(record_id);
-        return localized ? localized : source;
+        const char *s = (const char *)((uintptr_t)g_xbox_mem_offset + result);
+        for (i = 0; i + 1u < sizeof(text) && black_pc_ram_span(result + i, 1u) && s[i]; ++i) text[i] = (s[i] >= 32 && s[i] < 127) ? s[i] : '.';
+        text[i] = 0;
     }
+    fprintf(stderr, "[LOC-TRACE] query=%08X manager=%08X result=%08X text=%s\n", query, g_ecx, result, text);
+    ++count;
 }
 
 /* The confirmation hint also works with RECOMP_NATIVE_MENUS=0, and before a
@@ -2879,10 +2898,12 @@ static void black_movie_skip_font(void)
 void sub_001F3A80(void)
 {
     const uint32_t stack = g_esp;
+    const uint32_t manager = g_ecx;
     const uint32_t hash = black_pc_ram_span(stack, 8u) ? GUEST32(stack + 4u) : 0u;
     size_t i;
     sub_001F3A80_gen();
-    if (g_eax) g_eax = black_pc_localized_fallback(g_eax);
+    black_pc_localized_trace(hash, g_eax);
+    g_eax = black_pc_localized_fallback(manager, hash, g_eax);
     if (!g_eax) return;
     {
         const unsigned int guest_csr = _mm_getcsr();

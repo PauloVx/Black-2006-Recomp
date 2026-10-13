@@ -32,6 +32,29 @@ def synthetic_bank(identifiers, indexed_count):
 
 
 class BankPipelineTests(unittest.TestCase):
+    def test_pt_br_builder_keeps_real_fallback_ids_and_translated_text(self):
+        catalog = ROOT / "localization" / "game" / "es.jsonl"
+        identifiers = [int(json.loads(line)["id"], 16)
+                       for line in catalog.read_text(encoding="utf-8").splitlines()]
+        source = synthetic_bank(identifiers, 256)
+        translation = json.loads((ROOT / "translations" / "pt-BR" / "MainUS.json").read_text(encoding="utf-8"))
+        translation["englishBaseSha256"] = hashlib.sha256(source).hexdigest().upper()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base, pt_br, output = root / "english.bin", root / "pt-BR.json", root / "pt-BR.bin"
+            base.write_bytes(source)
+            pt_br.write_text(json.dumps(translation, ensure_ascii=False), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(SCRIPTS / "build_pt_br_bank.py"),
+                                     str(base), str(pt_br), str(output)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            bank = MainUSBank.parse(output.read_bytes())
+            values = {record.record_id: record.text for record in bank.records}
+            self.assertIn("2018/2019", values[0x3A7C7126])
+            self.assertEqual(values[0x444D1E5F], "Carregando")
+            self.assertEqual(values[0x545DE522], "Carregando")
+
     def bootstrap(self, installed, fallback, digest):
         powershell = shutil.which("powershell") or shutil.which("pwsh")
         if not powershell:

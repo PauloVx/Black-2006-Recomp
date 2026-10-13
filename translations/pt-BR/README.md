@@ -6,4 +6,4 @@ The table was extracted by matching the English and PT-BR `MainUS.bin` banks by 
 
 Reference English bank SHA-256: `B23EEB4AD86A72894B40E7239D0EA8842E5A6BC05936A936401B608070E8C7BB`.
 
-This file is a translation source for review and future language work. The launcher's current language selector still expects a PT-BR `MainUS.bin` in `local/language-banks/pt-BR/`; generating that runtime bank from this JSON is a separate integration step.
+This is the editable PT-BR translation source. The launcher build generates `local/language-banks/pt-BR/MainUS.bin` from it and the verified English bank. The generated bank keeps every English record ID and ordering, applying these translations and retaining English for omitted entries. The licensed English bank and generated PT-BR bank remain local and are not committed.

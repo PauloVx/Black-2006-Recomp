@@ -60,12 +60,10 @@ if ($python) {
     if (Test-Path -LiteralPath $englishBank) {
         if ((Test-Path -LiteralPath $ptBrSource) -and (Test-Path -LiteralPath $ptBrBankBuilder)) {
             $ptBrBank = Join-Path $projectRoot 'local\language-banks\pt-BR\MainUS.bin'
-            if ($Force -or -not (Test-Path -LiteralPath $ptBrBank) -or
-                (Get-Item -LiteralPath $englishBank).LastWriteTimeUtc -gt (Get-Item -LiteralPath $ptBrBank).LastWriteTimeUtc -or
-                (Get-Item -LiteralPath $ptBrSource).LastWriteTimeUtc -gt (Get-Item -LiteralPath $ptBrBank).LastWriteTimeUtc) {
-                & $python.Source @pythonArgs $ptBrBankBuilder $englishBank $ptBrSource $ptBrBank
-                if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Brazilian Portuguese MainUS bank.' }
-            }
+            # The bank is small; regenerate it every time to avoid stale output
+            # when source timestamps are preserved or copied between builds.
+            & $python.Source @pythonArgs $ptBrBankBuilder $englishBank $ptBrSource $ptBrBank
+            if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Brazilian Portuguese MainUS bank.' }
         } else {
             Write-Output 'Skipped the Brazilian Portuguese game bank: its translation source or builder is missing.'
         }
