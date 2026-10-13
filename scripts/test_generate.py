@@ -346,7 +346,48 @@ def test_audio_completion_enqueue_boundary():
                     raise AssertionError("Missing or duplicate audio binding must fail closed")
 
 
+def test_weapon_runtime_consumers():
+    # These minimal fixtures describe read sites, not copied guest functions.
+    # Native writes and unrelated ammunition/magazine operations must survive.
+    reads = {
+        "sub_001B7390": ("silver", ("SET_HI8(l_ecx, MEM8(l_eax + 0x5CB0));",)),
+        "sub_001D3790": ("silver", ("SET_HI8(l_ecx, MEM8(l_eax + 0x5CB0));",)),
+        "sub_001D4F30": ("silver", ("SET_LO8(l_ecx, MEM8(l_eax + 0x5CB0));",)),
+        "sub_001EBD60": ("silver", ("SET_HI8(l_ecx, MEM8(ebp + 0x5CB0));",)),
+        "sub_001EDC90": ("silver", ("SET_HI8(l_ecx, MEM8(ebp + 0x5CB0));",
+                                     "SET_LO8(l_eax, MEM8(ebp + 0x5CB0));",
+                                     "SET_HI8(l_eax, MEM8(ebp + 0x5CB0));")),
+        "sub_0012CEC0": ("ammo", ("SET_LO8(l_edx, MEM8(l_ecx + 0x5CB0));",)),
+        "sub_0013A920": ("ammo", ("SET_LO8(l_eax, MEM8(l_ecx + 0x5CB0));",)),
+        "sub_001EEFD0": ("ammo", ("SET_LO8(l_ecx, MEM8(l_edx + 0x5CB0));",
+                                   "SET_LO8(l_eax, MEM8(l_edx + 0x5CB0));")),
+    }
+    guards = ("MEM8(ebp + 0x5CB0) = 0;\n"
+              "MEM8(ebp + 0x5CB0) = 1;\n"
+              "consume_magazine();\nrefill_reserve();\n")
+    for name, (kind, sites) in reads.items():
+        body = guards + "\n".join(sites) + "\n"
+        hooked = generate.weapon_runtime_hooks(name, body)
+        helper = "black_silver_weapon_flag" if kind == "silver" else "black_infinite_ammo_flag"
+        other = "black_infinite_ammo_flag" if kind == "silver" else "black_silver_weapon_flag"
+        assert hooked.startswith(guards)
+        assert hooked.count(helper + "(") == len(sites)
+        assert other not in hooked
+        assert generate.weapon_runtime_hooks(name, hooked) == hooked
+        for site in sites:
+            for changed in (body.replace(site, "changed();", 1), body + site,
+                            hooked + site, hooked + hooked):
+                try:
+                    generate.weapon_runtime_hooks(name, changed)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Changed weapon runtime read must fail closed: " + name)
+    assert generate.weapon_runtime_hooks("unrelated", guards) == guards
+
+
 if __name__ == "__main__":
+    test_weapon_runtime_consumers()
     test_audio_completion_enqueue_boundary()
     test_disasm_forwards_feedback_seeds()
     test_post_transform_audit_describes_final_sources()
@@ -360,4 +401,4 @@ if __name__ == "__main__":
     test_native_lab_loadout_boundary()
     test_native_lab_streaming_boundary()
     test_scope_mask_native_boundary()
-    print("13 checks passed")
+    print("14 checks passed")

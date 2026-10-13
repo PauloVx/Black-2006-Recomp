@@ -318,8 +318,40 @@ def audio_completion_queue(name, body):
     return body[:begin] + replacement + body[stop:]
 
 
+def weapon_runtime_hooks(name, body):
+    # Keep the native reward byte intact. Silver affects bank keys, loading,
+    # registration, unloading and weapon IDs; ammunition affects only its
+    # native reserve-refill branches and HUD reads.
+    silver_reads = {
+        "sub_001B7390": ("SET_HI8(l_ecx, MEM8(l_eax + 0x5CB0));",),
+        "sub_001D3790": ("SET_HI8(l_ecx, MEM8(l_eax + 0x5CB0));",),
+        "sub_001D4F30": ("SET_LO8(l_ecx, MEM8(l_eax + 0x5CB0));",),
+        "sub_001EBD60": ("SET_HI8(l_ecx, MEM8(ebp + 0x5CB0));",),
+        "sub_001EDC90": ("SET_HI8(l_ecx, MEM8(ebp + 0x5CB0));",
+                          "SET_LO8(l_eax, MEM8(ebp + 0x5CB0));",
+                          "SET_HI8(l_eax, MEM8(ebp + 0x5CB0));"),
+    }
+    ammo_reads = {
+        "sub_0012CEC0": ("SET_LO8(l_edx, MEM8(l_ecx + 0x5CB0));",),
+        "sub_0013A920": ("SET_LO8(l_eax, MEM8(l_ecx + 0x5CB0));",),
+        "sub_001EEFD0": ("SET_LO8(l_ecx, MEM8(l_edx + 0x5CB0));",
+                          "SET_LO8(l_eax, MEM8(l_edx + 0x5CB0));"),
+    }
+    for reads, helper in ((silver_reads, "black_silver_weapon_flag"),
+                          (ammo_reads, "black_infinite_ammo_flag")):
+        for original in reads.get(name, ()):
+            hooked = original.replace("MEM8(", helper + "(MEM8(").replace("));", ")));", 1)
+            if hooked in body:
+                if body.count(hooked) != 1 or original in body:
+                    raise ValueError("Weapon runtime read contract changed: " + original)
+            else:
+                body = replace_once(body, original, hooked)
+    return body
+
+
 def title_hooks(name, body):
     body = audio_completion_queue(name, body)
+    body = weapon_runtime_hooks(name, body)
     # Address metadata selects locations. Original instructions are generated
     # from the local XBE, rather than stored as copied function bodies here.
     if name == "sub_0007EA80":
@@ -775,6 +807,8 @@ def main():
     chunks = sorted(generated.glob("recomp_[0-9]*.c"))
     emit_idct("\n".join(path.read_text(encoding="utf-8") for path in chunks), root / "src/black_xmv_idct.inc")
     declarations = "\nextern float black_osc_factor(void);\nextern float black_ctl_k(float);\nextern void black_movie_tag_flip(uint32_t);\nextern void black_pickup_text_ready(uint32_t);\nextern void black_weapon_trace(uint32_t, uint32_t);\nextern void black_weapon_model_trace(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);\nextern void black_weapon_attachment_trace(uint32_t, uint32_t);\nextern void black_viewmodel_muzzle_gate(uint32_t);\nextern void black_test_weapon_loadout(uint32_t);\nextern void black_viewmodel_owner(uint32_t);\nextern uint32_t black_viewmodel_draw_begin(uint32_t);\nextern void black_viewmodel_draw_end(uint32_t);\nextern void black_viewmodel_constants(uint32_t);\nextern void black_viewmodel_muzzle_constants(uint32_t, uint32_t);\n"
+    declarations += "extern int black_silver_weapon_flag(int);\n"
+    declarations += "extern int black_infinite_ammo_flag(int);\n"
     declarations += "\nextern void black_test_stream_unit(uint32_t);\n"
     declarations += "\nextern uint32_t black_audio_queue_completion(uint32_t);\n"
     for chunk in chunks:

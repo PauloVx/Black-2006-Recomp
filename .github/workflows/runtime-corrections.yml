@@ -73,6 +73,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Launcher settings regression failed' }
           ./tests/launcher_language/test-direct-launch.ps1 -BuildDirectory .work/launcher-direct-regressions -LauncherDirectory .work/launcher-publication
           if ($LASTEXITCODE -ne 0) { throw 'Direct launcher regression failed' }
+          ./tests/save_profile/test-save-profile.ps1 -BuildDirectory .work/launcher-save-profile-regressions
+          if ($LASTEXITCODE -ne 0) { throw 'Save profile regression failed' }
       - name: Test generated-source audit and indirect-call feedback
         run: python scripts/test_generate.py
       - name: Test audio bank parsing and extraction boundaries
@@ -86,6 +88,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Weapon diagnostic build failed' }
           ctest --test-dir build-weapon-trace -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'Weapon diagnostic regression failed' }
+      - name: Build and run independent weapon runtime modes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S tests/weapon_runtime -B build-weapon-runtime -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Weapon runtime configure failed' }
+          foreach ($configuration in @('Release', 'Debug')) {
+            cmake --build build-weapon-runtime --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw 'Weapon runtime build failed' }
+            ctest --test-dir build-weapon-runtime -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw 'Weapon runtime regression failed' }
+          }
       - name: Build and run first-person projection regressions
         shell: pwsh
         run: |

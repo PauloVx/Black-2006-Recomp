@@ -466,6 +466,49 @@ int black_idle_yield_skip(void)
     return !keep && black_step_halved && black_hz >= 120;
 }
 
+/* BEGIN BLACK_WEAPON_RUNTIME_MODES */
+/* Silver weapon selection is native by default; force modes affect this process only. */
+int black_silver_weapons_mode(void)
+{
+    static int mode = -2;
+    if (mode == -2) {
+        const char *value = getenv("RECOMP_BLACK_SILVER_WEAPONS");
+        mode = -1;
+        if (value && strcmp(value, "1") == 0) mode = 1;
+        else if (value && strcmp(value, "0") == 0) mode = 0;
+        fprintf(stderr, "[BLACK] silver weapon runtime mode: %s\n",
+                mode < 0 ? "native" : mode ? "forced on" : "forced off");
+    }
+    return mode;
+}
+
+/* Runtime-only infinite ammunition; this does not edit Profile data. */
+int black_infinite_ammo_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("RECOMP_BLACK_INFINITE_AMMO");
+        enabled = value && strcmp(value, "1") == 0;
+        fprintf(stderr, "[BLACK] infinite ammunition runtime toggle: %s\n", enabled ? "on" : "off");
+    }
+    return enabled;
+}
+
+/* Resolve each consumer without changing the native reward byte. In particular,
+ * forcing silver artwork must not grant ammunition, and replenishing ammunition
+ * must not select a different weapon bank. Native rewards remain the default. */
+int black_silver_weapon_flag(int native_flag)
+{
+    const int mode = black_silver_weapons_mode();
+    return mode < 0 ? native_flag : mode;
+}
+
+int black_infinite_ammo_flag(int native_flag)
+{
+    return native_flag || black_infinite_ammo_enabled();
+}
+/* END BLACK_WEAPON_RUNTIME_MODES */
+
 /* Lab hook: RECOMP_BLACK_LEVEL=n[,stage] starts the mission the frontend asked for from level n (and stage) instead, to
  * reach scenes a scripted run cannot walk to. Without the variable the values pass through. */
 void black_level_override(uint8_t *level, uint8_t *stage)
@@ -2857,6 +2900,47 @@ static uint32_t black_pc_brand_guest(uint32_t source)
 /* END BLACK_PC_BRANDING_RUNTIME */
 
 #include "black_native_menu.inc"
+#include "black_localization.h"
+
+/* Retry the two known frontend labels with the exact caller-supplied manager.
+ * FE__LOADING is an alias: its text is stored under FE_LOADING in MainUS.bin. */
+static uint32_t black_pc_localized_fallback(uint32_t manager, uint32_t query, uint32_t source)
+{
+    const uint32_t record_id = black_localization_fallback_record(query);
+    const uint32_t localized = record_id ? bnm_string_from_manager(manager, record_id) : 0u;
+    static int trace_enabled = -1;
+    static unsigned trace_count;
+    if (trace_enabled < 0) {
+        const char *e = getenv("RECOMP_BLACK_LOCALIZATION_TRACE");
+        trace_enabled = e && *e && *e != '0';
+    }
+    if (trace_enabled && record_id && trace_count < 32u) {
+        fprintf(stderr, "[LOC-FALLBACK] query=%08X manager=%08X record=%08X source=%08X result=%08X\n",
+                query, manager, record_id, source, localized);
+        ++trace_count;
+    }
+    return localized ? localized : source;
+}
+
+/* Bounded opt-in trace for the two PT-BR front-end labels under investigation. */
+static void black_pc_localized_trace(uint32_t query, uint32_t result)
+{
+    static int enabled = -1;
+    static unsigned count;
+    const uint32_t record_id = black_localization_fallback_record(query);
+    char text[80];
+    unsigned i;
+    if (enabled < 0) { const char *e = getenv("RECOMP_BLACK_LOCALIZATION_TRACE"); enabled = e && *e && *e != '0'; }
+    if (!enabled || !record_id || count >= 32u || !black_pc_ram_span(result, 1u)) return;
+    text[0] = 0;
+    {
+        const char *s = (const char *)((uintptr_t)g_xbox_mem_offset + result);
+        for (i = 0; i + 1u < sizeof(text) && black_pc_ram_span(result + i, 1u) && s[i]; ++i) text[i] = (s[i] >= 32 && s[i] < 127) ? s[i] : '.';
+        text[i] = 0;
+    }
+    fprintf(stderr, "[LOC-TRACE] query=%08X manager=%08X result=%08X text=%s\n", query, g_ecx, result, text);
+    ++count;
+}
 
 /* The confirmation hint also works with RECOMP_NATIVE_MENUS=0, and before a
  * native page has loaded its fonts. The font is copied by the runtime, so the
@@ -2875,9 +2959,12 @@ static void black_movie_skip_font(void)
 void sub_001F3A80(void)
 {
     const uint32_t stack = g_esp;
+    const uint32_t manager = g_ecx;
     const uint32_t hash = black_pc_ram_span(stack, 8u) ? GUEST32(stack + 4u) : 0u;
     size_t i;
     sub_001F3A80_gen();
+    black_pc_localized_trace(hash, g_eax);
+    g_eax = black_pc_localized_fallback(manager, hash, g_eax);
     if (!g_eax) return;
     {
         const unsigned int guest_csr = _mm_getcsr();

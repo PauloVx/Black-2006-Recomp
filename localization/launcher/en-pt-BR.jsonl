@@ -290,3 +290,68 @@
 {"id": "0289", "text": "F11 toggles fullscreen. In-game prompts show your real bindings.", "pt-BR": "F11 alterna tela cheia. Os comandos na tela mostram seus atalhos."}
 {"id": "0290", "text": " default on this ", "pt-BR": " padrão neste PC com "}
 {"id": "0291", "text": "-thread PC", "pt-BR": " threads"}
+{"id": "1000", "text": "Save", "pt-BR": "Salvar"}
+{"id": "1001", "text": "Profile", "pt-BR": "Perfil"}
+{"id": "1002", "text": "Browse file", "pt-BR": "Procurar arquivo"}
+{"id": "1003", "text": "Slot", "pt-BR": "Slot"}
+{"id": "1004", "text": "Operator name", "pt-BR": "Nome do operador"}
+{"id": "1005", "text": "Unlock all", "pt-BR": "Desbloquear tudo"}
+{"id": "1006", "text": "Mission results: Empty = no result; 0 = no threshold; 1 = below target; 2 = target reached.", "pt-BR": "Resultados das missões: Vazio = sem resultado; 0 = sem limite; 1 = abaixo da meta; 2 = meta atingida."}
+{"id": "1007", "text": "Difficulty", "pt-BR": "Dificuldade"}
+{"id": "1008", "text": "Mission", "pt-BR": "Missão"}
+{"id": "1009", "text": "Available", "pt-BR": "Disponível"}
+{"id": "1010", "text": "Result", "pt-BR": "Resultado"}
+{"id": "1011", "text": "Apply Profile changes", "pt-BR": "Aplicar alterações do perfil"}
+{"id": "1012", "text": "Restore latest backup", "pt-BR": "Restaurar backup mais recente"}
+{"id": "1013", "text": "Profile preview", "pt-BR": "Prévia do perfil"}
+{"id": "1014", "text": "Choose one of the Profile files found in game\\UDATA.", "pt-BR": "Escolha um dos arquivos de perfil encontrados em game\\UDATA."}
+{"id": "1015", "text": "No Profile found under game\\UDATA.", "pt-BR": "Nenhum perfil encontrado em game\\UDATA."}
+{"id": "1016", "text": "6,144 bytes  |  SHA-256 ", "pt-BR": "6.144 bytes  |  SHA-256 "}
+{"id": "1017", "text": "Loaded and integrity-checked. Changes stay pending until Apply.", "pt-BR": "Arquivo carregado e integridade verificada. As alterações ficam pendentes até serem aplicadas."}
+{"id": "1018", "text": "This Profile could not be safely edited.", "pt-BR": "Não foi possível editar este perfil com segurança."}
+{"id": "1019", "text": "(empty slot)", "pt-BR": "(slot vazio)"}
+{"id": "1020", "text": "Could not scan game\\UDATA: ", "pt-BR": "Não foi possível verificar game\\UDATA: "}
+{"id": "1021", "text": "Find a Profile file", "pt-BR": "Localizar arquivo de perfil"}
+{"id": "1022", "text": "All files", "pt-BR": "Todos os arquivos"}
+{"id": "1023", "text": "Profile name", "pt-BR": "Nome do perfil"}
+{"id": "1024", "text": "Save edit stopped: ", "pt-BR": "Edição do save interrompida: "}
+{"id": "1025", "text": "Profile not changed", "pt-BR": "Perfil não alterado"}
+{"id": "1026", "text": "Unlock campaign", "pt-BR": "Desbloquear campanha"}
+{"id": "1027", "text": "This marks every mission available and every mission result complete for the selected slot. It changes campaign progress. Continue?", "pt-BR": "Isto marca todas as missões como disponíveis e concluídas no slot selecionado, alterando o progresso da campanha. Continuar?"}
+{"id": "1028", "text": "All campaign entries are staged as available and complete. Nothing is written until Apply.", "pt-BR": "Todas as missões foram preparadas como disponíveis e concluídas. Nada será gravado até aplicar as alterações."}
+{"id": "1029", "text": "Select a Profile slot to preview pending values and hash.", "pt-BR": "Selecione um slot de perfil para visualizar os valores pendentes e o hash."}
+{"id": "1030", "text": "Empty", "pt-BR": "Vazio"}
+{"id": "1031", "text": "Mission changes are pending. Review the preview before Apply.", "pt-BR": "Há alterações nas missões pendentes. Confira a prévia antes de aplicar."}
+{"id": "1032", "text": "No changes to apply. Profile unchanged; no backup created. SHA-256 ", "pt-BR": "Não há alterações para aplicar. O perfil não foi modificado e nenhum backup foi criado. SHA-256 "}
+{"id": "1033", "text": "Applied and verified. Before SHA-256 ", "pt-BR": "Alterações aplicadas e verificadas. SHA-256 anterior "}
+{"id": "1034", "text": "; after SHA-256 ", "pt-BR": "; SHA-256 posterior "}
+{"id": "1035", "text": "; backup: ", "pt-BR": "; backup: "}
+{"id": "1036", "text": "No Profile backup exists yet.", "pt-BR": "Ainda não existe um backup do perfil."}
+{"id": "1037", "text": "Restore this Profile backup? A backup of the current file will be created first.\n\n", "pt-BR": "Restaurar este backup do perfil? Primeiro será criado um backup do arquivo atual.\n\n"}
+{"id": "1038", "text": "Restore Profile", "pt-BR": "Restaurar perfil"}
+{"id": "1039", "text": "Backup restored; current file was also backed up as ", "pt-BR": "Backup restaurado; o arquivo atual também foi salvo em "}
+{"id": "1040", "text": "Pending preview", "pt-BR": "Prévia das alterações"}
+{"id": "1041", "text": "Candidate SHA-256 ", "pt-BR": "SHA-256 candidato "}
+{"id": "1042", "text": "SHA-256 ", "pt-BR": "SHA-256 "}
+{"id": "1043", "text": "No changes", "pt-BR": "Sem alterações"}
+{"id": "1044", "text": "Preview unavailable: ", "pt-BR": "Não foi possível gerar a prévia: "}
+{"id": "1045", "text": "Easy", "pt-BR": "Fácil"}
+{"id": "1046", "text": "Normal", "pt-BR": "Normal"}
+{"id": "1047", "text": "Hard", "pt-BR": "Difícil"}
+{"id": "1048", "text": "Black Ops", "pt-BR": "Black Ops"}
+{"id": "1049", "text": "Mission ", "pt-BR": "Missão "}
+{"id": "1050", "text": "Choose Profile backup", "pt-BR": "Choose Profile backup"}
+{"id": "1051", "text": "Force off", "pt-BR": "Force off"}
+{"id": "1052", "text": "Force on", "pt-BR": "Force on"}
+{"id": "1053", "text": "Infinite ammunition (runtime only)", "pt-BR": "Infinite ammunition (runtime only)"}
+{"id": "1054", "text": "Profile backups", "pt-BR": "Profile backups"}
+{"id": "1055", "text": "Profile name has pending changes. Review the preview before Apply.", "pt-BR": "O nome do perfil tem alterações pendentes. Confira a prévia antes de aplicar."}
+{"id": "1056", "text": "Reload", "pt-BR": "Reload"}
+{"id": "1057", "text": "Reset selected mission", "pt-BR": "Reset selected mission"}
+{"id": "1058", "text": "Results", "pt-BR": "Resultados"}
+{"id": "1059", "text": "Runtime only; does not edit the Profile.", "pt-BR": "Runtime only; does not edit the Profile."}
+{"id": "1060", "text": "Selected mission restored to its values when this Profile was loaded. Apply writes the change.", "pt-BR": "Selected mission restored to its values when this Profile was loaded. Apply writes the change."}
+{"id": "1061", "text": "Silver weapons", "pt-BR": "Silver weapons"}
+{"id": "1062", "text": "Slot ", "pt-BR": "Slot "}
+{"id": "1063", "text": "Use Profile/game setting", "pt-BR": "Use Profile/game setting"}
+{"id": "1064", "text": "validated Profile backups available.", "pt-BR": "validated Profile backups available."}
