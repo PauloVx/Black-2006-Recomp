@@ -177,6 +177,51 @@ static void black_movie_skip_font(void);
 
 #define GUEST32(va) (*(uint32_t *)((uintptr_t)g_xbox_mem_offset + (va)))
 
+/* DirectSound's idle-voice completion edits the same intrusive lists as guest
+ * threads at DISPATCH_LEVEL. On Xbox its busy-counter test runs on the same
+ * CPU; the host ISR can otherwise pass that test while another host thread
+ * starts a list edit. A captured freeze had the completion sentinel pointing
+ * to a self-linked voice, so the cleanup DPC could never finish.
+ *
+ * Take dispatch ownership without waiting and retain the ISR's device IRQL.
+ * If busy, use the native early-return ABI. The ISR still releases the FE trap;
+ * the inactive voice remains linked and the APU retries it on a later frame.
+ * The generated function retains native completion and acknowledgment work.
+ * --exclude-manual keeps this wrapper on direct calls as well as dispatch. */
+extern int xbox_IrqlTryEnterDispatch(void);
+extern void xbox_IrqlLeaveDispatch(void);
+extern void sub_0021C7EF_gen(void);
+
+void sub_0021C7EF(void)
+{
+    if (!xbox_IrqlTryEnterDispatch()) {
+        g_eax = GUEST32(g_esp + 4);
+        g_esp += 8;
+        return;
+    }
+    sub_0021C7EF_gen();
+    xbox_IrqlLeaveDispatch();
+}
+
+/* Completion is a state-based work item, represented by one embedded link.
+ * A voice can restart before its deferred cleanup runs. Enqueueing the same
+ * link again would turn a one-node list into the captured head -> self-node
+ * cycle. Retain the pending work item; the native caller still updates its
+ * status, work flags and DPC notification on every completion. */
+uint32_t black_audio_queue_completion(uint32_t voice)
+{
+    uint32_t node = voice + 0x54;
+    uint32_t head = GUEST32(voice + 8) + 0x4A0;
+    if (GUEST32(node) == node && GUEST32(node + 4) == node) {
+        uint32_t tail = GUEST32(head + 4);
+        GUEST32(node) = head;
+        GUEST32(node + 4) = tail;
+        GUEST32(tail) = node;
+        GUEST32(head + 4) = node;
+    }
+    return head;
+}
+
 typedef struct BlackMovieSkipIdentity {
     uint32_t manager, movie, decoder;
     int kind;

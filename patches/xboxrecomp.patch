@@ -257,7 +257,7 @@ index f7b9f8f..79b537b 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
 
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..09f2a10 100644
+index 459be77..7d3339d 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -324,7 +324,7 @@ index 459be77..09f2a10 100644
      if (d->regs[NV_PAPU_FECTL] & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
          qatomic_or(&d->regs[NV_PAPU_ISTS], NV_PAPU_ISTS_FETINTSTS);
      }
-@@ -67,12 +111,16 @@ static void update_irq(MCPXAPUState *d)
+@@ -67,12 +111,27 @@ static void update_irq(MCPXAPUState *d)
          ((d->regs[NV_PAPU_ISTS] & ~NV_PAPU_ISTS_GINTSTS) &
           d->regs[NV_PAPU_IEN])) {
          qatomic_or(&d->regs[NV_PAPU_ISTS], NV_PAPU_ISTS_GINTSTS);
@@ -340,10 +340,21 @@ index 459be77..09f2a10 100644
 +        if (s_irq_line) {
 +            s_irq_line(0);
 +        }
++    }
++}
++
++/* Caller holds d->lock. A VP continuation may wait for a voice that the
++ * newly trapped guest ISR must unlock; publish before releasing that lock
++ * for the wait rather than waiting for the complete frame to return. */
++void mcpx_apu_publish_pending_irq(MCPXAPUState *d)
++{
++    if (d->set_irq) {
++        update_irq(d);
++        d->set_irq = false;
      }
  }
 
-@@ -85,6 +133,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+@@ -85,6 +144,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
      MCPXAPUState *d = (MCPXAPUState *)opaque;
      uint64_t r = 0;
 
@@ -351,7 +362,7 @@ index 459be77..09f2a10 100644
      switch (addr) {
      case NV_PAPU_XGSCNT:
          r = (uint64_t)(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 100);
-@@ -101,6 +150,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
+@@ -101,6 +161,7 @@ uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
       *         (unsigned long long)addr, size, (unsigned long long)r);
       */
      (void)size;
@@ -359,7 +370,7 @@ index 459be77..09f2a10 100644
      return r;
  }
 
-@@ -115,6 +165,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+@@ -115,6 +176,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
       */
      (void)size;
 
@@ -367,7 +378,7 @@ index 459be77..09f2a10 100644
      switch (addr) {
      case NV_PAPU_ISTS:
          qatomic_and(&d->regs[NV_PAPU_ISTS], ~(uint32_t)val);
-@@ -163,6 +214,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
+@@ -163,6 +225,7 @@ void mcpx_apu_write(void *opaque, hwaddr addr, uint64_t val,
          }
          break;
      }
@@ -375,7 +386,7 @@ index 459be77..09f2a10 100644
  }
 
  /* ============================================================
-@@ -203,10 +255,225 @@ typedef struct {
+@@ -203,10 +266,225 @@ typedef struct {
 
  static WaveOutState g_waveout = { 0 };
 
@@ -601,7 +612,7 @@ index 459be77..09f2a10 100644
      d->monitor.queued_bytes_low = 1024;
      d->monitor.queued_bytes_high = 3072;
 
-@@ -252,6 +519,8 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
+@@ -252,6 +530,8 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
  void mcpx_apu_monitor_finalize(MCPXAPUState *d)
  {
      (void)d;
@@ -610,7 +621,7 @@ index 459be77..09f2a10 100644
      if (xa2_is_active()) {
          xa2_shutdown();
          return;
-@@ -270,96 +539,127 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
+@@ -270,96 +550,127 @@ void mcpx_apu_monitor_finalize(MCPXAPUState *d)
 
  void mcpx_apu_monitor_frame(MCPXAPUState *d)
  {
@@ -816,7 +827,7 @@ index 459be77..09f2a10 100644
  }
 
  /* ============================================================
-@@ -374,10 +674,9 @@ static void throttle(MCPXAPUState *d)
+@@ -374,10 +685,9 @@ static void throttle(MCPXAPUState *d)
 
      int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
 
@@ -830,7 +841,7 @@ index 459be77..09f2a10 100644
 
      while (!d->pause_requested) {
          now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
-@@ -388,7 +687,8 @@ static void throttle(MCPXAPUState *d)
+@@ -388,7 +698,8 @@ static void throttle(MCPXAPUState *d)
              break;
          }
      }
@@ -840,7 +851,7 @@ index 459be77..09f2a10 100644
 
      d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
  }
-@@ -432,13 +732,37 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,13 +743,37 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
 
@@ -879,7 +890,7 @@ index 459be77..09f2a10 100644
              d->is_idle = true;
              qemu_cond_signal(&d->idle_cond);
              qemu_cond_wait(&d->cond, &d->lock);
-@@ -446,10 +770,24 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -446,10 +781,24 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
 
@@ -908,7 +919,7 @@ index 459be77..09f2a10 100644
 
          int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
                                  NV_PAPU_SECTL_XCNTMODE);
-@@ -458,16 +796,59 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -458,16 +807,59 @@ static void *mcpx_apu_frame_thread(void *arg)
                            !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
                            !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
 
@@ -968,7 +979,7 @@ index 459be77..09f2a10 100644
      qemu_mutex_unlock(&d->lock);
      return NULL;
  }
-@@ -499,6 +880,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +891,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -976,7 +987,7 @@ index 459be77..09f2a10 100644
 
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +898,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +909,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
 
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -988,7 +999,7 @@ index 459be77..09f2a10 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +913,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +924,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -1003,7 +1014,7 @@ index 459be77..09f2a10 100644
 
      d->set_irq = false;
      d->exiting = false;
-@@ -546,13 +941,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -546,13 +952,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      /* Init software mixer for DirectSound bridge */
      mixer_init();
 
@@ -1017,7 +1028,7 @@ index 459be77..09f2a10 100644
      /* Start background frame thread */
      qemu_thread_create(&d->apu_thread, "mcpx.apu_thread",
                         mcpx_apu_frame_thread, d, QEMU_THREAD_JOINABLE);
-@@ -581,7 +969,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -581,7 +980,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
 
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
@@ -1026,7 +1037,7 @@ index 459be77..09f2a10 100644
 
      free(d);
      g_state = NULL;
-@@ -614,8 +1002,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -614,8 +1013,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -1040,7 +1051,7 @@ index 459be77..09f2a10 100644
  }
 
  /* ============================================================
-@@ -630,6 +1022,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +1033,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -3207,7 +3218,7 @@ index dd6bec1..23502c4 100644
 
  /* Stub address space - just passed to ldl_le_phys etc. (ignored) */
 diff --git a/src/apu/apu_state.h b/src/apu/apu_state.h
-index 651b334..fa9ac32 100644
+index 651b334..a8a5307 100644
 --- a/src/apu/apu_state.h
 +++ b/src/apu/apu_state.h
 @@ -24,6 +24,8 @@
@@ -3325,7 +3336,15 @@ index 651b334..fa9ac32 100644
          void *stream; /* SDL_AudioStream* - stubbed */
          int queued_bytes_low, queued_bytes_high;
      } monitor;
-@@ -513,11 +535,24 @@ void mcpx_apu_vp_finalize(MCPXAPUState *d);
+@@ -508,16 +530,32 @@ struct MCPXAPUState {
+  * ============================================================ */
+
+ /* VP functions */
++/* Publish deferred IRQ state with d->lock held, before an interrupt-dependent
++ * VP wait releases it. Does not change trap payload or voice-list cursors. */
++void mcpx_apu_publish_pending_irq(MCPXAPUState *d);
+ void mcpx_apu_vp_init(MCPXAPUState *d);
+ void mcpx_apu_vp_finalize(MCPXAPUState *d);
  void mcpx_apu_vp_frame(MCPXAPUState *d, float mixbins[NUM_MIXBINS][NUM_SAMPLES_PER_FRAME]);
  void mcpx_apu_vp_reset(MCPXAPUState *d);
 
@@ -3352,7 +3371,7 @@ index 651b334..fa9ac32 100644
  extern MCPXAPUState *g_state;
  extern struct McpxApuDebug g_dbg, g_dbg_cache;
 diff --git a/src/apu/apu_vp.c b/src/apu/apu_vp.c
-index b9f429e..60348eb 100644
+index b9f429e..e48b085 100644
 --- a/src/apu/apu_vp.c
 +++ b/src/apu/apu_vp.c
 @@ -66,9 +66,21 @@ static void set_notify_status(MCPXAPUState *d, uint32_t v, int notifier,
@@ -3826,7 +3845,7 @@ index b9f429e..60348eb 100644
      /* Get volume bins */
      int bin[8];
      bin[0] = voice_get_mask(d, v, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN);
-@@ -1169,39 +1416,166 @@ static void voice_process(MCPXAPUState *d,
+@@ -1169,39 +1416,169 @@ static void voice_process(MCPXAPUState *d,
   * Simplified single-threaded version (no worker threads initially)
   * ============================================================ */
 
@@ -3975,6 +3994,9 @@ index b9f429e..60348eb 100644
 +        }
 +        if (!locked)
 +            break;
++        /* The ISR may own the unlock. A just-created idle trap cannot wait
++         * for this frame to finish before its device line is asserted. */
++        mcpx_apu_publish_pending_irq(d);
 +        qemu_cond_timedwait(&d->cond, &d->lock, 1);
 +    }
 +    g_vp_waiting_on = -1;
@@ -4002,7 +4024,7 @@ index b9f429e..60348eb 100644
 
      /* VP monitor output */
      if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
-@@ -1243,5 +1617,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
+@@ -1243,5 +1620,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
      memset(d->vp.voice_locked, 0, sizeof(d->vp.voice_locked));
      for (int v = 0; v < MCPX_HW_MAX_VOICES; v++) {
          hrtf_filter_init(&d->vp.filters[v].hrtf);
@@ -5784,7 +5806,7 @@ index 90060bd..a7a837a 100644
 
  add_library(xbox_kernel STATIC ${KERNEL_SOURCES})
 diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
-index e515377..1da5904 100644
+index e515377..89ce24e 100644
 --- a/src/kernel/kernel.h
 +++ b/src/kernel/kernel.h
 @@ -56,6 +56,9 @@ enum {
@@ -5814,19 +5836,21 @@ index e515377..1da5904 100644
  NTSTATUS __stdcall xbox_KeWaitForMultipleObjects(ULONG Count, PVOID Objects[], ULONG WaitType, ULONG WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout, PVOID WaitBlockArray);
 
  BOOLEAN  __stdcall xbox_KeCancelTimer(PXBOX_KTIMER Timer);
-@@ -778,6 +784,11 @@ BOOLEAN __stdcall xbox_HalIsResetOrShutdownPending(void);
+@@ -778,6 +784,13 @@ BOOLEAN __stdcall xbox_HalIsResetOrShutdownPending(void);
  KIRQL   __fastcall xbox_KfRaiseIrql(KIRQL NewIrql);
  VOID    __fastcall xbox_KfLowerIrql(KIRQL NewIrql);
  KIRQL   __stdcall xbox_KeRaiseIrqlToDpcLevel(void);
 +KIRQL   xbox_GetCurrentIrql(void);
 +BOOLEAN xbox_IrqlEnterDpc(KIRQL *saved);
 +void    xbox_IrqlLeaveDpc(KIRQL saved);
++int     xbox_IrqlTryEnterDispatch(void);
++void    xbox_IrqlLeaveDispatch(void);
 +void    xbox_IrqlEnterIsr(KIRQL *saved);
 +void    xbox_IrqlLeaveIsr(KIRQL saved);
 
  VOID    __stdcall xbox_KeStallExecutionProcessor(ULONG MicroSeconds);
  LARGE_INTEGER __stdcall xbox_KeQueryPerformanceCounter(void);
-@@ -793,6 +804,22 @@ VOID    __stdcall xbox_KeBugCheckEx(ULONG BugCheckCode, ULONG_PTR Param1, ULONG_
+@@ -793,6 +806,22 @@ VOID    __stdcall xbox_KeBugCheckEx(ULONG BugCheckCode, ULONG_PTR Param1, ULONG_
  VOID    __stdcall xbox_KeInitializeInterrupt(PXBOX_KINTERRUPT Interrupt, PVOID ServiceRoutine, PVOID ServiceContext, ULONG Vector, KIRQL Irql, ULONG InterruptMode, BOOLEAN ShareVector);
  BOOLEAN __stdcall xbox_KeConnectInterrupt(PXBOX_KINTERRUPT Interrupt);
 
@@ -5849,7 +5873,7 @@ index e515377..1da5904 100644
  /* KeTickCount - exported as a data pointer, not a function */
  extern volatile ULONG xbox_KeTickCount;
 
-@@ -959,6 +986,7 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
+@@ -959,6 +988,7 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
  #define AV_OPTION_FLICKER_FILTER        0x0B
  #define AV_OPTION_ZERO_MODE             0x0D
  #define AV_OPTION_QUERY_MODE_CAPS       0x0E
@@ -5857,7 +5881,7 @@ index e515377..1da5904 100644
 
  /* ---- AV flags (for capabilities / display mode) ---- */
  #define AV_FLAGS_HDTV_480i      0x00000001
-@@ -1021,6 +1049,12 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
+@@ -1021,6 +1051,12 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
  #define XC_MISC                   0x11
  #define XC_DVD_REGION             0x12
  #define XC_MAX_OS                 0xFF
@@ -5871,7 +5895,7 @@ index e515377..1da5904 100644
  /* Older spellings kept so existing call sites still build. */
  #define XC_PARENTAL_CONTROL       XC_P_CONTROL_GAMES
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
-index 5b56513..ef93e80 100644
+index 5b56513..f88c7c5 100644
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
 @@ -28,6 +28,7 @@
@@ -5987,9 +6011,7 @@ index 5b56513..ef93e80 100644
 +        g_eax = STATUS_INVALID_PARAMETER;
 +        return;
 +    }
-
--    g_eax = (uint32_t)xbox_NtFreeVirtualMemory(
--        XBOX_TO_NATIVE(base_ptr), XBOX_TO_NATIVE(size_ptr), free_type);
++
 +    if (free_type == MEM_DECOMMIT) {
 +        if (!size || base_va < XBOX_BASE_ADDRESS ||
 +            (uint64_t)base_va + size > g_xbox_total_ram) {
@@ -6010,7 +6032,9 @@ index 5b56513..ef93e80 100644
 +        g_eax = STATUS_SUCCESS;
 +        return;
 +    }
-+
+
+-    g_eax = (uint32_t)xbox_NtFreeVirtualMemory(
+-        XBOX_TO_NATIVE(base_ptr), XBOX_TO_NATIVE(size_ptr), free_type);
 +    g_eax = STATUS_INVALID_PARAMETER;
  }
 
@@ -6275,7 +6299,7 @@ index 5b56513..ef93e80 100644
  }
 
  /* -- KeRemoveQueueDpc (ordinal 137) ------------------------
-@@ -1878,9 +2122,12 @@ static void bridge_KeRemoveQueueDpc(void)
+@@ -1878,36 +2122,91 @@ static void bridge_KeRemoveQueueDpc(void)
   * Queued properly now, and drained by the timer thread, which is the one thread
   * here that already has a guest stack and a TIB and runs nothing else urgent.
   *
@@ -6291,7 +6315,96 @@ index 5b56513..ef93e80 100644
   */
  #define XBOX_MAX_PENDING_DPC 64
  typedef struct { uint32_t dpc, arg1, arg2; } PendingDpc;
-@@ -1923,6 +2170,29 @@ static void bridge_KeInsertQueueDpc(void)
+ static PendingDpc g_dpc_queue[XBOX_MAX_PENDING_DPC];
+ static volatile LONG g_dpc_head, g_dpc_tail;
++static CRITICAL_SECTION g_dpc_queue_cs;
++static INIT_ONCE g_dpc_queue_once = INIT_ONCE_STATIC_INIT;
++
++static BOOL CALLBACK kernel_dpc_queue_init(PINIT_ONCE once, PVOID param,
++                                          PVOID *context)
++{
++    (void)once; (void)param; (void)context;
++    InitializeCriticalSection(&g_dpc_queue_cs);
++    return TRUE;
++}
++
++/* Guest threads and the timer's ISRs can enqueue concurrently. Their IRQL
++ * locks are distinct, so neither protects this shared queue. Keep this lock
++ * local to queue storage: release before acquiring IRQL or calling a DPC. */
++static int kernel_dpc_push(uint32_t dpc, uint32_t arg1, uint32_t arg2)
++{
++    LONG tail, next;
++    int accepted = 0;
++
++    InitOnceExecuteOnce(&g_dpc_queue_once, kernel_dpc_queue_init, NULL, NULL);
++    EnterCriticalSection(&g_dpc_queue_cs);
++    tail = g_dpc_tail;
++    next = (tail + 1) % XBOX_MAX_PENDING_DPC;
++    if (next != g_dpc_head) {
++        g_dpc_queue[tail].dpc  = dpc;
++        g_dpc_queue[tail].arg1 = arg1;
++        g_dpc_queue[tail].arg2 = arg2;
++        g_dpc_tail = next;
++        accepted = 1;
++    }
++    LeaveCriticalSection(&g_dpc_queue_cs);
++    return accepted;
++}
++
++static int kernel_dpc_pop(PendingDpc *result)
++{
++    int available = 0;
++
++    InitOnceExecuteOnce(&g_dpc_queue_once, kernel_dpc_queue_init, NULL, NULL);
++    EnterCriticalSection(&g_dpc_queue_cs);
++    if (g_dpc_head != g_dpc_tail) {
++        LONG head = g_dpc_head;
++        *result = g_dpc_queue[head];
++        g_dpc_head = (head + 1) % XBOX_MAX_PENDING_DPC;
++        available = 1;
++    }
++    LeaveCriticalSection(&g_dpc_queue_cs);
++    return available;
++}
++
++static LONG kernel_dpc_count(void)
++{
++    LONG count;
++
++    InitOnceExecuteOnce(&g_dpc_queue_once, kernel_dpc_queue_init, NULL, NULL);
++    EnterCriticalSection(&g_dpc_queue_cs);
++    count = (g_dpc_tail - g_dpc_head + XBOX_MAX_PENDING_DPC)
++            % XBOX_MAX_PENDING_DPC;
++    LeaveCriticalSection(&g_dpc_queue_cs);
++    return count;
++}
+
+ static void bridge_KeInsertQueueDpc(void)
+ {
+     uint32_t dpc  = STACK_ARG(0);
+     uint32_t arg1 = STACK_ARG(1);
+     uint32_t arg2 = STACK_ARG(2);
+-    LONG tail, next;
+-
+     if (!dpc) { g_eax = 0; return; }
+-
+-    tail = g_dpc_tail;
+-    next = (tail + 1) % XBOX_MAX_PENDING_DPC;
+-    if (next == g_dpc_head) {
++    if (!kernel_dpc_push(dpc, arg1, arg2)) {
+         fprintf(stderr, "  [KERNEL] DPC queue full, dropping 0x%08X\n", dpc);
+         fflush(stderr);
+         g_eax = 0;
+         return;
+     }
+-    g_dpc_queue[tail].dpc  = dpc;
+-    g_dpc_queue[tail].arg1 = arg1;
+-    g_dpc_queue[tail].arg2 = arg2;
+-    g_dpc_tail = next;
+     g_eax = 1;
+ }
+
+@@ -1923,6 +2222,29 @@ static void bridge_KeInsertQueueDpc(void)
   */
  uint32_t xbox_GetConnectedInterrupt(uint32_t vector);   /* defined below */
 
@@ -6321,7 +6434,7 @@ index 5b56513..ef93e80 100644
  static int kernel_raise_interrupt(uint32_t vector)
  {
      uint32_t kint = xbox_GetConnectedInterrupt(vector);
-@@ -1943,7 +2213,18 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1943,7 +2265,18 @@ static int kernel_raise_interrupt(uint32_t vector)
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = kint;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -6341,7 +6454,7 @@ index 5b56513..ef93e80 100644
      return (int)(g_eax & 1u);
  }
 
-@@ -1961,10 +2242,16 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1961,10 +2294,16 @@ static int kernel_raise_interrupt(uint32_t vector)
   * bit 24 to say the PCRTC block is the source. Without those the handler looks,
   * finds nothing, and correctly declines.
   *
@@ -6362,7 +6475,7 @@ index 5b56513..ef93e80 100644
   */
  #define XBOX_NV2A_REG_BASE     0xFD000000u
  #define NV2A_PMC_INTR_0        0x00000100u
-@@ -1973,25 +2260,103 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1973,25 +2312,103 @@ static int kernel_raise_interrupt(uint32_t vector)
  #define NV2A_PCRTC_INTR_VBLANK (1u << 0)
  #define NV2A_VECTOR            3u
 
@@ -6475,7 +6588,7 @@ index 5b56513..ef93e80 100644
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PCRTC_INTR_0) |= NV2A_PCRTC_INTR_VBLANK;
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PMC_INTR_0)   |= NV2A_PMC_INTR_PCRTC;
 
-@@ -2006,16 +2371,86 @@ static void kernel_vblank_tick(void)
+@@ -2006,16 +2423,77 @@ static void kernel_vblank_tick(void)
      }
  }
 
@@ -6522,11 +6635,16 @@ index 5b56513..ef93e80 100644
   * stack and TIB that a deferred routine needs. */
  static void kernel_drain_dpcs(void)
  {
+-    while (g_dpc_head != g_dpc_tail) {
+-        LONG head = g_dpc_head;
+-        PendingDpc d = g_dpc_queue[head];
+-        g_dpc_head = (head + 1) % XBOX_MAX_PENDING_DPC;
 +    KIRQL saved;
++    PendingDpc d;
 +
 +    /* At DISPATCH_LEVEL, and not while a guest thread is there: that is the
 +     * exclusion a driver raising IRQL relies on. They wait for the next tick. */
-+    if (g_dpc_head == g_dpc_tail)
++    if (!kernel_dpc_count())
 +        return;
 +    if (!xbox_IrqlEnterDpc(&saved)) {
 +        g_dpc_deferred++;
@@ -6534,35 +6652,25 @@ index 5b56513..ef93e80 100644
 +    }
 +    g_dpc_drains++;
 +    bridge_publish_irql();
-     while (g_dpc_head != g_dpc_tail) {
-         LONG head = g_dpc_head;
-         PendingDpc d = g_dpc_queue[head];
-         g_dpc_head = (head + 1) % XBOX_MAX_PENDING_DPC;
++    while (kernel_dpc_pop(&d)) {
          kernel_run_dpc(d.dpc, d.arg1, d.arg2);
      }
 +    xbox_IrqlLeaveDpc(saved);
 +    bridge_publish_irql();
 +}
 +
-+/* Queue a DPC from the timer thread itself (the queue has one producer
-+ * besides KeInsertQueueDpc, and both run under the title's own ordering). */
++/* The timer and guest bridge share the same synchronized queue. */
 +static void kernel_queue_dpc(uint32_t dpc, uint32_t arg1, uint32_t arg2)
 +{
-+    LONG tail = g_dpc_tail, next = (tail + 1) % XBOX_MAX_PENDING_DPC;
-+
-+    if (next == g_dpc_head) {
++    if (!kernel_dpc_push(dpc, arg1, arg2)) {
 +        fprintf(stderr, "  [KERNEL] DPC queue full, dropping 0x%08X\n", dpc);
 +        fflush(stderr);
 +        return;
 +    }
-+    g_dpc_queue[tail].dpc  = dpc;
-+    g_dpc_queue[tail].arg1 = arg1;
-+    g_dpc_queue[tail].arg2 = arg2;
-+    g_dpc_tail = next;
  }
 
  /* ── KeInitializeDpc (ordinal 107) ────────────────────────
-@@ -2044,18 +2479,20 @@ static void bridge_KeInitializeDpc(void)
+@@ -2044,18 +2522,20 @@ static void bridge_KeInitializeDpc(void)
  /* ── NV2A interrupt plumbing (ordinals 44, 98, 109) ───────
   *
   * The D3D8 library linked into a title installs an ISR for the GPU's vblank /
@@ -6589,7 +6697,7 @@ index 5b56513..ef93e80 100644
 
  /* ULONG HalGetInterruptVector(ULONG BusInterruptLevel, PKIRQL Irql) */
  static void bridge_HalGetInterruptVector(void)
-@@ -2098,7 +2535,6 @@ static void bridge_KeInitializeInterrupt(void)
+@@ -2098,7 +2578,6 @@ static void bridge_KeInitializeInterrupt(void)
   * A small fixed table rather than a list: an Xbox has 26 interrupt vectors and
   * a title connects a handful, so the whole thing is smaller than the comment.
   */
@@ -6597,7 +6705,7 @@ index 5b56513..ef93e80 100644
  static uint32_t g_connected_isr[XBOX_MAX_VECTORS];   /* KINTERRUPT guest VA */
 
  /* BOOLEAN KeConnectInterrupt(PKINTERRUPT Interrupt) */
-@@ -2115,6 +2551,9 @@ static void bridge_KeConnectInterrupt(void)
+@@ -2115,6 +2594,9 @@ static void bridge_KeConnectInterrupt(void)
                      vector, BRIDGE_MEM32(interrupt_va + 0),
                      BRIDGE_MEM32(interrupt_va + 4));
              fflush(stderr);
@@ -6607,7 +6715,7 @@ index 5b56513..ef93e80 100644
          }
      }
      g_eax = 1;  /* connected -- see the note above */
-@@ -2127,6 +2566,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
+@@ -2127,6 +2609,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
      return (vector < XBOX_MAX_VECTORS) ? g_connected_isr[vector] : 0;
  }
 
@@ -6654,7 +6762,7 @@ index 5b56513..ef93e80 100644
  /* ── MmClaimGpuInstanceMemory (ordinal 168) ───────────────
   * PVOID MmClaimGpuInstanceMemory(SIZE_T NumberOfBytes, SIZE_T *Padding)
   *
-@@ -2236,11 +2715,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
+@@ -2236,11 +2758,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
  static CRITICAL_SECTION g_timer_lock;
  static int g_timer_started;
 
@@ -6671,7 +6779,7 @@ index 5b56513..ef93e80 100644
      if (slot < 0) {
          fprintf(stderr, "  [KERNEL] timer thread has no worker stack; "
                          "timer DPCs will not run\n");
-@@ -2265,11 +2749,76 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2265,11 +2792,77 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
 
      for (;;) {
          long long now;
@@ -6682,7 +6790,8 @@ index 5b56513..ef93e80 100644
 -        kernel_drain_dpcs();   /* deferred work, before due timers */
 +        int i, nfired = 0;
 +        uint32_t fired[XBOX_MAX_TIMERS];
-+        HANDLE wake[2];
++        /* Device wake, GPU wake and the high-resolution timer can all be present. */
++        HANDLE wake[3];
 +        DWORD nwake = 0;
 +
 +        /* Woken early when a device raises its interrupt line. */
@@ -6753,7 +6862,7 @@ index 5b56513..ef93e80 100644
          now = (long long)GetTickCount64();
 
          for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2288,23 +2837,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2288,23 +2881,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
                  g_timers[i].timer_va = 0;      /* one-shot, done */
              LeaveCriticalSection(&g_timer_lock);
 
@@ -6806,7 +6915,7 @@ index 5b56513..ef93e80 100644
  /* Shared by KeSetTimer and KeSetTimerEx; period is 0 for the former. */
  static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
                               long period_ms, uint32_t dpc_va)
-@@ -2313,11 +2880,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
+@@ -2313,11 +2924,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
      int i, free_slot = -1;
      uint32_t was_set = 0;
 
@@ -6819,7 +6928,7 @@ index 5b56513..ef93e80 100644
 
      EnterCriticalSection(&g_timer_lock);
      for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2614,6 +3177,70 @@ static int bridge_is_cdrom_device(const char *path)
+@@ -2614,6 +3221,70 @@ static int bridge_is_cdrom_device(const char *path)
      return _stricmp(path, "\\Device\\CdRom0") == 0;
  }
 
@@ -6890,7 +6999,7 @@ index 5b56513..ef93e80 100644
  /* Open a file by delegating to the ported xbox_NtCreateFile kernel HLE. */
  static NTSTATUS bridge_create_file_impl(
      uint32_t handle_va, ACCESS_MASK access, uint32_t obj_attrs_va,
-@@ -2632,6 +3259,14 @@ static NTSTATUS bridge_create_file_impl(
+@@ -2632,6 +3303,14 @@ static NTSTATUS bridge_create_file_impl(
          return STATUS_OBJECT_PATH_NOT_FOUND;
      }
 
@@ -6905,7 +7014,7 @@ index 5b56513..ef93e80 100644
      if (bridge_is_cdrom_device(name.Buffer)) {
          fprintf(stderr, "  [FILE] %s -> synthetic DVD device handle\n",
                  name.Buffer);
-@@ -3068,6 +3703,16 @@ static void bridge_NtReadFile(void)
+@@ -3068,6 +3747,16 @@ static void bridge_NtReadFile(void)
                      got > 2 ? p[2] : 0, got > 3 ? p[3] : 0);
          fflush(stderr);
      }
@@ -6922,7 +7031,7 @@ index 5b56513..ef93e80 100644
      bridge_write_iostatus(iostatus, ios.Status, (uint32_t)ios.Information);
      bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3),
                              iostatus);
-@@ -6576,6 +7221,10 @@ static void bridge_KeResetEvent(void)
+@@ -6576,6 +7265,10 @@ static void bridge_KeResetEvent(void)
      HANDLE h;
 
      h = ke_shadow_lookup(guest_va);
@@ -6933,7 +7042,7 @@ index 5b56513..ef93e80 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6753,7 +7402,9 @@ static void bridge_KeLeaveCriticalRegion(void)
+@@ -6753,7 +7446,9 @@ static void bridge_KeLeaveCriticalRegion(void)
  /* --- KeRaiseIrqlToSynchLevel (ordinal 130, 0 args = 0 bytes) --- */
  static void bridge_KeRaiseIrqlToSynchLevel(void)
  {
@@ -6944,7 +7053,7 @@ index 5b56513..ef93e80 100644
  }
 
  /* --- KeRemoveByKeyDeviceQueue (ordinal 133, 2 args = 8 bytes) --- */
-@@ -6808,6 +7459,11 @@ static void bridge_KeSetEventBoostPriority(void)
+@@ -6808,6 +7503,11 @@ static void bridge_KeSetEventBoostPriority(void)
      (void)increment;
 
      h = ke_shadow_lookup(guest_va);
@@ -6956,7 +7065,7 @@ index 5b56513..ef93e80 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6853,11 +7509,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
+@@ -6853,11 +7553,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
  }
 
  /* --- KeGetCurrentIrql (ordinal 103, 0 args = 0 bytes)
@@ -6971,7 +7080,7 @@ index 5b56513..ef93e80 100644
  }
 
  /* --- KeGetCurrentThread (ordinal 104, 0 args = 0 bytes) --- */
-@@ -7260,6 +7916,8 @@ static void bridge_ObReferenceObjectByPointer(void)
+@@ -7260,6 +7960,8 @@ static void bridge_ObReferenceObjectByPointer(void)
  static void bridge_PsCreateSystemThread(void)
  {
      uint32_t xbox_handle_ptr = STACK_ARG(0);
@@ -6980,7 +7089,7 @@ index 5b56513..ef93e80 100644
      uint32_t start_context1  = STACK_ARG(4);
      uint32_t start_context2  = STACK_ARG(5);
      uint32_t start_routine   = STACK_ARG(6);
-@@ -7271,6 +7929,9 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7271,6 +7973,9 @@ static void bridge_PsCreateSystemThread(void)
      /* Fake handle until the worker path can write a real one. */
      if (xbox_handle_ptr)
          BRIDGE_MEM32(xbox_handle_ptr) = 0xBEEF0002;
@@ -6990,7 +7099,7 @@ index 5b56513..ef93e80 100644
 
      if (start_routine) {
          recomp_func_t fn = recomp_lookup(start_routine);
-@@ -7297,7 +7958,8 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7297,7 +8002,8 @@ static void bridge_PsCreateSystemThread(void)
                      bridge_run_thread_inline(fn, start_context1, start_context2);
                  } else {
                      HANDLE th = bridge_spawn_thread(fn, start_context1,
@@ -7000,7 +7109,7 @@ index 5b56513..ef93e80 100644
                      if (xbox_handle_ptr && th)
                          bridge_write_handle(xbox_handle_ptr, th);
                  }
-@@ -8811,6 +9473,222 @@ static void kernel_watch_arm_once(void)
+@@ -8811,6 +9517,221 @@ static void kernel_watch_arm_once(void)
  /* Current dispatching slot */
  static RECOMP_TLS int g_kernel_dispatch_slot = -1;
 
@@ -7209,8 +7318,7 @@ index 5b56513..ef93e80 100644
 +    fprintf(stderr, "  DPCs: %llu drains, %llu put off by DISPATCH_LEVEL,"
 +                    " %ld queued now\n",
 +            (unsigned long long)g_dpc_drains, (unsigned long long)g_dpc_deferred,
-+            (long)((g_dpc_tail - g_dpc_head + XBOX_MAX_PENDING_DPC)
-+                   % XBOX_MAX_PENDING_DPC));
++            (long)kernel_dpc_count());
 +    n = g_hang_thread_count;
 +    for (i = 0; i < n && i < XBOX_MAX_HANG_THREADS; i++) {
 +        fprintf(stderr, "  [%s thread, tid %lu]\n", g_hang_threads[i].name,
@@ -7223,7 +7331,7 @@ index 5b56513..ef93e80 100644
  static void kernel_thunk_dispatch(void)
  {
      int slot = g_kernel_dispatch_slot;
-@@ -8885,6 +9763,28 @@ static void kernel_thunk_dispatch(void)
+@@ -8885,6 +9806,28 @@ static void kernel_thunk_dispatch(void)
       * section above all -- can then say which guest call site is holding the
       * lock, which is the one fact a deadlock report otherwise lacks. */
      g_xbox_kernel_caller = g_esp ? BRIDGE_MEM32(g_esp) : 0;
@@ -7252,7 +7360,7 @@ index 5b56513..ef93e80 100644
      g_esp += 4;
 
      /* Name the bridge that corrupts a watched dword.
-@@ -8918,7 +9818,33 @@ static void kernel_thunk_dispatch(void)
+@@ -8918,7 +9861,33 @@ static void kernel_thunk_dispatch(void)
      }
 
      if (bridge) {
@@ -7286,7 +7394,7 @@ index 5b56513..ef93e80 100644
      } else {
          /* No specific bridge - return 0. Warn once per ordinal rather than
           * gating on g_kernel_call_count: a missing bridge is rare and is
-@@ -8947,6 +9873,9 @@ static void kernel_thunk_dispatch(void)
+@@ -8947,6 +9916,9 @@ static void kernel_thunk_dispatch(void)
          g_eax = 0;
      }
 
@@ -7296,7 +7404,7 @@ index 5b56513..ef93e80 100644
      /* Clean stdcall args from the simulated stack.
       * On real x86, stdcall callee does "ret N" to pop the return address
       * and N bytes of arguments. We already popped the dummy return address
-@@ -9081,7 +10010,8 @@ void xbox_kernel_bridge_init(void)
+@@ -9081,7 +10053,8 @@ void xbox_kernel_bridge_init(void)
          uint32_t va = g_thunk_table_base + i * 4;
          uint32_t current = BRIDGE_MEM32(va);
 
@@ -7306,7 +7414,7 @@ index 5b56513..ef93e80 100644
              /* Read the actual ordinal from Xbox memory, then translate it into
               * the kernel's canonical ordinal space. Identity unless the title
               * set a remap (a different XDK). Every routing decision below --
-@@ -9154,9 +10084,17 @@ void xbox_kernel_bridge_init(void)
+@@ -9154,9 +10127,17 @@ void xbox_kernel_bridge_init(void)
              uint32_t current = BRIDGE_MEM32(va);
              int slot;
 
@@ -7326,10 +7434,10 @@ index 5b56513..ef93e80 100644
              if (slot >= XBOX_KERNEL_THUNK_TABLE_SIZE) {
                  break;
 diff --git a/src/kernel/kernel_hal.c b/src/kernel/kernel_hal.c
-index 842f99c..0391f4d 100644
+index 842f99c..ee4e56b 100644
 --- a/src/kernel/kernel_hal.c
 +++ b/src/kernel/kernel_hal.c
-@@ -24,12 +24,106 @@
+@@ -24,12 +24,125 @@
   *   APC_LEVEL (1) - APC delivery
   *   DISPATCH_LEVEL (2) - scheduler/DPC level, no page faults allowed
   *
@@ -7419,6 +7527,25 @@ index 842f99c..0391f4d 100644
 +    LeaveCriticalSection(&g_dispatch_cs);
 +}
 +
++/* An ISR may defer one guest-list operation while still acknowledging its
++ * device. Never wait for dispatch ownership from interrupt level: a guest
++ * thread holding dispatch can itself be waiting for that acknowledgment.
++ * This changes ownership only, preserving the caller's device IRQL. */
++int xbox_IrqlTryEnterDispatch(void)
++{
++    irql_locks();
++    if (!TryEnterCriticalSection(&g_dispatch_cs))
++        return 0;
++    g_holds_dispatch++;
++    return 1;
++}
++
++void xbox_IrqlLeaveDispatch(void)
++{
++    g_holds_dispatch--;
++    LeaveCriticalSection(&g_dispatch_cs);
++}
++
 +/* An ISR runs at its device level: above DISPATCH_LEVEL, so a thread at
 + * DISPATCH_LEVEL does not hold it off, but excluded from anything above. */
 +void xbox_IrqlEnterIsr(KIRQL *saved)
@@ -7439,7 +7566,7 @@ index 842f99c..0391f4d 100644
 
  /*
   * KfRaiseIrql - Raises IRQL to the specified level.
-@@ -45,6 +139,7 @@ KIRQL __fastcall xbox_KfRaiseIrql(KIRQL NewIrql)
+@@ -45,6 +158,7 @@ KIRQL __fastcall xbox_KfRaiseIrql(KIRQL NewIrql)
              old, NewIrql);
      }
 
@@ -7447,7 +7574,7 @@ index 842f99c..0391f4d 100644
      g_current_irql = NewIrql;
      return old;
  }
-@@ -61,6 +156,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
+@@ -61,6 +175,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
              g_current_irql, NewIrql);
      }
 
@@ -7455,7 +7582,7 @@ index 842f99c..0391f4d 100644
      g_current_irql = NewIrql;
  }
 
-@@ -70,6 +166,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
+@@ -70,6 +185,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
  KIRQL __stdcall xbox_KeRaiseIrqlToDpcLevel(void)
  {
      KIRQL old = g_current_irql;
@@ -7463,7 +7590,7 @@ index 842f99c..0391f4d 100644
      g_current_irql = DISPATCH_LEVEL;
      return old;
  }
-@@ -480,6 +577,13 @@ VOID __stdcall xbox_AvSendTVEncoderOption(
+@@ -480,6 +596,13 @@ VOID __stdcall xbox_AvSendTVEncoderOption(
                  | AV_FLAGS_60Hz;
          break;
 
