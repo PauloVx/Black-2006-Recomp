@@ -466,6 +466,7 @@ int black_idle_yield_skip(void)
     return !keep && black_step_halved && black_hz >= 120;
 }
 
+/* BEGIN BLACK_WEAPON_RUNTIME_MODES */
 /* Silver weapon selection is native by default; force modes affect this process only. */
 int black_silver_weapons_mode(void)
 {
@@ -492,6 +493,21 @@ int black_infinite_ammo_enabled(void)
     }
     return enabled;
 }
+
+/* Resolve each consumer without changing the native reward byte. In particular,
+ * forcing silver artwork must not grant ammunition, and replenishing ammunition
+ * must not select a different weapon bank. Native rewards remain the default. */
+int black_silver_weapon_flag(int native_flag)
+{
+    const int mode = black_silver_weapons_mode();
+    return mode < 0 ? native_flag : mode;
+}
+
+int black_infinite_ammo_flag(int native_flag)
+{
+    return native_flag || black_infinite_ammo_enabled();
+}
+/* END BLACK_WEAPON_RUNTIME_MODES */
 
 /* Lab hook: RECOMP_BLACK_LEVEL=n[,stage] starts the mission the frontend asked for from level n (and stage) instead, to
  * reach scenes a scripted run cannot walk to. Without the variable the values pass through. */

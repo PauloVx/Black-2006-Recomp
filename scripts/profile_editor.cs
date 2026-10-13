@@ -31,6 +31,7 @@ namespace BlackXboxLauncher
         private const int RecordSize = 0x20;
         private const int NameOffset = 0x0D0;
         private const int NameSize = 0x50;
+        private const int EmptyFlagOffset = 0x76D;
 
         internal static ProfileSnapshot Read(byte[] data)
         {
@@ -41,7 +42,7 @@ namespace BlackXboxLauncher
             for (int slot = 0; slot < SlotCount; slot++)
             {
                 int baseOffset = slot * SlotSize;
-                bool active = ReadUInt32(data, baseOffset) == 0x26;
+                bool active = IsActiveSlot(data, slot);
                 var snapshot = new ProfileSlotSnapshot {
                     Index = slot, Active = active, Name = String.Empty,
                     MissionAvailable = new bool[32], MissionResults = new uint[32]
@@ -112,7 +113,7 @@ namespace BlackXboxLauncher
             int record = RecordOffset(slot, difficulty, position);
             byte[] data = BeginEdit(source, slot);
             ValidateOrThrow(original);
-            if (ReadUInt32(original, slot * SlotSize) != 0x26)
+            if (!IsActiveSlot(original, slot))
                 throw new InvalidDataException("The originally loaded Profile has no active selected slot.");
             Array.Copy(original, record, data, record, RecordSize);
             FinishEdit(data, slot);
@@ -144,8 +145,14 @@ namespace BlackXboxLauncher
         {
             if (slot < 0 || slot >= SlotCount) throw new ArgumentOutOfRangeException("slot");
             ValidateOrThrow(source);
-            if (ReadUInt32(source, slot * SlotSize) != 0x26) throw new InvalidDataException("Selected Profile slot is empty.");
+            if (!IsActiveSlot(source, slot)) throw new InvalidDataException("Selected Profile slot is empty.");
             return (byte[])source.Clone();
+        }
+
+        private static bool IsActiveSlot(byte[] data, int slot)
+        {
+            int baseOffset = slot * SlotSize;
+            return ReadUInt32(data, baseOffset) == 0x26 && data[baseOffset + EmptyFlagOffset] == 0;
         }
 
         private static int RecordOffset(int slot, int difficulty, int position)

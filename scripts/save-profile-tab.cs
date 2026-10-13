@@ -20,6 +20,8 @@ namespace BlackXboxLauncher
         private readonly Label saveStatus = new Label();
         private byte[] originalProfile, workingProfile;
         private string selectedProfilePath, loadedProfileHash;
+        private string[] pendingProfileNames;
+        private string[] saveStatusParts = new string[0];
         private bool refreshingSaveTab;
 
         private void BuildSaveTab(TabPage page)
@@ -34,6 +36,9 @@ namespace BlackXboxLauncher
             reload.FlatAppearance.BorderSize = 0; page.Controls.Add(reload);
             var browse = new Button { Text = LauncherLanguage.Text("Browse file"), Location = new Point(594, 10), Size = new Size(168, 31), FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(39, 46, 41), ForeColor = ForeColor, AccessibleName = "Browse Profile file" };
             browse.FlatAppearance.BorderSize = 0; page.Controls.Add(browse);
+            // These labels contain current file data, so exclude them from the
+            // launcher's static English-text cache and render them from state.
+            saveProfileInfo.Tag = savePreview.Tag = saveStatus.Tag = new object();
             saveProfileInfo.SetBounds(14, 47, 700, 38); saveProfileInfo.ForeColor = muted; page.Controls.Add(saveProfileInfo);
             AddOptionLabel(page, "Slot", 14, 91, 48);
             saveSlot.SetBounds(65, 87, 120, 30); saveSlot.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -95,12 +100,22 @@ namespace BlackXboxLauncher
             };
             saveMissionGrid.CellValueChanged += delegate(object sender, DataGridViewCellEventArgs e) { if (!refreshingSaveTab && e.RowIndex >= 0) SaveGridCellChanged(e.RowIndex, e.ColumnIndex); };
             saveMissionGrid.DataError += delegate(object sender, DataGridViewDataErrorEventArgs e) { e.ThrowException = false; };
-            saveProfileName.TextChanged += delegate { if (!refreshingSaveTab) { saveStatus.Text = LauncherLanguage.Text("Profile name has pending changes. Review the preview before Apply."); RefreshProfilePreview(); } };
+            saveProfileName.TextChanged += delegate
+            {
+                if (!refreshingSaveTab && pendingProfileNames != null && saveProfileName.Enabled && saveSlot.SelectedIndex >= 0)
+                {
+                    // Keep even unfinished/invalid text until the user corrects
+                    // it. Validation belongs to the candidate, not UI refresh.
+                    pendingProfileNames[saveSlot.SelectedIndex] = saveProfileName.Text;
+                    SetSaveStatus("Profile name has pending changes. Review the preview before Apply.");
+                    RefreshProfilePreview();
+                }
+            };
             unlockAll.Click += delegate
             {
                 if (workingProfile == null || saveSlot.SelectedIndex < 0) return;
                 if (MessageBox.Show(this, LauncherLanguage.Text("This marks every mission available and every mission result complete for the selected slot. It changes campaign progress. Continue?"), LauncherLanguage.Text("Unlock campaign"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                try { workingProfile = BlackProfileDocument.UnlockAllCampaign(workingProfile, saveSlot.SelectedIndex); RefreshSaveSlot(); saveStatus.Text = LauncherLanguage.Text("All campaign entries are staged as available and complete. Nothing is written until Apply."); }
+                try { workingProfile = BlackProfileDocument.UnlockAllCampaign(workingProfile, saveSlot.SelectedIndex); RefreshSaveSlot(); SetSaveStatus("All campaign entries are staged as available and complete. Nothing is written until Apply."); }
                 catch (Exception error) { ShowSaveError(error); }
             };
             apply.Click += delegate { ApplyProfileChanges(); };
@@ -115,6 +130,7 @@ namespace BlackXboxLauncher
         private void RefreshProfileFiles(string preferredPath)
         {
             bool updating = false;
+            string scanError = null;
             refreshingSaveTab = true;
             try
             {
@@ -143,7 +159,7 @@ namespace BlackXboxLauncher
             }
             catch (Exception error)
             {
-                saveStatus.Text = LauncherLanguage.Text("Could not scan game\\UDATA: ") + LauncherLanguage.Text(error.Message);
+                scanError = error.Message;
             }
             finally
             {
@@ -151,6 +167,7 @@ namespace BlackXboxLauncher
                 refreshingSaveTab = false;
             }
             LoadSelectedProfile();
+            if (scanError != null) SetSaveStatus("Could not scan game\\UDATA: ", "", scanError);
         }
 
         private void BrowseProfileFile()
@@ -220,14 +237,13 @@ namespace BlackXboxLauncher
         private void LoadSelectedProfile()
         {
             selectedProfilePath = SelectedProfilePath;
-            originalProfile = workingProfile = null; loadedProfileHash = null;
+            originalProfile = workingProfile = null; loadedProfileHash = null; pendingProfileNames = null;
             if (String.IsNullOrEmpty(selectedProfilePath))
             {
-                saveProfileInfo.Text = LauncherLanguage.Text(saveProfilePath.Items.Count == 0
-                    ? "No Profile found under game\\UDATA."
-                    : "Choose one of the Profile files found in game\\UDATA.");
+                RefreshProfileIdentity();
                 saveMissionGrid.Enabled = false; saveProfileName.Enabled = false; saveProfileName.Clear();
                 savePreview.Text = LauncherLanguage.Text("Select a Profile slot to preview pending values and hash.");
+                SetSaveStatus("");
                 return;
             }
             try
@@ -235,12 +251,14 @@ namespace BlackXboxLauncher
                 originalProfile = File.ReadAllBytes(selectedProfilePath);
                 ProfileSnapshot snapshot = BlackProfileDocument.Read(originalProfile);
                 loadedProfileHash = snapshot.Sha256; workingProfile = (byte[])originalProfile.Clone();
-                saveProfileInfo.Text = LauncherLanguage.Text("6,144 bytes  |  SHA-256 ") + snapshot.Sha256 + "  |  " + selectedProfilePath;
+                pendingProfileNames = new string[snapshot.Slots.Length];
+                for (int slot = 0; slot < pendingProfileNames.Length; slot++) pendingProfileNames[slot] = snapshot.Slots[slot].Name;
+                RefreshProfileIdentity();
                 saveMissionGrid.Enabled = true; saveProfileName.Enabled = true;
                 RefreshSaveSlot();
                 string[] backups = ProfileBackupStore.List(ProfileBackupStore.DirectoryFor(root, selectedProfilePath));
-                saveStatus.Text = LauncherLanguage.Text("Loaded and integrity-checked. Changes stay pending until Apply.") + "  " +
-                    backups.Length.ToString(CultureInfo.InvariantCulture) + " " + LauncherLanguage.Text("validated Profile backups available.");
+                SetSaveStatus("Loaded and integrity-checked. Changes stay pending until Apply.", "  " +
+                    backups.Length.ToString(CultureInfo.InvariantCulture) + " ", "validated Profile backups available.");
             }
             catch (Exception error)
             {
@@ -256,12 +274,12 @@ namespace BlackXboxLauncher
             {
                 refreshingSaveTab = true;
                 ProfileSlotSnapshot slot = BlackProfileDocument.Read(workingProfile).Slots[saveSlot.SelectedIndex];
-                if (!slot.Active) { saveProfileName.Text = LauncherLanguage.Text("(empty slot)"); saveProfileName.Enabled = false; saveMissionGrid.Enabled = false; return; }
-                saveProfileName.Enabled = saveMissionGrid.Enabled = true; saveProfileName.Text = slot.Name;
+                saveProfileName.Enabled = saveMissionGrid.Enabled = slot.Active;
+                saveProfileName.Text = slot.Active ? pendingProfileNames[saveSlot.SelectedIndex] : LauncherLanguage.Text("(empty slot)");
                 for (int i = 0; i < 32; i++)
                 {
-                    saveMissionGrid.Rows[i].Cells[2].Value = slot.MissionAvailable[i];
-                    uint value = slot.MissionResults[i];
+                    saveMissionGrid.Rows[i].Cells[2].Value = slot.Active && slot.MissionAvailable[i];
+                    uint value = slot.Active ? slot.MissionResults[i] : 0xFFFFFFFF;
                     saveMissionGrid.Rows[i].Cells[3].Value = value == 0xFFFFFFFF ? LauncherLanguage.Text("Empty") : value.ToString(CultureInfo.InvariantCulture);
                 }
                 RefreshProfilePreview();
@@ -284,7 +302,7 @@ namespace BlackXboxLauncher
                     uint result = value == LauncherLanguage.Text("Empty") || value == "Empty" ? 0xFFFFFFFF : UInt32.Parse(value, CultureInfo.InvariantCulture);
                     workingProfile = BlackProfileDocument.SetMissionResult(workingProfile, slot, difficulty, mission, result);
                 }
-                saveStatus.Text = LauncherLanguage.Text("Mission changes are pending. Review the preview before Apply.");
+                SetSaveStatus("Mission changes are pending. Review the preview before Apply.");
                 RefreshProfilePreview();
             }
             catch (Exception error) { ShowSaveError(error); RefreshSaveSlot(); }
@@ -298,7 +316,7 @@ namespace BlackXboxLauncher
             {
                 if (HashFile(selectedProfilePath) != loadedProfileHash) throw new IOException("The Profile changed on disk after it was loaded. Reload it before editing to avoid overwriting newer progress.");
                 string beforeHash = HashFile(selectedProfilePath);
-                byte[] candidate = BlackProfileDocument.SetName(workingProfile, saveSlot.SelectedIndex, saveProfileName.Text);
+                byte[] candidate = BuildProfileCandidate();
                 if (!BlackProfileDocument.Validate(candidate)) throw new InvalidDataException("Edited Profile did not pass integrity validation.");
                 string candidateHash = ProfileBackupStore.HashBytes(candidate);
                 string backupDirectory = ProfileBackupStore.DirectoryFor(root, selectedProfilePath);
@@ -306,16 +324,15 @@ namespace BlackXboxLauncher
                 if (backup == null)
                 {
                     AppendProfileEditLog("NO_CHANGE", beforeHash, candidateHash, beforeHash, "No changes to apply");
-                    saveStatus.Text = LauncherLanguage.Text("No changes to apply. Profile unchanged; no backup created. SHA-256 ") + beforeHash;
                     LoadSelectedProfile();
-                    saveStatus.Text = LauncherLanguage.Text("No changes to apply. Profile unchanged; no backup created. SHA-256 ") + beforeHash;
+                    SetSaveStatus("No changes to apply. Profile unchanged; no backup created. SHA-256 ", beforeHash);
                     return;
                 }
                 string afterHash = HashFile(selectedProfilePath);
                 if (afterHash != candidateHash) throw new IOException("Applied Profile hash does not match the validated candidate.");
                 LoadSelectedProfile();
                 AppendProfileEditLog("APPLIED", beforeHash, candidateHash, afterHash, backup);
-                saveStatus.Text = LauncherLanguage.Text("Applied and verified. Before SHA-256 ") + beforeHash + LauncherLanguage.Text("; after SHA-256 ") + afterHash + LauncherLanguage.Text("; backup: ") + backup;
+                SetSaveStatus("Applied and verified. Before SHA-256 ", beforeHash, "; after SHA-256 ", afterHash, "; backup: ", backup);
             }
             catch (Exception error) { ShowSaveError(error); }
         }
@@ -326,7 +343,7 @@ namespace BlackXboxLauncher
             if (GameSession.ExistingProcess(root) != 0) { ShowSaveError(new InvalidOperationException("Close BLACK before restoring a Profile.")); return; }
             string directory = ProfileBackupStore.DirectoryFor(root, selectedProfilePath);
             string[] backups = ProfileBackupStore.List(directory);
-            if (backups.Length == 0) { saveStatus.Text = LauncherLanguage.Text("No Profile backup exists yet."); return; }
+            if (backups.Length == 0) { SetSaveStatus("No Profile backup exists yet."); return; }
             try
             {
                 using (var dialog = new OpenFileDialog())
@@ -339,7 +356,7 @@ namespace BlackXboxLauncher
                     if (Array.IndexOf(backups, backup) < 0) throw new InvalidDataException("Selected file is not a valid backup for this Profile.");
                     if (MessageBox.Show(this, LauncherLanguage.Text("Restore this Profile backup? A backup of the current file will be created first.\n\n") + backup, LauncherLanguage.Text("Restore Profile"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                     string backupCopy = ProfileBackupStore.Restore(selectedProfilePath, backup, directory);
-                    LoadSelectedProfile(); saveStatus.Text = LauncherLanguage.Text("Backup restored; current file was also backed up as ") + backupCopy;
+                    LoadSelectedProfile(); SetSaveStatus("Backup restored; current file was also backed up as ", backupCopy);
                 }
             }
             catch (Exception error) { ShowSaveError(error); }
@@ -354,12 +371,49 @@ namespace BlackXboxLauncher
                 workingProfile = BlackProfileDocument.RestoreMissionRecord(workingProfile, originalProfile,
                     saveSlot.SelectedIndex, row / 8, row % 8);
                 RefreshSaveSlot();
-                saveStatus.Text = LauncherLanguage.Text("Selected mission restored to its values when this Profile was loaded. Apply writes the change.");
+                SetSaveStatus("Selected mission restored to its values when this Profile was loaded. Apply writes the change.");
             }
             catch (Exception error) { ShowSaveError(error); }
         }
 
         private static string HashFile(string path) { return ProfileBackupStore.HashFile(path); }
+
+        private byte[] BuildProfileCandidate()
+        {
+            byte[] candidate = (byte[])workingProfile.Clone();
+            ProfileSnapshot snapshot = BlackProfileDocument.Read(candidate);
+            for (int slot = 0; slot < snapshot.Slots.Length; slot++)
+                if (snapshot.Slots[slot].Active && pendingProfileNames[slot] != snapshot.Slots[slot].Name)
+                    candidate = BlackProfileDocument.SetName(candidate, slot, pendingProfileNames[slot]);
+            return candidate;
+        }
+
+        private void RefreshProfileIdentity()
+        {
+            if (String.IsNullOrEmpty(selectedProfilePath))
+                saveProfileInfo.Text = LauncherLanguage.Text(saveProfilePath.Items.Count == 0
+                    ? "No Profile found under game\\UDATA." : "Choose one of the Profile files found in game\\UDATA.");
+            else if (workingProfile == null)
+                saveProfileInfo.Text = LauncherLanguage.Text("This Profile could not be safely edited.");
+            else
+                saveProfileInfo.Text = LauncherLanguage.Text("6,144 bytes  |  SHA-256 ") + loadedProfileHash + "  |  " + selectedProfilePath;
+        }
+
+        // Alternate localized English fragments and literal data (hashes,
+        // paths, counts), preserving the latest outcome across locale changes.
+        private void SetSaveStatus(params string[] parts)
+        {
+            saveStatusParts = parts;
+            RefreshSaveStatus();
+        }
+
+        private void RefreshSaveStatus()
+        {
+            var text = new StringBuilder();
+            for (int i = 0; i < saveStatusParts.Length; i++)
+                text.Append((i & 1) == 0 ? LauncherLanguage.Text(saveStatusParts[i]) : saveStatusParts[i]);
+            saveStatus.Text = text.ToString();
+        }
 
         private void AppendProfileEditLog(string outcome, string beforeHash, string candidateHash, string afterHash, string detail)
         {
@@ -382,19 +436,19 @@ namespace BlackXboxLauncher
             { savePreview.Text = LauncherLanguage.Text("Select a Profile slot to preview pending values and hash."); return; }
             try
             {
-                byte[] candidate = BlackProfileDocument.SetName(workingProfile, saveSlot.SelectedIndex, saveProfileName.Text);
+                byte[] candidate = BuildProfileCandidate();
                 ProfileSlotSnapshot slot = BlackProfileDocument.Read(candidate).Slots[saveSlot.SelectedIndex];
                 int available = 0, empty = 0, zero = 0, one = 0, two = 0;
                 for (int i = 0; i < slot.MissionAvailable.Length; i++)
                 {
                     if (slot.MissionAvailable[i]) available++;
-                    uint value = slot.MissionResults[i];
+                    uint value = slot.Active ? slot.MissionResults[i] : 0xFFFFFFFF;
                     if (value == 0xFFFFFFFF) empty++; else if (value == 0) zero++; else if (value == 1) one++; else if (value == 2) two++;
                 }
                 string hash = ProfileBackupStore.HashBytes(candidate);
                 bool changed = hash != loadedProfileHash;
                 savePreview.Text = LauncherLanguage.Text("Pending preview") + " | " + LauncherLanguage.Text("Slot ") + (saveSlot.SelectedIndex + 1).ToString(CultureInfo.InvariantCulture) +
-                    " | " + LauncherLanguage.Text("Profile name") + ": " + slot.Name + "\n" +
+                    " | " + LauncherLanguage.Text("Profile name") + ": " + (slot.Active ? slot.Name : LauncherLanguage.Text("(empty slot)")) + "\n" +
                     LauncherLanguage.Text(LauncherLanguage.Text("Available")) + ": " + available.ToString(CultureInfo.InvariantCulture) + "/32 | " +
                     LauncherLanguage.Text("Results") + ": " + empty + " " + LauncherLanguage.Text("Empty") + ", 0: " + zero + ", 1: " + one + ", 2: " + two +
                     " | " + (changed ? LauncherLanguage.Text("Candidate SHA-256 ") : LauncherLanguage.Text("SHA-256 ")) + hash +
@@ -405,7 +459,7 @@ namespace BlackXboxLauncher
 
         private void ShowSaveError(Exception error)
         {
-            saveStatus.Text = LauncherLanguage.Text("Save edit stopped: ") + LauncherLanguage.Text(error.Message);
+            SetSaveStatus("Save edit stopped: ", "", error.Message);
             if (Visible && !previewOnly) MessageBox.Show(this, LauncherLanguage.Text(error.Message), LauncherLanguage.Text("Profile not changed"), MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
 
@@ -446,7 +500,10 @@ namespace BlackXboxLauncher
                 }
             }
             finally { refreshingSaveTab = false; }
+            RefreshProfileIdentity();
+            RefreshSaveStatus();
             if (workingProfile != null) RefreshSaveSlot();
+            else RefreshProfilePreview();
         }
     }
 }
