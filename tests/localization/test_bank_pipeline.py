@@ -50,6 +50,7 @@ class BankPipelineTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             bank = MainUSBank.parse(output.read_bytes())
+            self.assertEqual(bank.indexed_count, len(bank.records))
             values = {record.record_id: record.text for record in bank.records}
             self.assertIn("2018/2019", values[0x3A7C7126])
             self.assertEqual(values[0x444D1E5F], "Carregando")
@@ -92,6 +93,7 @@ class BankPipelineTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 translated = [json.loads(line) for line in catalog.read_text(encoding="utf-8").splitlines()]
                 bank = MainUSBank.parse(output.read_bytes())
+                self.assertEqual(bank.indexed_count, len(bank.records))
                 self.assertEqual([record.text for record in bank.records], [row["text"] for row in translated])
             self.assertEqual(installed.read_bytes(), source)
             self.assertEqual(installed.stat().st_mtime_ns, timestamp)
