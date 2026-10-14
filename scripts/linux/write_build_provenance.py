@@ -13,6 +13,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def source_revision(root):
+    if (root / '.git').exists():
+        return subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+    marker = root / 'black-release.json'
+    if marker.is_file():
+        revision = json.loads(marker.read_text())['source_commit']
+        if not isinstance(revision, str) or not re.fullmatch(r'[0-9a-fA-F]{40}', revision):
+            raise RuntimeError('Release manifest has an invalid source revision.')
+        return revision
+    # Unversioned source downloads can still build; do not invent a revision.
+    return None
+
+
 def main():
     root = Path(__file__).resolve().parents[2]
     build = root / 'build-linux-wine'
@@ -43,7 +56,7 @@ def main():
     marker = root / 'src/recomp/gen/post_transform_audit.json'
     data = {'host_system': platform.system(), 'host_machine': platform.machine(),
             'target': 'x86_64-pc-windows-msvc', 'windows_installation_used': False,
-            'source_commit': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip(),
+            'source_commit': source_revision(root),
             'retail_xbe_sha256': digest(root / 'game/default.xbe'), 'tools': tools,
             'sdk_versions': json.loads((root / '.work/linux-toolchain/sdk-versions.json').read_text()),
             'generated_audit_sha256': digest(marker),

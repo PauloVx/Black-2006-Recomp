@@ -137,13 +137,17 @@ and `game/TDATA/`. Back up all three save locations with the game closed.
 Do not remove the release folder when it contains progress you want to keep.
 Session logs are in `reports/launcher-*/`; a failed `--check` creates no session.
 
-Validation on Ubuntu under WSLg used Wine 9.0, Wine Mono 9.0.0 and a dedicated
-prefix. The portable play entry point reached first-mission gameplay and the
-separate settings entry point opened its live window. The native compiler enabled
-the Kelvin GPU backend. WSL exposed software graphics, so this does not establish
-hardware GPU performance or full-mission stability on Linux. Proton launch routing
-and shared paths are covered by automated tests; a real Proton playthrough has
-not been tested.
+Validation generated and built the complete game and both launchers with Linux
+tools on Ubuntu 24.04. The resulting game was tested under WSLg with Wine 9.0,
+Wine Mono 9.0.0 and a fresh dedicated prefix. The native shader compiler was
+downloaded and extracted on Linux; it enabled the Kelvin Direct3D 11 backend.
+The game played opening movies, reached the title and first mission, and responded
+to movement, camera, fire and reload input. The separate settings entry point
+opened its live window. Tests used external timeouts and the remaining game child
+was explicitly stopped afterward. WSL exposed software graphics, so this does not
+establish hardware GPU performance or full-mission stability on Linux. Audio was
+not assessed. Proton launch routing and shared paths are covered by automated
+tests; a real Proton playthrough has not been tested.
 
 The output targets Windows x64 and runs through Wine/Proton. A Linux-hosted build
 does not replace the game's Windows APIs with a native Linux renderer. Audio,
