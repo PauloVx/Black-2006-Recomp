@@ -20,8 +20,8 @@ import zipfile
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?")
 ROOT_FILES = {'.gitattributes', '.gitignore', 'CMakeLists.txt', 'LICENSE', 'NOTICE',
               'README.md', 'CHANGELOG.md', 'Build BLACK.cmd', 'Play BLACK.sh',
-              'BLACK Settings.sh', 'Install Linux Shortcuts.sh'}
-SOURCE_DIRS = {'docs', 'LICENSES', 'localization', 'patches', 'scripts', 'src',
+              'BLACK Settings.sh', 'Install Linux Shortcuts.sh', 'Build BLACK.sh'}
+SOURCE_DIRS = {'cmake', 'docs', 'LICENSES', 'localization', 'patches', 'scripts', 'src',
                'subtitles', 'tests', 'translations'}
 PRIVATE_DIRS = {'game', 'local', 'save', 'reports', 'third_party', '.work', '.venv',
                 '.wine', '.proton', 'releases', 'recomp'}

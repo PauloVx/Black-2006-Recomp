@@ -15,6 +15,9 @@ import zipfile
 spec = importlib.util.spec_from_file_location('build_release', Path(__file__).with_name('build_release.py'))
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+spec = importlib.util.spec_from_file_location('build_provenance', Path(__file__).parents[1] / 'linux/write_build_provenance.py')
+provenance = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(provenance)
 
 
 class ReleaseTests(unittest.TestCase):
@@ -66,6 +69,14 @@ class ReleaseTests(unittest.TestCase):
                 expected, name = line.split('  ', 1)
                 self.assertEqual(expected, hashlib.sha256(files[name]).hexdigest())
             marker = json.loads(files['black-release.json'])
+            # An extracted starter has no Git checkout. Its build report must
+            # bind the packed revision rather than fail after compilation.
+            extracted = self.temp_path / 'extracted'
+            extracted.mkdir()
+            (extracted / 'black-release.json').write_bytes(files['black-release.json'])
+            self.assertFalse((extracted / '.git').exists())
+            self.assertEqual(provenance.source_revision(extracted), marker['source_commit'])
+            self.assertEqual(provenance.source_revision(self.root), marker['source_commit'])
             self.assertFalse(marker['game_executable_included'])
             self.assertFalse(marker['game_files_included'])
             for name, expected in marker['files'].items():

@@ -10,12 +10,14 @@ build can also run on x86_64 Linux through Wine/Proton; see [Linux setup](docs/l
 
 The starter release includes **BLACK PC Launcher.exe** for one-click play and
 **BLACK PC Settings.exe** for settings. Supply your own original Xbox files in
-`game/`, then open **Build BLACK.cmd** on Windows once with the build prerequisites
-below installed. After that, open the play launcher to use your saved settings.
+`game/`, then open **Build BLACK.cmd** on Windows or **Build BLACK.sh** on Linux
+with the build prerequisites installed. After that, open the play launcher to
+use your saved settings.
 
-On Linux, copy the resulting folder and use **Play BLACK.sh** or **BLACK Settings.sh**
+Linux can generate and compile the complete game without a Windows installation;
+see [Linux build and setup](docs/linux.md). Use **Play BLACK.sh** or **BLACK Settings.sh**
 with Wine/Proton. **Install Linux Shortcuts.sh** creates clickable desktop entries.
-The one-time game build currently requires Windows. The public starter contains
+The public starter contains
 host source and compiled host launchers; game executables, generated game code,
 retail files, language banks, settings and saves are excluded.
 
@@ -109,6 +111,9 @@ bodies, recordings, and prebuilt game executables are excluded. Release archives
 may include compiled host launchers that contain no game code.
 
 ## Build
+
+For a build entirely on Linux, follow [the Linux guide](docs/linux.md) and run
+`bash './Build BLACK.sh'`. The requirements below describe the Windows build.
 
 Requirements:
 
