@@ -1,9 +1,27 @@
 # Black 2006 Recomp
 
-An experimental native Windows recompilation of the original Xbox release of
+An experimental Windows recompilation of the original Xbox release of
 **BLACK (2006)**, built with XboxRecomp. It includes a Direct3D 11 renderer,
 keyboard and mouse controls, XInput controller support, video settings, a PC
-launcher, and native audio output. Movies are enabled by default.
+launcher, and native audio output. Movies are enabled by default. The Windows
+build can also run on x86_64 Linux through Wine/Proton; see [Linux setup](docs/linux.md).
+
+## Release launchers
+
+The starter release includes **BLACK PC Launcher.exe** for one-click play and
+**BLACK PC Settings.exe** for settings. Supply your own original Xbox files in
+`game/`, then open **Build BLACK.cmd** on Windows once with the build prerequisites
+below installed. After that, open the play launcher to use your saved settings.
+
+On Linux, copy the resulting folder and use **Play BLACK.sh** or **BLACK Settings.sh**
+with Wine/Proton. **Install Linux Shortcuts.sh** creates clickable desktop entries.
+The one-time game build currently requires Windows. The public starter contains
+host source and compiled host launchers; game executables, generated game code,
+retail files, language banks, settings and saves are excluded.
+
+The launcher recognizes both a portable `bin/black_xbox_recomp.exe` and the existing
+`build-vs2022/Release/black_xbox_recomp.exe` layout. Keep `black-release.json` beside
+the release launchers. Archive/file SHA-256 checksums are included.
 
 Startup logos skip on one press of Escape, Enter, Space, left click, or controller
 A / B / Start. During a cutscene, the first press shows **Press again to skip**
@@ -87,7 +105,8 @@ they are stored separately from the native XMV video files.
 
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function
-bodies, recordings, and prebuilt executables are excluded.
+bodies, recordings, and prebuilt game executables are excluded. Release archives
+may include compiled host launchers that contain no game code.
 
 ## Build
 
