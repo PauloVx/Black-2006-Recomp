@@ -129,9 +129,10 @@ namespace BlackXboxLauncher
         internal static string FindProject(string directory)
         {
             foreach (string candidate in new[] { directory, Path.Combine(directory, "black-xbox", "game"), Path.Combine(directory, "game") })
-                if (File.Exists(Path.Combine(candidate, "src", "main.c")) && Directory.Exists(Path.Combine(candidate, "scripts")))
+                if (File.Exists(Path.Combine(candidate, "black-release.json")) ||
+                    (File.Exists(Path.Combine(candidate, "src", "main.c")) && Directory.Exists(Path.Combine(candidate, "scripts"))))
                     return Path.GetFullPath(candidate);
-            throw new DirectoryNotFoundException("Place BLACK PC Launcher.exe in the Black 2006 Recomp project folder or its workspace.");
+            throw new DirectoryNotFoundException("Place BLACK PC Launcher.exe in the extracted BLACK release or project folder.");
         }
 
         [STAThread]
@@ -796,6 +797,8 @@ namespace BlackXboxLauncher
 
         internal static string Executable(string root)
         {
+            string portable = Path.Combine(root, "bin", "black_xbox_recomp.exe");
+            if (File.Exists(portable)) return portable;
             return Path.Combine(root, "build-vs2022", "Release", "black_xbox_recomp.exe");
         }
 
@@ -808,7 +811,7 @@ namespace BlackXboxLauncher
         internal static void Validate(string root)
         {
             if (!File.Exists(Executable(root)))
-                throw new FileNotFoundException("The PC Release build is missing. Run scripts\\setup.ps1 to build it.", Executable(root));
+                throw new FileNotFoundException("The PC build is missing. On Windows, open Build BLACK.cmd after supplying your own Xbox files. For Linux, first build on Windows and copy the resulting folder; see docs/linux.md.", Executable(root));
             string xbe = Path.Combine(root, "game", "default.xbe");
             if (!File.Exists(xbe)) throw new FileNotFoundException("The original BLACK game executable is missing: game\\default.xbe.", xbe);
             using (var hash = SHA256.Create())
