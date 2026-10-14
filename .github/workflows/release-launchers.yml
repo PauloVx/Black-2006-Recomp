@@ -7,6 +7,9 @@ on:
       - '*.cmd'
       - '.gitattributes'
       - 'scripts/**'
+      - 'cmake/**'
+      - 'patches/xboxrecomp-clang.patch'
+      - 'tests/linux_build/**'
       - 'tests/launcher_language/**'
       - '.github/workflows/release-launchers.yml'
   workflow_dispatch:
@@ -33,7 +36,7 @@ jobs:
         run: |
           python scripts/release/test_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
-          python scripts/release/build_release.py --version 0.1.0-alpha.1
+          python scripts/release/build_release.py --version 0.1.0-alpha.2
           if ($LASTEXITCODE -ne 0) { throw 'Release packaging failed' }
       - uses: actions/upload-artifact@v4
         with:
@@ -51,3 +54,21 @@ jobs:
           bash -n ./*.sh scripts/linux/launch.sh
           python scripts/linux/test_launch.py
           python scripts/release/test_release.py
+  linux-cross-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tools-18 llvm-18 lld-18 mono-devel python3-venv cmake ninja-build build-essential wine64
+      - name: Prepare pinned toolchain and build both launchers on Linux
+        run: bash scripts/setup-linux.sh --prepare-only
+      - name: Compile and run production runtime and Rust ABI check under Wine
+        run: bash scripts/linux/test_cross_build.sh
+      - name: Package Linux-built host launchers
+        run: python3 scripts/release/build_release.py --version 0.1.0-alpha.2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BLACK-starter-built-on-Linux
+          path: releases/*

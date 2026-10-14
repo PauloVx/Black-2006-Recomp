@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-alpha.2 — 2026-10-14
+
+**Build BLACK.sh** now generates and compiles the game entirely on x86_64 Linux
+without a Windows installation. The build uses native Linux Python, LLVM,
+Rust and Mono, with a pinned Microsoft SDK/CRT downloaded by xwin. It outputs the
+Windows x64 game executable for Wine/Proton and builds both host launchers.
+
+Added the CMake cross toolchain, compiler compatibility fixes, local language-bank
+generation, build provenance, and an asset-free Linux runtime/Rust ABI CI check.
+Retail files and generated game code remain local. Windows building stays supported.
+
 ## 0.1.0-alpha.1 — 2026-10-14
 
 First public starter release. Includes compiled one-click **BLACK PC Launcher.exe**

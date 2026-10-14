@@ -538,9 +538,7 @@ unsigned black_vblank_hz(void)
  * microseconds on the game's main thread. The generated code now calls these for the constant-address forms. They
  * make the call the handler makes (apu_hook_handle_mmio -> mcpx_apu_mmio_read/write, offset from 0xFE800000). With
  * no emulated APU yet they touch the address as before, which faults for the handler. */
-extern void *g_apu_state;
-extern uint64_t mcpx_apu_mmio_read(void *d, uint64_t addr, unsigned int size);
-extern void mcpx_apu_mmio_write(void *d, uint64_t addr, uint64_t val, unsigned int size);
+extern MCPXAPUState *g_apu_state;
 
 uint32_t black_apu_r32(uint32_t va)
 {

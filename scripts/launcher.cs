@@ -811,7 +811,7 @@ namespace BlackXboxLauncher
         internal static void Validate(string root)
         {
             if (!File.Exists(Executable(root)))
-                throw new FileNotFoundException("The PC build is missing. On Windows, open Build BLACK.cmd after supplying your own Xbox files. For Linux, first build on Windows and copy the resulting folder; see docs/linux.md.", Executable(root));
+                throw new FileNotFoundException("The PC build is missing. Supply your own Xbox files, then open Build BLACK.cmd on Windows or Build BLACK.sh on Linux. See README.md and docs/linux.md.", Executable(root));
             string xbe = Path.Combine(root, "game", "default.xbe");
             if (!File.Exists(xbe)) throw new FileNotFoundException("The original BLACK game executable is missing: game\\default.xbe.", xbe);
             using (var hash = SHA256.Create())

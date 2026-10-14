@@ -4,14 +4,53 @@ This release runs the Windows game and launcher on **x86_64 Linux through Wine
 or Proton**. It needs an AVX2 CPU. The Direct3D 11 renderer is translated by Wine
 or DXVK; this is a compatibility build. The launcher uses .NET Framework 4 APIs.
 
-## Prepare the game once
+## Build entirely on Linux
 
-The public starter contains the two compiled host launchers and all host source.
-Supply your supported original Xbox disc files in `game/`, then use **Build BLACK.cmd**
-on Windows with the prerequisites in README.md. Building translates your own XBE
-locally; no generated game executable or game assets are distributed.
+The starter contains both compiled host launchers and all host source. Supply your
+supported original Xbox disc files in `game/`. No Windows installation, VM,
+PowerShell, Visual Studio, or files copied from Windows are required to build.
 
-Copy the resulting release folder to a writable Linux filesystem. Keep
+On Ubuntu 24.04, install native Linux development packages:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential clang-18 clang-tools-18 llvm-18 lld-18 \
+  mono-devel python3-venv cmake ninja-build git ca-certificates
+```
+
+Extract the complete release onto a writable, case-sensitive Linux filesystem,
+then open **Build BLACK.sh**, or run:
+
+```bash
+cd '/path/to/BLACK-0.1.0-alpha.2'
+bash './Build BLACK.sh'
+```
+
+The build downloads pinned XboxRecomp and DSP56300 source, native Linux Rust
+1.98.1, and xwin 0.10.0. xwin obtains Microsoft SDK 10.0.26100 and CRT
+14.44.17.14 headers/import libraries directly from Microsoft; their licenses
+apply and the build accepts the SDK license. These are build inputs, not a
+Windows installation. SDK case aliases require a case-sensitive filesystem;
+for WSL, use its Linux home directory rather than `/mnt/c` or another Windows drive.
+
+Linux Python translates your own XBE, Linux clang-cl/LLD compile/link the game
+and Rust audio core, and Linux Mono compiles both .NET host launchers. Wine is
+not used during generation or compilation. All tools/dependencies stay in
+`.work/linux-toolchain/`, `third_party/`, and `.venv/`; the script does not alter
+your shell profile or install system packages. It writes
+`bin/black_xbox_recomp.exe` and both launchers into the release folder. Languages
+are built locally from your original English bank. No game code or bank binaries
+are distributed.
+
+The first build may take several minutes and needs network access and several
+GB of free disk space. Two compiler jobs are used by default; set
+`BLACK_BUILD_JOBS=4` if you have enough memory. `bash scripts/setup-linux.sh
+--skip-generate` rebuilds existing locally generated code. The private
+`build-linux-wine/linux-build-provenance.json` records tool/input/output hashes.
+
+## Move an existing Windows build (optional)
+
+You can also use **Build BLACK.cmd** on Windows and copy that folder to Linux. Keep
 `build-vs2022/Release/black_xbox_recomp.exe`, or put that executable in
 `bin/black_xbox_recomp.exe`. Keep `game/`, `subtitles/`, the two `.exe` launchers,
 `black-release.json`, root `.sh` files and `scripts/linux/` together. Also copy
@@ -27,7 +66,7 @@ not use the default `~/.wine` prefix. If .NET support is missing, install it int
 this exact prefix. For example, with Winetricks installed:
 
 ```bash
-cd '/path/to/BLACK-0.1.0-alpha.1'
+cd '/path/to/BLACK-0.1.0-alpha.2'
 WINEPREFIX="$PWD/.wine" winetricks dotnet48
 ```
 
@@ -106,10 +145,11 @@ hardware GPU performance or full-mission stability on Linux. Proton launch routi
 and shared paths are covered by automated tests; a real Proton playthrough has
 not been tested.
 
-Linux build tooling is not yet provided: the one-time game build uses Windows,
-Visual Studio and the pinned MSVC Rust toolchain. Audio, controllers, GPU drivers
-and fullscreen behavior can differ among Wine/Proton versions. Later missions,
-Steam Deck and Proton versions are not automatically validated by launcher tests.
+The output targets Windows x64 and runs through Wine/Proton. A Linux-hosted build
+does not replace the game's Windows APIs with a native Linux renderer. Audio,
+controllers, GPU drivers and fullscreen behavior can differ among Wine/Proton
+versions. Later missions, Steam Deck and Proton versions are not automatically
+validated by launcher tests.
 
 Upstream documentation: [Wine](https://www.winehq.org/documentation),
 [Proton](https://github.com/ValveSoftware/Proton),
