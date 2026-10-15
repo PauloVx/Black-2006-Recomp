@@ -115,9 +115,19 @@ void LauncherLayer::loadArt() {
         }
         m_artFromGame = m_rowFont.fromGame();
     }
+    // The logo is made again only when local/logo.png changed: a texture replaced mid-frame loses the device
+    std::optional<std::filesystem::file_time_type> stamp;
     if (m_project) {
-        m_logo = loadImage(m_project->customLogo());
+        std::error_code error;
+        if (const auto written = std::filesystem::last_write_time(m_project->customLogo(), error); !error) {
+            stamp = written;
+        }
     }
+    if (m_logo && stamp == m_logoStamp) {
+        return;
+    }
+    m_logoStamp = stamp;
+    m_logo = stamp ? loadImage(m_project->customLogo()) : nullptr;
     if (!m_logo) {
         m_logo = decodeImage(assets::logoImage());
     }
@@ -220,7 +230,7 @@ void LauncherLayer::openDiscPages() {
 void LauncherLayer::closeFlow() {
     m_screen = Screen::Main;
     m_flow.reset();
-    refresh();  // a build or the game's own settings may have changed what the main menu shows
+    m_refreshPending = true;  // a build or the game's own settings may have changed what the main menu shows
 }
 
 void LauncherLayer::openFlow(std::unique_ptr<MenuFlow> flow) {
@@ -277,6 +287,9 @@ void LauncherLayer::checkGame() {
 }
 
 void LauncherLayer::OnUIRender() {
+    if (std::exchange(m_refreshPending, false)) {
+        refresh();  // here, before anything is drawn: it may replace textures
+    }
     checkGame();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float titlebar = Walnut::Application::Get().GetTitlebarHeight();
@@ -327,7 +340,7 @@ void LauncherLayer::OnUIRender() {
         }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
-        refresh();
+        m_refreshPending = true;
     }
     ImGui::End();
 }
@@ -375,7 +388,7 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
                 m_screen = Screen::Main;
             }
             if (outcome == DiscFlow::Outcome::Imported) {
-                refresh();
+                m_refreshPending = true;
             }
         }
     }
