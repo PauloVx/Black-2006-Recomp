@@ -388,8 +388,11 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     if (settings) {
         x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("LEFT/RIGHT"), tr("CHANGE"), 11.0f) + 26.0f;
     }
-    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ENTER"), tr("SELECT"), 11.0f) + 26.0f;
-    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ESC"), main ? tr("QUIT") : tr("BACK"), 11.0f);
+    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ENTER"), tr("SELECT"), 11.0f);
+    if (!(main && playing())) {  // the launcher stays open while the game runs, to keep its log
+        x += 26.0f +
+             drawPrompt(list, m_rowFont, ImVec2(x + 26.0f, promptY), tr("ESC"), main ? tr("QUIT") : tr("BACK"), 11.0f);
+    }
 
     const std::string version = trf("LAUNCHER {0}", {BLACK_LAUNCHER_VERSION});
     const float versionX = topLeft.x + size.x - 40.0f - m_rowFont.width(version, 11.0f);
