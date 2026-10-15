@@ -3,6 +3,7 @@
 #include "app/NativeDialogs.h"
 #include "app/Theme.h"
 #include "app/Translations.h"
+#include "core/GameBuild.h"
 #include "core/GameSession.h"
 #include "core/Text.h"
 
@@ -88,6 +89,53 @@ int playWithoutWindow(const std::filesystem::path& start) {
     return code;
 }
 
+void say(const std::string& line) {
+    std::fwrite(line.data(), 1, line.size(), stdout);
+    std::fputc('\n', stdout);
+    std::fflush(stdout);
+}
+
+/// --build [--from-scratch]: builds the game in the terminal, as the launcher's Build page does (the setup scripts
+/// use it). Missing tools are listed, not installed. Returns 0 once the game is built.
+int buildWithoutWindow(const std::filesystem::path& start, bool fromScratch) {
+    const auto project = black::core::ProjectLayout::locate(start);
+    if (!project) {
+        say("The launcher is not inside the BLACK project folder.");
+        return 1;
+    }
+    const black::core::Toolchain toolchain = black::core::detectToolchain(*project);
+    for (const black::core::Tool& tool : toolchain.tools) {
+        say((tool.found      ? "  found    "
+             : tool.required ? "  MISSING  "
+                             : "  -        ") +
+            tool.name + (tool.version.empty() ? std::string() : "  " + tool.version));
+    }
+    if (!toolchain.ready()) {
+        say("Install the missing tools (BLACK Launcher > Build the game does it with winget), then try again.");
+        return 1;
+    }
+    std::string printed;
+    auto stage = static_cast<black::core::BuildStage>(-1);
+    const auto outcome = black::core::buildGame(*project, toolchain, black::core::BuildOptions{fromScratch}, {},
+                                                [&](const black::core::BuildProgress& progress) {
+                                                    if (progress.stage != stage) {
+                                                        stage = progress.stage;
+                                                        say("== Stage " + std::to_string(static_cast<int>(stage) + 1) +
+                                                            " of " + std::to_string(black::core::kBuildStages));
+                                                    }
+                                                    if (progress.activity != printed) {
+                                                        printed = progress.activity;
+                                                        say(printed);
+                                                    }
+                                                });
+    say(outcome.ok ? "The game is built." : outcome.message);
+    if (!outcome.warning.empty()) {
+        say(outcome.warning);
+    }
+    say("Log: " + black::core::toUtf8(outcome.log));
+    return outcome.ok ? 0 : 1;
+}
+
 Walnut::Application* createApplication(const std::vector<std::string>& args) {
     using black::app::LauncherLayer;
 
@@ -123,6 +171,9 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args = arguments(argc, argv);
     if (args.size() == 2 && args[1] == "--play") {
         return playWithoutWindow(searchStart(args));
+    }
+    if (args.size() >= 2 && args[1] == "--build") {
+        return buildWithoutWindow(searchStart(args), args.size() == 3 && args[2] == "--from-scratch");
     }
     const std::unique_ptr<Walnut::Application> application(createApplication(args));
     application->Run();

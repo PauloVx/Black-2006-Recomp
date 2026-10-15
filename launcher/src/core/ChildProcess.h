@@ -21,6 +21,9 @@ struct ChildOptions {
     std::map<std::string, std::string> environment;
     /// Called from reader threads with each line of output, without its line break.
     std::function<void(std::string_view line, bool isError)> onLine;
+    /// The program and everything it starts are one tree: kill() ends all of it, and what is left running when
+    /// the program exits (a compiler's helper, say) is ended then too.
+    bool killTree = false;
 };
 
 /// A program the launcher starts and watches: its output arrives line by line, and it can be waited for or ended.

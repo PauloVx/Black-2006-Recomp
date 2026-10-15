@@ -40,6 +40,20 @@ bool startsWithAny(std::string_view text, const std::vector<std::string>& prefix
     return false;
 }
 
+/// Whether `options` sets this variable (names ignore case on Windows, as Windows does).
+bool overridden(const ChildOptions& options, std::string_view name) {
+#ifdef _WIN32
+    for (const auto& [key, value] : options.environment) {
+        if (key.size() == name.size() && startsWithAny(name, {key})) {
+            return true;
+        }
+    }
+    return false;
+#else
+    return options.environment.contains(std::string(name));
+#endif
+}
+
 /// Splits a byte stream into lines (LF or CRLF) and delivers them.
 class LineSplitter {
 public:
@@ -84,6 +98,7 @@ private:
 
 struct ChildProcess::Impl {
     HANDLE process = nullptr;
+    HANDLE job = nullptr;  // with killTree
     DWORD pid = 0;
     std::function<void(std::string_view, bool)> onLine;
     std::array<std::thread, 2> readers;
@@ -135,7 +150,7 @@ std::wstring environmentBlock(const ChildOptions& options) {
     for (const wchar_t* entry = inherited; *entry != L'\0'; entry += wcslen(entry) + 1) {  // NOLINT
         const std::wstring_view text(entry);
         const std::string name = toUtf8(std::filesystem::path(text.substr(0, text.find(L'=', 1))));
-        if (startsWithAny(name, options.dropPrefixes) || options.environment.contains(name)) {
+        if (startsWithAny(name, options.dropPrefixes) || overridden(options, name)) {
             continue;
         }
         block.append(text).push_back(L'\0');
@@ -179,9 +194,18 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
     const std::wstring directory = options.workingDirectory.wstring();
     // Without a folder, the program is searched for on PATH like any command
     const wchar_t* application = options.program.has_parent_path() ? options.program.c_str() : nullptr;
-    const BOOL started = CreateProcessW(application, commandLine.data(), nullptr, nullptr, TRUE,
-                                        CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, environment.data(),
-                                        directory.empty() ? nullptr : directory.c_str(), &startup, &info);
+    HANDLE job = nullptr;
+    if (options.killTree) {
+        job = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+    }
+    // Suspended until it is in its job, so nothing it starts escapes the tree
+    const BOOL started =
+        CreateProcessW(application, commandLine.data(), nullptr, nullptr, TRUE,
+                       CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | (job != nullptr ? CREATE_SUSPENDED : 0),
+                       environment.data(), directory.empty() ? nullptr : directory.c_str(), &startup, &info);
     const DWORD error = GetLastError();
     for (HANDLE handle : writeEnds) {
         CloseHandle(handle);
@@ -193,12 +217,20 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
         for (HANDLE handle : readEnds) {
             CloseHandle(handle);
         }
+        if (job != nullptr) {
+            CloseHandle(job);
+        }
         return Error{"Could not start " + toUtf8(options.program) + " (Windows error " + std::to_string(error) + ")"};
+    }
+    if (job != nullptr) {
+        AssignProcessToJobObject(job, info.hProcess);
+        ResumeThread(info.hThread);
     }
     CloseHandle(info.hThread);
 
     auto impl = std::make_unique<Impl>();
     impl->process = info.hProcess;
+    impl->job = job;
     impl->pid = info.dwProcessId;
     impl->onLine = std::move(options.onLine);
     Impl* raw = impl.get();
@@ -215,6 +247,9 @@ int ChildProcess::wait() {
     const std::scoped_lock lock(m_impl->waitMutex);
     if (!m_impl->exitCode) {
         WaitForSingleObject(m_impl->process, INFINITE);
+        if (m_impl->job != nullptr) {
+            TerminateJobObject(m_impl->job, 1);  // helpers left behind would hold the output open
+        }
         for (std::thread& reader : m_impl->readers) {
             reader.join();
         }
@@ -223,6 +258,10 @@ int ChildProcess::wait() {
         GetExitCodeProcess(m_impl->process, &code);
         CloseHandle(m_impl->process);
         m_impl->process = nullptr;
+        if (m_impl->job != nullptr) {
+            CloseHandle(m_impl->job);
+            m_impl->job = nullptr;
+        }
         m_impl->exitCode = static_cast<int>(code);
     }
     return *m_impl->exitCode;
@@ -230,7 +269,9 @@ int ChildProcess::wait() {
 
 void ChildProcess::kill() {
     const std::scoped_lock guard(m_impl->handleMutex);
-    if (m_impl->process != nullptr) {
+    if (m_impl->job != nullptr) {
+        TerminateJobObject(m_impl->job, 1);
+    } else if (m_impl->process != nullptr) {
         TerminateProcess(m_impl->process, 1);
     }
 }
@@ -239,6 +280,7 @@ void ChildProcess::kill() {
 
 struct ChildProcess::Impl {
     pid_t pid = 0;
+    bool tree = false;  // the child leads its own process group
     std::function<void(std::string_view, bool)> onLine;
     std::array<std::thread, 2> readers;
     std::optional<int> exitCode;
@@ -275,7 +317,7 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
          ++entry) {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         const std::string_view text(*entry);
         const std::string name(text.substr(0, text.find('=')));
-        if (!startsWithAny(name, options.dropPrefixes) && !options.environment.contains(name)) {
+        if (!startsWithAny(name, options.dropPrefixes) && !overridden(options, name)) {
             variables.emplace_back(text);
         }
     }
@@ -299,6 +341,9 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
     const std::string directory = options.workingDirectory.string();
     const pid_t child = fork();
     if (child == 0) {
+        if (options.killTree) {
+            setpgid(0, 0);
+        }
         dup2(pipes[0][1], STDOUT_FILENO);
         dup2(pipes[1][1], STDERR_FILENO);
         for (const auto& pipe : pipes) {
@@ -322,6 +367,10 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
     }
     auto impl = std::make_unique<Impl>();
     impl->pid = child;
+    impl->tree = options.killTree;
+    if (options.killTree) {
+        setpgid(child, child);  // also here, so a kill() before the child runs reaches the group
+    }
     impl->onLine = std::move(options.onLine);
     Impl* raw = impl.get();
     impl->readers[0] = std::thread([raw, pipe = pipes[0][0]] { raw->read(pipe, false); });
@@ -339,6 +388,9 @@ int ChildProcess::wait() {
         siginfo_t info{};
         while (waitid(P_PID, static_cast<id_t>(m_impl->pid), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR) {
         }
+        if (m_impl->tree) {
+            ::kill(-m_impl->pid, SIGKILL);  // helpers left behind would hold the output open
+        }
         for (std::thread& reader : m_impl->readers) {
             reader.join();
         }
@@ -355,7 +407,7 @@ int ChildProcess::wait() {
 void ChildProcess::kill() {
     const std::scoped_lock guard(m_impl->pidMutex);
     if (m_impl->pid > 0) {
-        ::kill(m_impl->pid, SIGKILL);
+        ::kill(m_impl->tree ? -m_impl->pid : m_impl->pid, SIGKILL);
     }
 }
 

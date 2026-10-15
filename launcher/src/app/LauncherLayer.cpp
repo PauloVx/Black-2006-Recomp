@@ -1,5 +1,6 @@
 #include "app/LauncherLayer.h"
 
+#include "app/BuildFlow.h"
 #include "app/EmbeddedAssets.h"
 #include "app/KeyCapture.h"
 #include "app/NativeDialogs.h"
@@ -170,10 +171,15 @@ Page LauncherLayer::mainPage() {
             disc.help = tr("The supported Xbox retail release of BLACK is in place.");
             break;
     }
-    MenuRow build{tr("BUILD THE GAME"), m_gameExecutable ? tr("DONE") : tr("NOT BUILT"), "", false};
-    build.help = m_gameExecutable
-                     ? tr("The PC game has been built from your disc.")
-                     : tr("Turns your disc into the PC game. For now, run Build BLACK in the game folder.");
+    const bool discReady = m_gameFiles.state == core::GameFilesState::Supported;
+    MenuRow build{tr("BUILD THE GAME"), m_gameExecutable ? tr("DONE") : tr("NOT BUILT"), "",
+                  discReady && m_project.has_value() && !playing()};
+    build.help = !discReady         ? tr("Available once your disc is in place.")
+                 : m_gameExecutable ? tr("The game is built. Build it again after an update, for example.")
+                                    : tr("Turns your disc into the PC game, installing the tools it needs first.");
+    if (!ready() && discReady) {
+        page.initialRow = 1;  // the next step
+    }
 
     if (playing()) {
         add(Action::Play,
@@ -211,6 +217,12 @@ void LauncherLayer::openDiscPages() {
     }
 }
 
+void LauncherLayer::closeFlow() {
+    m_screen = Screen::Main;
+    m_flow.reset();
+    refresh();  // a build or the game's own settings may have changed what the main menu shows
+}
+
 void LauncherLayer::openFlow(std::unique_ptr<MenuFlow> flow) {
     m_flow = std::move(flow);
     m_screen = Screen::Flow;
@@ -235,7 +247,7 @@ void LauncherLayer::run(Action action) {
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
         case Action::Disc: openDiscPages(); break;
-        case Action::Build: break;
+        case Action::Build: openFlow(std::make_unique<BuildFlow>(*m_project, &m_rowFont, &m_titleFont)); break;
     }
     m_notice = result ? std::string() : result.error().message;
 }
@@ -308,8 +320,7 @@ void LauncherLayer::OnUIRender() {
             }
         } else if (m_screen == Screen::Flow) {
             if (m_flow->back() == MenuFlow::Outcome::Back) {
-                m_screen = Screen::Main;
-                m_flow.reset();
+                closeFlow();
             }
         } else if (m_disc && m_disc->back() == DiscFlow::Outcome::Back) {
             m_screen = Screen::Main;
@@ -354,8 +365,7 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     if (const auto event = m_menu.draw(page.rows, m_rowFont, layout, acceptInput)) {
         if (settings) {
             if (m_flow->handle(*event) == MenuFlow::Outcome::Back) {
-                m_screen = Screen::Main;
-                m_flow.reset();
+                closeFlow();
             }
         } else if (main && event->step == 0) {
             run(m_mainActions[event->row]);
@@ -389,7 +399,8 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
         x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("LEFT/RIGHT"), tr("CHANGE"), 11.0f) + 26.0f;
     }
     x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ENTER"), tr("SELECT"), 11.0f);
-    if (!(main && playing())) {  // the launcher stays open while the game runs, to keep its log
+    const bool canLeave = main ? !playing() : !(m_screen == Screen::Flow && m_flow && !m_flow->canLeave());
+    if (canLeave) {  // not while the game runs (the launcher keeps its log) or a build does
         x += 26.0f +
              drawPrompt(list, m_rowFont, ImVec2(x + 26.0f, promptY), tr("ESC"), main ? tr("QUIT") : tr("BACK"), 11.0f);
     }

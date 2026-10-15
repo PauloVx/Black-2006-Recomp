@@ -7,6 +7,14 @@ it onto the window: the launcher reads the Xbox disc itself, checks it is the su
 copies it into `game/` with a progress bar, percentage, current file, speed and time left. Copying can be stopped
 and carries on where it left off; saves in the game folder are kept.
 
+**The launcher builds the game.** **Build the game** finds the tools the build needs (Visual Studio's C++
+tools, CMake, Python and Rust, also where their installers put them), installs missing ones with winget, then
+prepares Python, translates the code from your disc, sets up the build, compiles and makes the menu languages,
+with each stage's progress, the elapsed time and the current output line. Stopping ends everything the build
+started; building again carries on, and code that is still current is not translated again. A failure shows the
+step and the last lines of output, and every build is logged in `reports/`. `scripts/setup.ps1` now just builds
+the launcher and runs `BLACK Launcher.exe --build`.
+
 **BLACK Launcher replaces BLACK PC Launcher and BLACK PC Settings.** One launcher, in C++ on Walnut
 (Vulkan + Dear ImGui) and drawn like the game's own menu pages, now does everything the C# launchers did:
 

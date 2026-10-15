@@ -13,6 +13,7 @@ black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
 
 add_executable(black_launcher
     "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp"
+    BuildFlow.cpp
     DiscFlow.cpp
     KeyCapture.cpp
     LauncherLayer.cpp
