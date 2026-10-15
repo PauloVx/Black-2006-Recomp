@@ -9910,10 +9910,10 @@ index 0000000..bb5c93b
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_gpu.c b/src/nv2a/kelvin/kelvin_gpu.c
 new file mode 100644
-index 0000000..d7ceca6
+index 0000000..e7ff2df
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.c
-@@ -0,0 +1,2214 @@
+@@ -0,0 +1,2217 @@
 +/*
 + * Kelvin D3D11 backend. See kelvin_gpu.h.
 + *
@@ -10306,6 +10306,8 @@ index 0000000..d7ceca6
 +    InterlockedExchange64(&s_pending_size, ((LONG64)w << 48) | ((LONG64)h << 32) | ((LONG64)ow << 16) | (LONG64)oh);
 +}
 +
++static void kgpu_vs_precompile(void);
++
 +bool kgpu_init(void)
 +{
 +    IDXGIFactory1 *factory = NULL;
@@ -10475,6 +10477,7 @@ index 0000000..d7ceca6
 +        HR_CHECK(ID3D11Device_CreateSamplerState(G.dev, &sd, &G.default_smp), "CreateSamplerState(default)");
 +    }
 +    G.ok = 1;
++    kgpu_vs_precompile();
 +    kg_post_poll();
 +    pc_video_set_resize_hook(kgpu_request_host_size);
 +    kgq_start();
@@ -12130,10 +12133,10 @@ index 0000000..d7ceca6
 +#include "kelvin_gpu_async.inc"
 diff --git a/src/nv2a/kelvin/kelvin_gpu.h b/src/nv2a/kelvin/kelvin_gpu.h
 new file mode 100644
-index 0000000..662239e
+index 0000000..daab7df
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.h
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +/*
 + * Kelvin D3D11 backend: rasterization, pixel shading and output merging of
 + * the NV2A on the host GPU, for BLACK's draw subset.
@@ -12193,9 +12196,10 @@ index 0000000..662239e
 +    KGpuAttrSrc attr[16];
 +} KGpuVsDraw;
 +
-+/* The GPU can shade this program's vertices now (its shader is compiled). */
++/* The GPU can shade this program's vertices now (its shader is compiled). `words` is the program's microcode up
++ * to its final instruction (nwords words), recorded so later runs can compile it before the game starts. */
 +bool kgpu_vs_enabled(void);
-+bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start);
++bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords);
 +
 +/* KGpuDraw.clean: what the caller knows is unchanged since its previous draw (so what derives from it is kept). A
 + * caller that cannot tell leaves it zero. */
@@ -12856,7 +12860,7 @@ index 0000000..d00641c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_draw.inc b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 new file mode 100644
-index 0000000..f1bf2f8
+index 0000000..43b88c8
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 @@ -0,0 +1,773 @@
@@ -13560,7 +13564,7 @@ index 0000000..f1bf2f8
 +            b->ps = psx;
 +        }
 +        if (d->gvs) {
-+            KGpuVs *ve = vs_lookup(d->gvs->program, d->gvs->hash, d->gvs->start);
++            KGpuVs *ve = vs_lookup(d->gvs->program, d->gvs->hash, d->gvs->start, NULL, 0);
 +            if (!ve || !ve->vs) return;
 +            if (b->vs != ve->vs) {
 +                ID3D11DeviceContext_VSSetShader(G.ctx, ve->vs, NULL, 0);
@@ -15779,10 +15783,10 @@ index 0000000..2bcd677
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_vsh.inc b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
 new file mode 100644
-index 0000000..b96f4ee
+index 0000000..61291a2
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,778 @@
 +/* The GPU vertex path of the Kelvin D3D11 backend (included by kelvin_gpu.c).
 + *
 + * A transform program (nv2a_vsh_cpu's parsed steps, straight-line code) becomes
@@ -16139,26 +16143,42 @@ index 0000000..b96f4ee
 +}
 +
 +/* ---- shader cache with an asynchronous compiler -------------------------------------------- */
++/*
++ * Compiled programs are cached on disk by their HLSL (vs_<source hash>_<length>.bin), so a program has one file
++ * whatever program memory holds behind its final instruction. Each program's microcode is also recorded in
++ * vs_manifest.bin there. At startup kgpu_vs_precompile compiles every recorded program the cache lacks on all
++ * cores, before the game runs: a rebuild or a cleared cache costs a pause at launch instead of hitches in play
++ * (RECOMP_KGPU_PRECOMPILE=0 skips it). A program first met in play gets a quick unoptimised build, then an
++ * optimised one replaces it and is cached (RECOMP_KGPU_VS_QUICK=0 builds only the optimised one).
++ */
 +
 +typedef struct KGpuVs {
 +    bool used;
 +    uint32_t hash, start;
 +    volatile LONG state;               /* 0 compiling, 1 ready, 2 unusable */
-+    ID3D11VertexShader *vs;
++    ID3D11VertexShader *volatile vs;   /* the optimised build replaces the quick one */
++    ID3D11VertexShader *vs_quick;      /* kept: a queued draw may still bind it */
 +    char *source;
++    uint32_t sh, len;                  /* source hash and length: the cache key */
++    uint32_t *words;                   /* microcode up to the final instruction, for the manifest */
++    uint32_t nwords;
 +} KGpuVs;
 +
 +#define KG_VS_MAX 512
 +static KGpuVs s_vs[KG_VS_MAX];
-+/* Compile jobs (vertex programs, kind 0, and specialised pixel programs, kind 1) for the worker threads. */
++/* Compile jobs for the worker threads: vertex programs (kind 0), specialised pixel programs (kind 1) and the
++ * optimised build of a vertex program that runs its quick build (kind 2). */
 +typedef struct KgJob { int kind; void *p; } KgJob;
 +#define KG_JOB_MAX 4096
 +static KgJob s_jobs[KG_JOB_MAX];
 +static volatile LONG s_job_head, s_job_claim;    /* jobs queued / jobs taken by a compiler thread */
 +static HANDLE s_job_sem;                         /* released once per queued job */
++static SRWLOCK s_job_lock = SRWLOCK_INIT;        /* the pusher, the submission thread and the workers queue jobs */
 +#define KG_VS_WORKERS_MAX 8
 +static void kg_job_ps(void *p);
++static void kg_job_post(int kind, void *p);
 +static int s_vs_enabled = -1;
++static int s_vs_quick = -1;
 +
 +static uint32_t fnv_bytes(const void *p, size_t n)
 +{
@@ -16169,62 +16189,186 @@ index 0000000..b96f4ee
 +    return h;
 +}
 +
-+static void vs_cache_path(char *out, size_t cap, const KGpuVs *e)
++static const char *kg_cache_dir(void)
 +{
 +    const char *dir = getenv("RECOMP_KGPU_CACHE");
-+    uint32_t sh = e->source ? fnv_bytes(e->source, strlen(e->source)) : 0;
-+    snprintf(out, cap, "%s/vs_%08X_%08X_%08X.bin", dir && *dir ? dir : "kgpu-cache", e->hash, e->start, sh);
++    return dir && *dir ? dir : "kgpu-cache";
++}
++
++static void vs_cache_path(char *out, size_t cap, uint32_t sh, uint32_t len)
++{
++    snprintf(out, cap, "%s/vs_%08X_%05X.bin", kg_cache_dir(), sh, len);
++}
++
++static void *kg_read_file(const char *path, long *size)
++{
++    FILE *f = fopen(path, "rb");
++    void *buf;
++    long n;
++    if (!f) return NULL;
++    fseek(f, 0, SEEK_END);
++    n = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    buf = n > 0 ? malloc((size_t)n) : NULL;
++    if (buf && fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); buf = NULL; }
++    fclose(f);
++    *size = n;
++    return buf;
++}
++
++/* Written beside and renamed, so an interrupted write never leaves a file that looks complete. */
++static void kg_write_file(const char *path, const void *p, size_t n)
++{
++    char tmp[600];
++    FILE *f;
++    CreateDirectoryA(kg_cache_dir(), NULL);
++    snprintf(tmp, sizeof(tmp), "%s.%lu.tmp", path, (unsigned long)GetCurrentThreadId());
++    f = fopen(tmp, "wb");
++    if (!f) return;
++    if (fwrite(p, 1, n, f) != n) { fclose(f); DeleteFileA(tmp); return; }
++    fclose(f);
++    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp);
 +}
 +
 +static bool vs_try_cache(KGpuVs *e)
 +{
 +    char path[512];
-+    FILE *f;
++    ID3D11VertexShader *vs = NULL;
 +    void *buf;
-+    long n;
-+    vs_cache_path(path, sizeof(path), e);
-+    f = fopen(path, "rb");
-+    if (!f) return false;
-+    fseek(f, 0, SEEK_END);
-+    n = ftell(f);
-+    fseek(f, 0, SEEK_SET);
-+    buf = n > 0 ? malloc((size_t)n) : NULL;
-+    if (buf && fread(buf, 1, (size_t)n, f) == (size_t)n &&
-+        SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, buf, (SIZE_T)n, NULL, &e->vs))) {
-+        free(buf); fclose(f);
-+        return true;
++    long n = 0;
++    vs_cache_path(path, sizeof(path), e->sh, e->len);
++    buf = kg_read_file(path, &n);
++    if (!buf) {
++        /* a cache written before the names were keyed by the source alone */
++        char old[512];
++        snprintf(old, sizeof(old), "%s/vs_%08X_%08X_%08X.bin", kg_cache_dir(), e->hash, e->start, e->sh);
++        buf = kg_read_file(old, &n);
++        if (buf) kg_write_file(path, buf, (size_t)n);
 +    }
-+    free(buf); fclose(f);
++    if (!buf) return false;
++    if (FAILED(ID3D11Device_CreateVertexShader(G.dev, buf, (SIZE_T)n, NULL, &vs))) vs = NULL;
++    free(buf);
++    e->vs = vs;
++    return vs != NULL;
++}
++
++/* ---- the manifest of the programs met so far ---- */
++
++#define KG_MAN_MAGIC 0x3153564Bu       /* "KVS1"; a record is magic, source hash, source length, word count, words */
++#define KG_MAN_MAX 4096
++static uint64_t s_man_keys[KG_MAN_MAX];
++static int s_man_n;
++static bool s_man_loaded;
++static SRWLOCK s_man_lock = SRWLOCK_INIT;
++
++static void manifest_path(char *out, size_t cap)
++{
++    snprintf(out, cap, "%s/vs_manifest.bin", kg_cache_dir());
++}
++
++static bool manifest_has(uint64_t key)
++{
++    int i;
++    for (i = 0; i < s_man_n; i++) if (s_man_keys[i] == key) return true;
 +    return false;
 +}
 +
-+static void vs_compile(KGpuVs *e)
++static void manifest_note(uint64_t key)
 +{
-+    ID3DBlob *code = NULL, *errors = NULL;
-+    HRESULT hr;
-+    long long t0 = qpc_now();
-+    hr = G.compile(e->source, strlen(e->source), "kgpu_vsh", NULL, NULL, "vs_main", "vs_5_0",
-+                   D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, &errors);
-+    if (SUCCEEDED(hr) &&
-+        SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, ID3D10Blob_GetBufferPointer(code),
-+                                                  ID3D10Blob_GetBufferSize(code), NULL, &e->vs))) {
++    if (s_man_n < KG_MAN_MAX && !manifest_has(key)) s_man_keys[s_man_n++] = key;
++}
++
++/* Calls fn for each whole record; a torn record at the end (an interrupted write) ends the list. */
++static void manifest_read(void (*fn)(void *ctx, const uint32_t *hdr, const uint32_t *words), void *ctx)
++{
++    char path[512];
++    void *buf;
++    long n = 0, at = 0;
++    manifest_path(path, sizeof(path));
++    buf = kg_read_file(path, &n);
++    if (!buf) return;
++    while (at + 16 <= n) {
++        const uint32_t *hdr = (const uint32_t *)((const uint8_t *)buf + at);
++        if (hdr[0] != KG_MAN_MAGIC || !hdr[3] || hdr[3] % VSH_TOKEN_SIZE ||
++            hdr[3] > NV2A_MAX_TRANSFORM_PROGRAM_LENGTH * VSH_TOKEN_SIZE || at + 16 + (long)hdr[3] * 4 > n) break;
++        fn(ctx, hdr, hdr + 4);
++        at += 16 + (long)hdr[3] * 4;
++    }
++    free(buf);
++}
++
++static void manifest_note_record(void *ctx, const uint32_t *hdr, const uint32_t *words)
++{
++    (void)ctx; (void)words;
++    manifest_note(((uint64_t)hdr[1] << 32) | hdr[2]);
++}
++
++static void manifest_add(const KGpuVs *e)
++{
++    uint64_t key = ((uint64_t)e->sh << 32) | e->len;
++    if (!e->words || !e->nwords) return;
++    AcquireSRWLockExclusive(&s_man_lock);
++    if (!s_man_loaded) { manifest_read(manifest_note_record, NULL); s_man_loaded = true; }
++    if (!manifest_has(key) && s_man_n < KG_MAN_MAX) {
 +        char path[512];
 +        FILE *f;
-+        CreateDirectoryA(getenv("RECOMP_KGPU_CACHE") && *getenv("RECOMP_KGPU_CACHE") ? getenv("RECOMP_KGPU_CACHE")
-+                                                                                       : "kgpu-cache", NULL);
-+        vs_cache_path(path, sizeof(path), e);
-+        f = fopen(path, "wb");
++        uint32_t hdr[4];
++        hdr[0] = KG_MAN_MAGIC; hdr[1] = e->sh; hdr[2] = e->len; hdr[3] = e->nwords;
++        CreateDirectoryA(kg_cache_dir(), NULL);
++        manifest_path(path, sizeof(path));
++        f = fopen(path, "ab");
 +        if (f) {
-+            fwrite(ID3D10Blob_GetBufferPointer(code), 1, ID3D10Blob_GetBufferSize(code), f);
++            fwrite(hdr, 4, 4, f);
++            fwrite(e->words, 4, e->nwords, f);
 +            fclose(f);
++            s_man_keys[s_man_n++] = key;
 +        }
-+        InterlockedExchange(&e->state, 1);
-+        fprintf(stderr, "[KGPU] vertex program %08X/%u compiled in %.0f ms\n", e->hash, e->start,
-+                (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf);
++    }
++    ReleaseSRWLockExclusive(&s_man_lock);
++}
++
++/* ---- compiling ---- */
++
++static ID3DBlob *vs_build(const char *source, bool quick, ID3DBlob **errors)
++{
++    ID3DBlob *code = NULL;
++    HRESULT hr = G.compile(source, strlen(source), "kgpu_vsh", NULL, NULL, "vs_main", "vs_5_0",
++                           quick ? D3DCOMPILE_SKIP_OPTIMIZATION : D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, errors);
++    if (FAILED(hr) && code) { ID3D10Blob_Release(code); code = NULL; }
++    return code;
++}
++
++static void vs_compile(KGpuVs *e, bool quick)
++{
++    ID3DBlob *code, *errors = NULL;
++    ID3D11VertexShader *vs = NULL;
++    long long t0 = qpc_now();
++    code = vs_build(e->source, quick, &errors);
++    if (code && SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, ID3D10Blob_GetBufferPointer(code),
++                                                          ID3D10Blob_GetBufferSize(code), NULL, &vs))) {
++        double ms = (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf;
++        if (quick) {
++            e->vs_quick = vs;
++            e->vs = vs;
++            InterlockedExchange(&e->state, 1);
++            fprintf(stderr, "[KGPU] vertex program %08X/%u quick build in %.0f ms\n", e->hash, e->start, ms);
++            kg_job_post(2, e);
++        } else {
++            char path[512];
++            vs_cache_path(path, sizeof(path), e->sh, e->len);
++            kg_write_file(path, ID3D10Blob_GetBufferPointer(code), ID3D10Blob_GetBufferSize(code));
++            InterlockedExchangePointer((PVOID volatile *)&e->vs, vs);
++            InterlockedExchange(&e->state, 1);
++            manifest_add(e);
++            fprintf(stderr, "[KGPU] vertex program %08X/%u compiled in %.0f ms\n", e->hash, e->start, ms);
++        }
++    } else if (quick) {
++        /* the optimised build may still succeed */
++        kg_job_post(2, e);
 +    } else {
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u did not compile: %s\n", e->hash, e->start,
 +                errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "(no log)");
-+        InterlockedExchange(&e->state, 2);
++        if (e->state != 1) InterlockedExchange(&e->state, 2);    /* a working quick build stays in use */
 +    }
 +    if (errors) ID3D10Blob_Release(errors);
 +    if (code) ID3D10Blob_Release(code);
@@ -16239,7 +16383,8 @@ index 0000000..b96f4ee
 +        WaitForSingleObject(s_job_sem, INFINITE);
 +        idx = InterlockedIncrement(&s_job_claim) - 1;
 +        j = s_jobs[idx % KG_JOB_MAX];
-+        if (j.kind == 0) vs_compile((KGpuVs *)j.p);
++        if (j.kind == 0) vs_compile((KGpuVs *)j.p, s_vs_quick != 0);
++        else if (j.kind == 2) vs_compile((KGpuVs *)j.p, false);
 +        else kg_job_ps(j.p);
 +    }
 +    return 0;
@@ -16247,6 +16392,7 @@ index 0000000..b96f4ee
 +
 +static void kg_job_post(int kind, void *p)
 +{
++    AcquireSRWLockExclusive(&s_job_lock);
 +    if (!s_job_sem) {
 +        /* Programs compile in parallel: a level's first frames name dozens of them at once, and until one is
 +         * ready its draws run the CPU vertex stage (vertex programs) or the ubershader (pixel programs).
@@ -16267,7 +16413,103 @@ index 0000000..b96f4ee
 +    s_jobs[s_job_head % KG_JOB_MAX].kind = kind;
 +    s_jobs[s_job_head % KG_JOB_MAX].p = p;
 +    InterlockedIncrement(&s_job_head);
++    ReleaseSRWLockExclusive(&s_job_lock);
 +    ReleaseSemaphore(s_job_sem, 1, NULL);
++}
++
++/* ---- compiling the recorded programs before the game starts ---- */
++
++typedef struct KgPre { char *source; uint32_t sh, len; } KgPre;
++typedef struct KgPreList { KgPre *items; int n, cap, cached, unusable; } KgPreList;
++static volatile LONG s_pre_next, s_pre_failed;
++
++static void precompile_note(void *ctx, const uint32_t *hdr, const uint32_t *words)
++{
++    KgPreList *l = (KgPreList *)ctx;
++    Nv2aVshProgram prog;
++    char *source, path[512];
++    uint32_t sh, len;
++    int i;
++    memset(&prog, 0, sizeof(prog));
++    if (nv2a_vsh_parse_program(&prog, words, hdr[3] / VSH_TOKEN_SIZE) != NV2AVPR_SUCCESS) { l->unusable++; return; }
++    source = vsh_generate(&prog);
++    nv2a_vsh_program_destroy(&prog);
++    if (!source) { l->unusable++; return; }
++    /* this build's translation, which may differ from the one that recorded the program */
++    len = (uint32_t)strlen(source);
++    sh = fnv_bytes(source, len);
++    manifest_note(((uint64_t)hdr[1] << 32) | hdr[2]);
++    manifest_note(((uint64_t)sh << 32) | len);
++    vs_cache_path(path, sizeof(path), sh, len);
++    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) { l->cached++; free(source); return; }
++    for (i = 0; i < l->n; i++) {
++        if (l->items[i].sh == sh && l->items[i].len == len) { free(source); return; }
++    }
++    if (l->n == l->cap) {
++        int cap = l->cap ? l->cap * 2 : 64;
++        KgPre *g = (KgPre *)realloc(l->items, (size_t)cap * sizeof(*g));
++        if (!g) { free(source); return; }
++        l->items = g; l->cap = cap;
++    }
++    l->items[l->n].source = source; l->items[l->n].sh = sh; l->items[l->n].len = len;
++    l->n++;
++}
++
++static DWORD WINAPI precompile_worker(LPVOID arg)
++{
++    KgPreList *l = (KgPreList *)arg;
++    for (;;) {
++        LONG i = InterlockedIncrement(&s_pre_next) - 1;
++        ID3DBlob *code, *errors = NULL;
++        if (i >= l->n) break;
++        code = vs_build(l->items[i].source, false, &errors);
++        if (code) {
++            char path[512];
++            vs_cache_path(path, sizeof(path), l->items[i].sh, l->items[i].len);
++            kg_write_file(path, ID3D10Blob_GetBufferPointer(code), ID3D10Blob_GetBufferSize(code));
++            ID3D10Blob_Release(code);
++        } else {
++            InterlockedIncrement(&s_pre_failed);
++        }
++        if (errors) ID3D10Blob_Release(errors);
++    }
++    return 0;
++}
++
++static void kgpu_vs_precompile(void)
++{
++    const char *env = getenv("RECOMP_KGPU_PRECOMPILE");
++    KgPreList l;
++    HANDLE th[32];
++    SYSTEM_INFO si;
++    int nth = 0, want, i;
++    long long t0 = qpc_now();
++    if ((env && *env == '0') || !kgpu_vs_enabled() || !G.compile) return;
++    memset(&l, 0, sizeof(l));
++    AcquireSRWLockExclusive(&s_man_lock);
++    manifest_read(precompile_note, &l);
++    s_man_loaded = true;
++    ReleaseSRWLockExclusive(&s_man_lock);
++    if (l.n) {
++        GetSystemInfo(&si);
++        want = (int)si.dwNumberOfProcessors > 1 ? (int)si.dwNumberOfProcessors - 1 : 1;
++        if (want > l.n) want = l.n;
++        if (want > 32) want = 32;
++        fprintf(stderr, "[KGPU] precompiling %d vertex programs on %d threads\n", l.n, want);
++        s_pre_next = 0; s_pre_failed = 0;
++        for (i = 0; i < want; i++) {
++            th[nth] = CreateThread(NULL, 0, precompile_worker, &l, 0, NULL);
++            if (th[nth]) nth++;
++        }
++        if (nth) WaitForMultipleObjects((DWORD)nth, th, TRUE, INFINITE);
++        else precompile_worker(&l);
++        for (i = 0; i < nth; i++) CloseHandle(th[i]);
++    }
++    fprintf(stderr, "[KGPU] shader manifest: %d vertex programs compiled before start in %.0f ms (%ld failed), "
++                    "%d already cached, %d unusable\n", l.n,
++            (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf, (long)s_pre_failed, l.cached, l.unusable);
++    for (i = 0; i < l.n; i++) free(l.items[i].source);
++    free(l.items);
 +}
 +
 +bool kgpu_vs_enabled(void)
@@ -16282,7 +16524,7 @@ index 0000000..b96f4ee
 +/* The compiled shader for a program, once ready. Starts its translation and
 + * compilation the first time a program is seen; until then (or if the GPU cannot
 + * run it) false, and the draw uses the CPU vertex stage. */
-+static KGpuVs *vs_lookup(const void *program, uint32_t hash, uint32_t start)
++static KGpuVs *vs_lookup(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords)
 +{
 +    KGpuVs *e = NULL;
 +    unsigned int i, slot = (hash ^ (start * 40503u)) % KG_VS_MAX;
@@ -16292,6 +16534,10 @@ index 0000000..b96f4ee
 +        if (q->hash == hash && q->start == start) return q->state == 1 ? q : NULL;
 +    }
 +    if (!e) return NULL;
++    if (s_vs_quick < 0) {
++        const char *env = getenv("RECOMP_KGPU_VS_QUICK");
++        s_vs_quick = !(env && *env == '0');
++    }
 +    e->used = true; e->hash = hash; e->start = start; e->state = 0;
 +    e->source = vsh_generate((const Nv2aVshProgram *)program);
 +    if (!e->source) {
@@ -16299,8 +16545,15 @@ index 0000000..b96f4ee
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u runs on the CPU (unsupported operation)\n", hash, start);
 +        return NULL;
 +    }
++    e->len = (uint32_t)strlen(e->source);
++    e->sh = fnv_bytes(e->source, e->len);
++    if (words && nwords) {
++        e->words = (uint32_t *)malloc((size_t)nwords * 4);
++        if (e->words) { memcpy(e->words, words, (size_t)nwords * 4); e->nwords = nwords; }
++    }
 +    if (vs_try_cache(e)) {
 +        e->state = 1;
++        manifest_add(e);
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u loaded from the shader cache\n", hash, start);
 +        return e;
 +    }
@@ -16308,9 +16561,9 @@ index 0000000..b96f4ee
 +    return NULL;
 +}
 +
-+bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start)
++bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords)
 +{
-+    return vs_lookup(program, hash, start) != NULL;
++    return vs_lookup(program, hash, start, words, nwords) != NULL;
 +}
 diff --git a/src/nv2a/kelvin/kelvin_int.h b/src/nv2a/kelvin/kelvin_int.h
 new file mode 100644
@@ -22745,7 +22998,7 @@ index 0000000..8607782
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_render.c b/src/nv2a/kelvin/kelvin_render.c
 new file mode 100644
-index 0000000..3c3129b
+index 0000000..dd69e2e
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.c
 @@ -0,0 +1,5319 @@
@@ -27789,7 +28042,7 @@ index 0000000..3c3129b
 +    if (kgpu_vs_enabled() && mode >= PRIM_TYPE_TRIANGLES) {
 +        KVshGpuInfo gi;
 +        if (kvsh_gpu_info(&gi)) {
-+            if (kgpu_vs_ready(gi.program, gi.hash, gi.start)) {
++            if (kgpu_vs_ready(gi.program, gi.hash, gi.start, gi.words, gi.nwords)) {
 +                if (gpu_draw_gvs(pg, &c, &src, &gi)) {
 +                    if (commit_inline) update_inline_values(pg, &src);
 +                    return;
@@ -28070,10 +28323,10 @@ index 0000000..3c3129b
 +}
 diff --git a/src/nv2a/kelvin/kelvin_render.h b/src/nv2a/kelvin/kelvin_render.h
 new file mode 100644
-index 0000000..5c22fad
+index 0000000..ede8503
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.h
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,324 @@
 +/*
 + * Kelvin CPU renderer: types shared by the vertex, raster, texture and pixel
 + * stages. See kelvin_int.h for the overall design.
@@ -28331,6 +28584,8 @@ index 0000000..5c22fad
 +typedef struct KVshGpuInfo {
 +    const void *program;          /* Nv2aVshProgram */
 +    uint32_t hash, start;
++    const uint32_t *words;        /* the microcode up to the final instruction */
++    uint32_t nwords;
 +    const float *constants;       /* NV2A_VERTEXSHADER_CONSTANTS x 4 */
 +    bool fog_enable;
 +    int fog_mode;
@@ -30348,10 +30603,10 @@ index 0000000..f4db705
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_vsh.c b/src/nv2a/kelvin/kelvin_vsh.c
 new file mode 100644
-index 0000000..2d3a097
+index 0000000..62ca381
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_vsh.c
-@@ -0,0 +1,939 @@
+@@ -0,0 +1,943 @@
 +/*
 + * Kelvin vertex stage.
 + *
@@ -30386,6 +30641,7 @@ index 0000000..2d3a097
 +typedef struct ProgEntry {
 +    uint32_t start, hash;
 +    bool writes_constants;        /* c[] outputs: vertices depend on order */
++    uint32_t nslots;              /* instructions up to the final one */
 +    Nv2aVshProgram prog;
 +    uint32_t words[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE];
 +} ProgEntry;
@@ -30494,6 +30750,7 @@ index 0000000..2d3a097
 +    memcpy(e->words, pg->program_data[start], bytes);
 +    for (step = e->prog.steps;; step++) {
 +        int k;
++        e->nslots++;
 +        for (k = 0; k < 2; k++) {
 +            if (step->mac.outputs[k].type == NV2ART_CONTEXT ||
 +                step->ilu.outputs[k].type == NV2ART_CONTEXT) {
@@ -31104,6 +31361,8 @@ index 0000000..2d3a097
 +    out->program = &s_vs.entry->prog;
 +    out->hash = s_vs.prog_hash;
 +    out->start = s_vs.prog_start;
++    out->words = &s_vs.entry->words[0][0];
++    out->nwords = s_vs.entry->nslots * VSH_TOKEN_SIZE;
 +    out->constants = s_cur.constants;
 +    out->fog_enable = s_cur.fog_enable;
 +    out->fog_mode = s_cur.fog_mode;

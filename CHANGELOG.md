@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Vertex shader compiles no longer cause hitches when a level first appears. The
+shader cache is keyed by the generated HLSL alone, so one program is compiled once
+instead of again for each copy left in program memory (113 cached files were 18
+programs). Each program's microcode is recorded in `vs_manifest.bin` in the cache,
+and launch compiles any recorded program the cache lacks on all cores before the
+game starts (`RECOMP_KGPU_PRECOMPILE=0` skips it). A program first met in play runs
+a quick unoptimised build, about twice as fast, until its optimised build is cached
+(`RECOMP_KGPU_VS_QUICK=0` disables it). Existing caches carry over.
+
 ## 0.1.0-alpha.2 — 2026-10-14
 
 **Build BLACK.sh** now generates and compiles the game entirely on x86_64 Linux
