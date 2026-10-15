@@ -4,8 +4,8 @@
 #   cmake --build --preset windows-release
 #   ctest --preset windows-release
 #
-# Needs the Vulkan headers and loader to build (the Vulkan SDK on Windows, libvulkan-dev on Linux).
-# Players only need a Vulkan-capable graphics driver.
+# Needs only a C++20 compiler and CMake: the Vulkan headers are vendored and it links against the Vulkan loader
+# that graphics drivers install, which is all players need too.
 cmake_minimum_required(VERSION 3.21)
 project(BlackLauncher VERSION 0.1.0 LANGUAGES C CXX)
 

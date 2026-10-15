@@ -5,16 +5,17 @@
 #   glm      g-truc/glm 1.0.1
 #   spdlog   gabime/spdlog at the commit Walnut dev pins (header-only)
 #   json     nlohmann/json 3.11.3 (header-only)
+#   vulkan-headers  KhronosGroup/Vulkan-Headers v1.3.296 (see LauncherVulkan.cmake)
 #   doctest  doctest/doctest 2.4.11 (tests only)
 set(BLACK_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
 foreach(dependency walnut/Walnut/Source imgui/imgui.cpp glfw/CMakeLists.txt glm/glm/glm.hpp spdlog/include/spdlog/spdlog.h
-                   json/include/nlohmann/json.hpp)
+                   json/include/nlohmann/json.hpp vulkan-headers/include/vulkan/vulkan.h)
     if(NOT EXISTS "${BLACK_VENDOR}/${dependency}")
         message(FATAL_ERROR "launcher/vendor/${dependency} is missing. Run: git submodule update --init --recursive")
     endif()
 endforeach()
 
-find_package(Vulkan REQUIRED)
+include(LauncherVulkan)
 
 # GLFW
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -48,7 +49,7 @@ target_include_directories(black_walnut SYSTEM PUBLIC
     "${BLACK_WALNUT}/Source"
     "${BLACK_WALNUT}/Platform/GUI"
     "${BLACK_VENDOR}/walnut/vendor/stb_image")
-target_link_libraries(black_walnut PUBLIC black_imgui black_glm black_spdlog glfw Vulkan::Vulkan)
+target_link_libraries(black_walnut PUBLIC black_imgui black_glm black_spdlog glfw black_vulkan)
 target_compile_features(black_walnut PUBLIC cxx_std_20)
 target_compile_definitions(black_walnut PUBLIC $<$<CONFIG:Debug>:WL_DEBUG> $<$<NOT:$<CONFIG:Debug>>:WL_RELEASE>)
 if(WIN32)
