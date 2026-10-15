@@ -3,8 +3,8 @@ set(BLACK_ASSETS "${PROJECT_SOURCE_DIR}/assets")
 set(BLACK_FONTS "${BLACK_ASSETS}/fonts")
 black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
     "logoImage=${BLACK_ASSETS}/images/black-logo.png"
-    "condensedFont=${BLACK_FONTS}/SairaCondensed-Regular.ttf"
-    "condensedBoldFont=${BLACK_FONTS}/SairaCondensed-Bold.ttf")
+    "rowFont=${BLACK_FONTS}/RussoOne-Regular.ttf"
+    "titleFont=${BLACK_FONTS}/SairaCondensed-ExtraBold.ttf")
 
 add_executable(black_launcher
     "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp"

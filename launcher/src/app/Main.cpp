@@ -50,10 +50,10 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
     specification.TitlebarColor = black::app::toU32(black::app::colors::kTitlebar);
     specification.UseDockspace = true;  // hosts the custom titlebar; the launcher draws one window below it
     specification.UseViewports = false;
-    // The condensed faces stand in for the game's menu fonts until the disc is in place.
+    // Stand-ins for the game's menu fonts until the disc is in place.
     specification.Fonts = {
-        embeddedFont(LauncherLayer::kCondensedFont, black::assets::condensedFont(), 26.0f),
-        embeddedFont(LauncherLayer::kCondensedBoldFont, black::assets::condensedBoldFont(), 44.0f),
+        embeddedFont(LauncherLayer::kRowFont, black::assets::rowFont(), 26.0f),
+        embeddedFont(LauncherLayer::kTitleFont, black::assets::titleFont(), 44.0f),
     };
 
     // Walnut's entry point owns and deletes the application.

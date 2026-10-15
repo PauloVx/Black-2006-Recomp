@@ -44,7 +44,8 @@ The launcher is drawn like the game's own menu pages: the colours are sampled fr
 the selected one bright and its selector line, the rails run down the left, and prompts sit along the bottom. The
 banner shows BLACK's logo (`assets/images/black-logo.png`, built in; a `local/logo.png` replaces it). Once the
 player's disc files are in place, text uses the game's own `Small`/`Big` menu fonts, read from `language/fonts` at
-run time and never shipped. Until then Saira Condensed stands in.
+run time and never shipped. Until then the closest free fonts stand in: Russo One for rows and help, Saira
+Condensed ExtraBold for titles.
 
 ## Walnut
 

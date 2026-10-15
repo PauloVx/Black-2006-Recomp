@@ -7,9 +7,10 @@ namespace black::assets {
 
 /// BLACK's logo, 1280 x 178 PNG with alpha.
 std::span<const unsigned char> logoImage();
-/// Saira Condensed Regular and Bold: close to the game's condensed menu type until the disc's own fonts are
-/// available (SIL Open Font License).
-std::span<const unsigned char> condensedFont();
-std::span<const unsigned char> condensedBoldFont();
+/// Stand-ins for the game's menu fonts until the disc's own are available (SIL Open Font License), chosen by
+/// setting the same text side by side: Russo One for Small.bin (rows, help), Saira Condensed ExtraBold for Big.bin
+/// (page titles).
+std::span<const unsigned char> rowFont();
+std::span<const unsigned char> titleFont();
 
 }  // namespace black::assets

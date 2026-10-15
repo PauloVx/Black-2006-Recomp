@@ -25,8 +25,8 @@ namespace black::app {
 class LauncherLayer final : public Walnut::Layer {
 public:
     /// Fonts Main.cpp adds to the atlas (Walnut::Application::GetFont).
-    static constexpr const char* kCondensedFont = "Condensed";
-    static constexpr const char* kCondensedBoldFont = "CondensedBold";
+    static constexpr const char* kRowFont = "Rows";
+    static constexpr const char* kTitleFont = "Titles";
 
     explicit LauncherLayer(std::filesystem::path start);
 

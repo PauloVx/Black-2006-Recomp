@@ -99,10 +99,10 @@ void LauncherLayer::refresh() {
 }
 
 void LauncherLayer::loadArt() {
-    m_captionFont = MenuFont(Walnut::Application::GetFont(kCondensedFont));
+    m_captionFont = MenuFont(Walnut::Application::GetFont(kRowFont));
     if (!m_artFromGame) {
-        m_rowFont = MenuFont(Walnut::Application::GetFont(kCondensedFont));
-        m_titleFont = MenuFont(Walnut::Application::GetFont(kCondensedBoldFont));
+        m_rowFont = MenuFont(Walnut::Application::GetFont(kRowFont));
+        m_titleFont = MenuFont(Walnut::Application::GetFont(kTitleFont));
     }
     if (!m_artFromGame && m_project && m_gameFiles.state == core::GameFilesState::Supported) {
         core::GameArt art = core::loadGameArt(*m_project);
@@ -123,7 +123,7 @@ void LauncherLayer::loadArt() {
 }
 
 void LauncherLayer::setIcons() {
-    ImFont* bold = Walnut::Application::GetFont(kCondensedBoldFont);
+    ImFont* bold = Walnut::Application::GetFont(kTitleFont);
     if (bold == nullptr) {
         return;
     }
