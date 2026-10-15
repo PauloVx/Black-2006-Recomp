@@ -14140,10 +14140,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..8db4ff6
+index 0000000..fb9bccb
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,823 @@
+@@ -0,0 +1,845 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -14949,10 +14949,32 @@ index 0000000..8db4ff6
 +}
 +
 +/* The frame to present: the target itself, or under super-sampling that target resolved down to the internal resolution. */
++/* A capture of the next finished frame as the renderer hands it to the presenter (internal resolution, before window
++ * scaling): any thread asks, the renderer writes it. */
++static volatile LONG s_capture_pending;
++static char s_capture_path[512];
++
++void kgpu_request_capture(const char *path)
++{
++    if (!path || !*path || InterlockedCompareExchange(&s_capture_pending, 0, 0)) return;
++    snprintf(s_capture_path, sizeof(s_capture_path), "%s", path);
++    InterlockedExchange(&s_capture_pending, 1);
++}
++
++static ID3D11Texture2D *kg_capture(ID3D11Texture2D *tex, unsigned int w, unsigned int h)
++{
++    if (InterlockedCompareExchange(&s_capture_pending, 0, 0)) {
++        free(post_ao_colour_capture(tex, w, h, s_capture_path));
++        fprintf(stderr, "[KGPU] captured %ux%u to %s\n", w, h, s_capture_path);
++        InterlockedExchange(&s_capture_pending, 0);
++    }
++    return tex;
++}
++
 +static ID3D11Texture2D *kg_post_flip_source(KGpuSurf *cs, unsigned int *w, unsigned int *h)
 +{
 +    if (G.out_w == 0 || G.out_h == 0 || (G.out_w == cs->hw && G.out_h == cs->hh) || cs->hw % G.out_w || cs->hh % G.out_h ||
-+        !post_init()) { *w = cs->hw; *h = cs->hh; return cs->tex; }
++        !post_init()) { *w = cs->hw; *h = cs->hh; return kg_capture(cs->tex, cs->hw, cs->hh); }
 +    if (!s_post.ss || s_post.ss_w != G.out_w || s_post.ss_h != G.out_h) {
 +        SAFE_RELEASE(s_post.ss_srv); SAFE_RELEASE(s_post.ss_rtv); SAFE_RELEASE(s_post.ss);
 +        if (!post_texture(G.out_w, G.out_h, DXGI_FORMAT_B8G8R8A8_UNORM, &s_post.ss, &s_post.ss_srv, &s_post.ss_rtv)) {
@@ -14965,7 +14987,7 @@ index 0000000..8db4ff6
 +    post_pass(s_post.ps_ssaa, s_post.ss_rtv, G.out_w, G.out_h, cs->srv, NULL, NULL, NULL);
 +    kg_cache_invalidate();
 +    *w = G.out_w; *h = G.out_h;
-+    return s_post.ss;
++    return kg_capture(s_post.ss, G.out_w, G.out_h);
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_prof.inc b/src/nv2a/kelvin/kelvin_gpu_prof.inc
 new file mode 100644
