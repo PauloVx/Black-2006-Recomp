@@ -146,7 +146,7 @@ static const char black_menu_definition[] =
 "item = \"VIDEO SETTINGS\" | video\r\n"
 "\r\n"
 "; PC video pages use the same fonts, rails, focus and input as the game's menus.\r\n"
-"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/aspect/fov/scale/filter/vsync/fps/blur\r\n"
+"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/aspect/fov/scale/filter/vsync/fps/blur\r\n"
 "; &VIDEO_HELP is the focused setting's explanation. reset_video preserves locked values.\r\n"
 "[page VideoSettings]\r\n"
 "column = 00000000\r\n"
@@ -193,7 +193,7 @@ static const char black_menu_definition[] =
 "logo = 151.5 58\r\n"
 "title_at = 165 86\r\n"
 "rails = 47 130\r\n"
-"list = 168 142 23\r\n"
+"list = 168 142 22\r\n"
 "values = 607\r\n"
 "item_size = 13.5\r\n"
 "selector = 451\r\n"
@@ -207,6 +207,7 @@ static const char black_menu_definition[] =
 "setting = \"SHARPENING\" | sharpen\r\n"
 "setting = \"AMBIENT OCCLUSION\" | ao_method\r\n"
 "setting = \"AO QUALITY\" | ao_quality\r\n"
+"setting = \"REFLECTIONS\" | reflections\r\n"
 "setting = \"FIELD OF VIEW\" | fov\r\n"
 "setting = \"MOTION BLUR\" | blur\r\n"
 "item = \"BACK\" | close\r\n"
@@ -312,8 +313,9 @@ static const char black_menu_definition[] =
 "item = $FE_NO | close\r\n";
 
 /* The built-in definitions of earlier builds (FNV-1a 64 of the whole file): a local\menus.ini that is still exactly
- * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05). */
-static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull };
+ * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05); 4: before Reflections. */
+static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
+                                                0xFF74A7E07CF4C7F0ull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 

@@ -38,6 +38,7 @@ static bool post_init(void) { return resource_failure != 1; }
 static bool post_scene_resources(unsigned w, unsigned h) { (void)w; (void)h; return resource_failure != 2; }
 static void kg_post_depth_stats(KGpuSurf *zs) { (void)zs; abort(); }
 static void kg_post_ao_scene(KGpuSurf *cs, KGpuSurf *zs) { (void)cs; (void)zs; }
+static void kg_ssr_pass(KGpuSurf *cs, KGpuSurf *zs) { (void)cs; (void)zs; }
 static void post_dof_preset(int dof, float *taps, float *radius) { (void)dof; *taps = 16; *radius = 0.01f; }
 static void ID3D11DeviceContext_CopyResource(void *ctx, ID3D11Resource *dst, ID3D11Resource *src) { (void)ctx; (void)dst; (void)src; }
 static void post_cb(float w, float h, float taps, float radius, float alpha, float depth_scale,

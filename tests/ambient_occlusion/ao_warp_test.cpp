@@ -81,7 +81,7 @@ struct Oracle {
         for (int i = 0; i < 4; ++i) methods[i] = ps(hlsl, entries[i]);
         blur_h = ps(hlsl, "ao_blur_h_ps"); blur_v = ps(hlsl, "ao_blur_v_ps"); composite = ps(hlsl, "ao_composite_ps");
         // Compile all existing effects too: adding AO must keep the old source valid.
-        const char *existing[] = { "focus_ps", "coc_ps", "dof_ps", "fxaa_ps", "sharpen_ps", "ssaa_ps" };
+        const char *existing[] = { "focus_ps", "coc_ps", "dof_ps", "fxaa_ps", "sharpen_ps", "ssaa_ps", "ssr_ps" };
         for (const char *entry : existing) compile(hlsl, entry, "ps_5_0");
         D3D11_BUFFER_DESC bd{}; bd.ByteWidth = sizeof(Cb); bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         hr(device->CreateBuffer(&bd, nullptr, &cb), "Create CB failed");

@@ -277,6 +277,9 @@ namespace BlackXboxLauncher
         // sampling density and radius; every level keeps the scene resolution and depth-aware blur.
         public string AoMethod = "off";
         public string AoQuality = "high";
+        // Reflections: original keeps BLACK's 128 x 128 environment maps; low .. ultra replace them with
+        // screen-space reflections of the scene, marching more steps at higher quality.
+        public string Reflections = "high";
         public string WindowMode = "windowed";
         public string ScaleMode = "fit";
         public string PresentFilter = "linear";
@@ -358,6 +361,7 @@ namespace BlackXboxLauncher
             text.Append("sharpen=").Append(Sharpening).Append('\n');
             text.Append("ao_method=").Append(AoMethod).Append('\n');
             text.Append("ao_quality=").Append(AoQuality).Append('\n');
+            text.Append("reflections=").Append(Reflections).Append('\n');
             return text.ToString();
         }
 
@@ -425,6 +429,9 @@ namespace BlackXboxLauncher
                     case "ao_method":
                         if (IsOneOf(value.ToLowerInvariant(), "off", "ssao", "hbao", "hbao_plus", "gtao")) { AoMethod = value.ToLowerInvariant(); applied++; }
                         break;
+                    case "reflections":
+                        if (IsOneOf(value.ToLowerInvariant(), "original", "low", "medium", "high", "ultra")) { Reflections = value.ToLowerInvariant(); applied++; }
+                        break;
                     case "ao_quality":
                         if (IsOneOf(value.ToLowerInvariant(), "low", "medium", "high", "ultra")) { AoQuality = value.ToLowerInvariant(); applied++; }
                         break;
@@ -452,6 +459,7 @@ namespace BlackXboxLauncher
             if (!IsOneOf(Sharpening, "off", "low", "medium", "high")) throw new ArgumentException("Invalid Sharpening.");
             if (!IsOneOf(AoMethod, "off", "ssao", "hbao", "hbao_plus", "gtao")) throw new ArgumentException("Invalid AoMethod.");
             if (!IsOneOf(AoQuality, "low", "medium", "high", "ultra")) throw new ArgumentException("Invalid AoQuality.");
+            if (!IsOneOf(Reflections, "original", "low", "medium", "high", "ultra")) throw new ArgumentException("Invalid Reflections.");
             if (!IsOneOf(WindowMode, "windowed", "borderless")) throw new ArgumentException("Invalid WindowMode.");
             if (!IsOneOf(ScaleMode, "fit", "stretch", "integer")) throw new ArgumentException("Invalid ScaleMode.");
             if (!IsOneOf(PresentFilter, "nearest", "linear")) throw new ArgumentException("Invalid PresentFilter.");
@@ -538,6 +546,7 @@ namespace BlackXboxLauncher
             if (!IsOneOf(settings.Sharpening, "off", "low", "medium", "high")) settings.Sharpening = defaults.Sharpening;
             if (!IsOneOf(settings.AoMethod, "off", "ssao", "hbao", "hbao_plus", "gtao")) settings.AoMethod = defaults.AoMethod;
             if (!IsOneOf(settings.AoQuality, "low", "medium", "high", "ultra")) settings.AoQuality = defaults.AoQuality;
+            if (!IsOneOf(settings.Reflections, "original", "low", "medium", "high", "ultra")) settings.Reflections = defaults.Reflections;
             if (!IsOneOf(settings.WindowMode, "windowed", "borderless")) settings.WindowMode = defaults.WindowMode;
             if (!IsOneOf(settings.ScaleMode, "fit", "stretch", "integer")) settings.ScaleMode = defaults.ScaleMode;
             if (!IsOneOf(settings.PresentFilter, "nearest", "linear")) settings.PresentFilter = defaults.PresentFilter;
@@ -1486,6 +1495,7 @@ namespace BlackXboxLauncher
         private readonly ComboBox sharpening = new ComboBox();
         private readonly ComboBox aoMethod = new ComboBox();
         private readonly ComboBox aoQuality = new ComboBox();
+        private readonly ComboBox reflections = new ComboBox();
         private readonly ComboBox windowMode = new ComboBox();
         private readonly ComboBox scaleMode = new ComboBox();
         private readonly ComboBox presentFilter = new ComboBox();
@@ -1637,13 +1647,19 @@ namespace BlackXboxLauncher
             SelectChoice(aoQuality, new LaunchOptions().AoQuality); graphics.Controls.Add(aoQuality);
             aoQuality.Enabled = false;
             aoMethod.SelectedIndexChanged += delegate { aoQuality.Enabled = ChoiceValue(aoMethod) != "off"; };
-            AddOptionLabel(graphics, "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", 14, 137, 592).ForeColor = muted;
-            AddOptionLabel(graphics, "(Options > V) changes them while playing. Internal resolution is on the Display tab.", 14, 162, 592).ForeColor = muted;
+            AddOptionLabel(graphics, "Reflections", 14, 127, 120);
+            ConfigureChoices(reflections, "Reflections", 140, 123, 174,
+                new DisplayChoice("original", "Original"), new DisplayChoice("low", "Low"), new DisplayChoice("medium", "Medium"),
+                new DisplayChoice("high", "High"), new DisplayChoice("ultra", "Ultra"));
+            SelectChoice(reflections, new LaunchOptions().Reflections); graphics.Controls.Add(reflections);
+            AddOptionLabel(graphics, "Effects of the GPU renderer, applied to the picture before the HUD. The game's Video Settings page", 14, 172, 592).ForeColor = muted;
+            AddOptionLabel(graphics, "(Options > V) changes them while playing. Internal resolution is on the Display tab.", 14, 197, 592).ForeColor = muted;
             SetSettingsTip(antiAliasing, "FXAA smooths jagged edges at almost no cost. SSAA 4x renders twice as wide and high and averages down: the cleanest and the heaviest. Needs the GPU renderer.");
             SetSettingsTip(anisotropy, "Keeps textures sharp on floors and walls seen at a slant. Costs almost nothing. Needs the GPU renderer.");
             SetSettingsTip(depthOfField, "Blurs what is behind the point you are looking at; the weapon and the HUD stay sharp. Needs the GPU renderer.");
             SetSettingsTip(sharpening, "Brings back fine detail that filtering and scaling soften. Needs the GPU renderer.");
             SetSettingsTip(aoMethod, "Ambient occlusion adds contact shading using scene depth. Choose SSAO Classic, HBAO, HBAO+ or GTAO. Needs the GPU renderer.");
+            SetSettingsTip(reflections, "Replaces BLACK's low-resolution reflection maps (weapons, glass) with reflections of the scene on screen. Original keeps the maps; higher quality traces more steps. Needs the GPU renderer.");
             SetSettingsTip(aoQuality, "Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur. Choose an AO method to enable the effect.");
             AddOptionLabel(input, "Devices", 14, 16, 95);
             ConfigureChoices(inputMode, "Input devices", 114, 12, 200,
@@ -1878,6 +1894,7 @@ namespace BlackXboxLauncher
             SelectChoice(antiAliasing, settings.AntiAliasing); SelectChoice(anisotropy, settings.Anisotropy.ToString(CultureInfo.InvariantCulture));
             SelectChoice(depthOfField, settings.DepthOfField); SelectChoice(sharpening, settings.Sharpening);
             SelectChoice(aoMethod, settings.AoMethod); SelectChoice(aoQuality, settings.AoQuality);
+            SelectChoice(reflections, settings.Reflections);
         }
         private void ReloadVideo()
         {
@@ -1930,7 +1947,7 @@ namespace BlackXboxLauncher
                 InternalHeight = int.Parse(ChoiceValue(internalResolution), CultureInfo.InvariantCulture),
                 AntiAliasing = ChoiceValue(antiAliasing), Anisotropy = int.Parse(ChoiceValue(anisotropy), CultureInfo.InvariantCulture),
                 DepthOfField = ChoiceValue(depthOfField), Sharpening = ChoiceValue(sharpening),
-                AoMethod = ChoiceValue(aoMethod), AoQuality = ChoiceValue(aoQuality),
+                AoMethod = ChoiceValue(aoMethod), AoQuality = ChoiceValue(aoQuality), Reflections = ChoiceValue(reflections),
                 VisualTraceEnabled = visualTraceEnabled.Checked, VisualTraceFrames = visualTraceFrames.Text,
                 KgpuDrawLogFrames = kgpuDrawLogFrames.Text,
                 DspTraceEnabled = dspTraceEnabled.Checked,
