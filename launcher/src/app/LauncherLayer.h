@@ -4,6 +4,7 @@
 #include "app/MenuFont.h"
 #include "app/Widgets.h"
 #include "core/GameFiles.h"
+#include "core/GameSession.h"
 #include "core/ProjectLayout.h"
 
 #include "Walnut/Layer.h"
@@ -29,6 +30,7 @@ public:
     LauncherLayer(std::filesystem::path start, std::optional<std::filesystem::path> disc);
 
     void OnAttach() override;
+    void OnDetach() override;
     void OnUIRender() override;
 
 private:
@@ -43,6 +45,9 @@ private:
     [[nodiscard]] Page mainPage();
     void run(Action action);
     void openDiscPages();
+    void startGame();
+    void checkGame();
+    [[nodiscard]] bool playing() const noexcept { return m_session != nullptr; }
 
     void drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page);
     void drawStatus(ImDrawList& list, ImVec2 topLeft, float width) const;
@@ -65,6 +70,10 @@ private:
     std::string m_pageId;
     std::vector<Action> m_mainActions;
     std::string m_notice;
+
+    std::unique_ptr<core::GameSession> m_session;
+    std::string m_lastRun;
+    std::filesystem::path m_lastLogs;
 };
 
 }  // namespace black::app

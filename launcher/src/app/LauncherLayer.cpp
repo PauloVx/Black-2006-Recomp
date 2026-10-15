@@ -5,6 +5,7 @@
 #include "app/Theme.h"
 #include "core/Files.h"
 #include "core/Process.h"
+#include "core/Settings.h"
 #include "core/Text.h"
 
 #include "Walnut/Application.h"
@@ -64,6 +65,14 @@ void LauncherLayer::OnAttach() {
     if (m_initialDisc && m_disc) {
         m_screen = Screen::Disc;
         m_disc->offer(std::move(*m_initialDisc));
+    }
+}
+
+void LauncherLayer::OnDetach() {
+    if (m_session && !m_session->finished()) {
+        // The session keeps the game's logs until it ends: wait for it out of sight
+        glfwHideWindow(Walnut::Application::Get().GetWindowHandle());
+        m_session->wait();
     }
 }
 
@@ -130,10 +139,9 @@ Page LauncherLayer::mainPage() {
         page.rows.push_back(std::move(row));
         m_mainActions.push_back(action);
     };
-    const bool canPlay = ready() && m_project && isFile(m_project->legacyPlay());
-    const bool canConfigure = m_project && isFile(m_project->legacySettings());
+    const bool canConfigure = m_project && !playing() && isFile(m_project->legacySettings());
 
-    MenuRow disc{"YOUR DISC", "", "", m_disc != nullptr};
+    MenuRow disc{"YOUR DISC", "", "", m_disc != nullptr && !playing()};
     switch (m_gameFiles.state) {
         case core::GameFilesState::Missing:
             disc.value = "CHOOSE";
@@ -156,8 +164,14 @@ Page LauncherLayer::mainPage() {
     build.help = m_gameExecutable ? "The PC game has been built from your disc."
                                   : "Turns your disc into the PC game. For now, run Build BLACK in the game folder.";
 
-    if (ready()) {
-        add(Action::Play, {"PLAY", "", "Starts BLACK with your saved settings.", canPlay});
+    if (playing()) {
+        add(Action::Play, {"STOP GAME", "RUNNING", "Ends the game at once. Save your progress in the game first.",
+                           true});
+        add(Action::Settings, {"SETTINGS", "", "Available when the game is closed.", false});
+        add(Action::Disc, disc);
+        add(Action::Build, build);
+    } else if (ready()) {
+        add(Action::Play, {"PLAY", "", "Starts BLACK with your saved settings.", true});
         add(Action::Settings, {"SETTINGS", "", "Display, graphics, controls and language.", canConfigure});
         add(Action::Disc, disc);
         add(Action::Build, build);
@@ -187,7 +201,13 @@ void LauncherLayer::run(Action action) {
     }
     core::Result<bool> result = true;
     switch (action) {
-        case Action::Play: result = core::startDetached(m_project->legacyPlay(), {}, m_project->root()); break;
+        case Action::Play:
+            if (playing()) {
+                m_session->stop();
+            } else {
+                startGame();
+            }
+            return;
         case Action::Settings: result = core::startDetached(m_project->legacySettings(), {}, m_project->root()); break;
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
@@ -197,7 +217,33 @@ void LauncherLayer::run(Action action) {
     m_notice = result ? std::string() : result.error().message;
 }
 
+void LauncherLayer::startGame() {
+    auto session = core::GameSession::start(*m_project, core::loadSettings(*m_project));
+    if (!session) {
+        m_notice = session.error().message;
+        return;
+    }
+    m_session = std::move(session).value();
+    m_notice.clear();
+    m_lastRun = "RUNNING";
+    m_lastLogs = m_session->directory();
+}
+
+void LauncherLayer::checkGame() {
+    if (!m_session || !m_session->finished()) {
+        return;
+    }
+    const int code = m_session->exitCode().value_or(-1);
+    const std::string failure = m_session->logFailure();
+    m_lastRun = m_session->stopRequested() ? "STOPPED"
+                : code == 0              ? "CLOSED NORMALLY"
+                                         : "ENDED WITH ERROR " + std::to_string(code);
+    m_notice = failure.empty() ? std::string() : "The game's log could not be written: " + failure;
+    m_session.reset();
+}
+
 void LauncherLayer::OnUIRender() {
+    checkGame();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float titlebar = Walnut::Application::Get().GetTitlebarHeight();
     ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y + titlebar));
@@ -207,7 +253,7 @@ void LauncherLayer::OnUIRender() {
                      ImGuiWindowFlags_NoSavedSettings);
 
     for (std::filesystem::path& dropped : takeDroppedFiles()) {
-        if (m_disc && !m_disc->copying()) {
+        if (m_disc && !m_disc->copying() && !playing()) {
             m_screen = Screen::Disc;
             m_disc->offer(std::move(dropped));
         }
@@ -222,7 +268,7 @@ void LauncherLayer::OnUIRender() {
     drawPage(list, ImVec2(origin.x, origin.y + kBannerHeight), ImVec2(size.x, size.y - kBannerHeight), page);
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        if (m_screen == Screen::Main) {
+        if (m_screen == Screen::Main && !playing()) {
             Walnut::Application::Get().Close();
         } else if (m_disc && m_disc->back() == DiscFlow::Outcome::Back) {
             m_screen = Screen::Main;
@@ -312,6 +358,10 @@ void LauncherLayer::drawStatus(ImDrawList& list, ImVec2 topLeft, float width) co
          m_gameExecutable ? colors::kGood : colors::kBad);
     line(topLeft.y + 148.0f, "LOOK", m_artFromGame ? "MENU FONTS FROM YOUR DISC" : "STAND-IN FONTS",
          m_artFromGame ? colors::kGood : colors::kMuted);
+    if (!m_lastRun.empty()) {
+        const bool fine = playing() || m_lastRun == "CLOSED NORMALLY" || m_lastRun == "STOPPED";
+        line(topLeft.y + 204.0f, playing() ? "NOW" : "LAST GAME", m_lastRun, fine ? colors::kGood : colors::kBad);
+    }
 }
 
 }  // namespace black::app

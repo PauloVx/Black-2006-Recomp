@@ -4,9 +4,11 @@
 #   glfw     TheCherno/glfw at the commit Walnut dev pins (Win32 custom titlebar hit testing; X11/Wayland as GLFW)
 #   glm      g-truc/glm 1.0.1
 #   spdlog   gabime/spdlog at the commit Walnut dev pins (header-only)
+#   json     nlohmann/json 3.11.3 (header-only)
 #   doctest  doctest/doctest 2.4.11 (tests only)
 set(BLACK_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
-foreach(dependency walnut/Walnut/Source imgui/imgui.cpp glfw/CMakeLists.txt glm/glm/glm.hpp spdlog/include/spdlog/spdlog.h)
+foreach(dependency walnut/Walnut/Source imgui/imgui.cpp glfw/CMakeLists.txt glm/glm/glm.hpp spdlog/include/spdlog/spdlog.h
+                   json/include/nlohmann/json.hpp)
     if(NOT EXISTS "${BLACK_VENDOR}/${dependency}")
         message(FATAL_ERROR "launcher/vendor/${dependency} is missing. Run: git submodule update --init --recursive")
     endif()
@@ -21,11 +23,13 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${BLACK_VENDOR}/glfw" "${CMAKE_CURRENT_BINARY_DIR}/vendor/glfw" EXCLUDE_FROM_ALL)
 
-# glm and spdlog (header only)
+# glm, spdlog and json (header only)
 add_library(black_glm INTERFACE)
 target_include_directories(black_glm SYSTEM INTERFACE "${BLACK_VENDOR}/glm")
 add_library(black_spdlog INTERFACE)
 target_include_directories(black_spdlog SYSTEM INTERFACE "${BLACK_VENDOR}/spdlog/include")
+add_library(black_json INTERFACE)
+target_include_directories(black_json SYSTEM INTERFACE "${BLACK_VENDOR}/json/include")
 
 # Dear ImGui core. Walnut compiles the GLFW and Vulkan backends itself (ImGui/ImGuiBuild.cpp).
 add_library(black_imgui STATIC
