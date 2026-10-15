@@ -32,6 +32,7 @@
 #include "pc_video_menu.h"
 #include "pc_movie_skip.h"
 #include "pc_menu.h"
+#include "fb_present.h"
 #include "black_menu_prompt_language.h"
 
 /* ── ICALL trace ring buffer ───────────────────────────────── */
@@ -530,6 +531,21 @@ void black_level_override(uint8_t *level, uint8_t *stage)
 unsigned black_vblank_hz(void)
 {
     return black_step_halved ? black_vblank_hz_v : 60;
+}
+
+/* ---- The gamma ramp without the fault --------------------------------------------------------------------
+ * The D3D vblank handler uploads a pending gamma ramp here (red at edx, green at +0x100, blue at +0x200) as 768
+ * byte writes to the DAC palette, each of which traps. The game rewrites the ramp for every step of a screen fade,
+ * so it goes to the presenter in one call instead. The registers are left as the original loop leaves them. */
+void sub_00274476(void)
+{
+    const uint32_t ramp = g_edx;
+    const uint8_t *r = (const uint8_t *)((uintptr_t)g_xbox_mem_offset + ramp);
+    xbox_FramebufferGammaRamp(r, r + 0x100, r + 0x200);
+    g_ecx = GUEST32(g_eax);
+    g_eax = ramp + 0x200;
+    g_edx = 0x100;
+    g_esp += 4;     /* ret */
 }
 
 /* ---- APU registers without the fault ---------------------------------------------------------------------
