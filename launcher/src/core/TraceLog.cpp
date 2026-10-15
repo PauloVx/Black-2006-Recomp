@@ -13,7 +13,9 @@ TraceLog::TraceLog(const std::filesystem::path& path, std::uint64_t limit, std::
     }
 }
 
-TraceLog::~TraceLog() { complete(); }
+TraceLog::~TraceLog() {
+    complete();
+}
 
 void TraceLog::write(std::string_view line) {
     const std::scoped_lock lock(m_mutex);

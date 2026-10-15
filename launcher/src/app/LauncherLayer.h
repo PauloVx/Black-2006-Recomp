@@ -1,8 +1,8 @@
 #pragma once
 
 #include "app/DiscFlow.h"
-#include "app/MenuFont.h"
 #include "app/MenuFlow.h"
+#include "app/MenuFont.h"
 #include "app/Widgets.h"
 #include "core/GameFiles.h"
 #include "core/GameSession.h"
@@ -75,7 +75,9 @@ private:
     std::string m_notice;
 
     std::unique_ptr<core::GameSession> m_session;
-    std::string m_lastRun;
+    enum class LastRun { None, Running, Stopped, Closed, Failed };
+    LastRun m_lastRun = LastRun::None;
+    int m_lastExitCode = 0;
     std::filesystem::path m_lastLogs;
 };
 

@@ -1,6 +1,7 @@
 #include "app/SettingsFlow.h"
 
 #include "app/KeyCapture.h"
+#include "app/Translations.h"
 #include "core/InputBindings.h"
 #include "core/Process.h"
 #include "core/Text.h"
@@ -22,7 +23,7 @@ namespace bindings = core::bindings;
 template <typename T>
 struct Choice {
     T value;
-    const char* label;
+    std::string label;
 };
 
 template <typename T>
@@ -55,9 +56,13 @@ std::string fixed(double value, int decimals) {
     return text.data();
 }
 
-const std::vector<Choice<std::string>> kSteps = {{"off", "OFF"}, {"low", "LOW"}, {"medium", "MEDIUM"}, {"high", "HIGH"}};
-const std::vector<Choice<std::string>> kQualities = {
-    {"low", "LOW"}, {"medium", "MEDIUM"}, {"high", "HIGH"}, {"ultra", "ULTRA"}};
+std::vector<Choice<std::string>> steps() {
+    return {{"off", tr("OFF")}, {"low", tr("LOW")}, {"medium", tr("MEDIUM")}, {"high", tr("HIGH")}};
+}
+
+std::vector<Choice<std::string>> qualities() {
+    return {{"low", tr("LOW")}, {"medium", tr("MEDIUM")}, {"high", tr("HIGH")}, {"ultra", tr("ULTRA")}};
+}
 
 constexpr std::array<std::pair<int, int>, 29> kWindowSizes = {{
     {640, 480},   {800, 600},   {1024, 768},  {1152, 864},  {1280, 720},  {1280, 800},  {1280, 960},  {1280, 1024},
@@ -70,7 +75,9 @@ constexpr std::size_t kSlots = bindings::kMaxKeysPerAction;
 
 }  // namespace
 
-SettingsFlow::SettingsFlow(core::ProjectLayout project) : m_project(std::move(project)) { reload(); }
+SettingsFlow::SettingsFlow(core::ProjectLayout project) : m_project(std::move(project)) {
+    reload();
+}
 
 void SettingsFlow::reload() {
     m_settings = core::loadSettings(m_project);
@@ -78,6 +85,7 @@ void SettingsFlow::reload() {
 }
 
 void SettingsFlow::save() {
+    setLanguage(m_settings.menuLanguage);
     if (auto saved = core::saveSettings(m_project, m_settings); !saved) {
         m_notice = saved.error().message;
         m_noticeIsProblem = true;
@@ -120,12 +128,15 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
     core::Settings& s = m_settings;
     const auto pick = [](std::string label, std::string help, std::string& field,
                          std::vector<Choice<std::string>> list) {
-        return Option{std::move(label), std::move(help),
+        return Option{std::move(label),
+                      std::move(help),
                       [&field, list] { return std::string(list[indexOf(list, field)].label); },
-                      [&field, list](int step) { cycle(list, field, step); }, {}};
+                      [&field, list](int step) { cycle(list, field, step); },
+                      {}};
     };
     std::vector<Option> rows;
-    rows.push_back({"WINDOW SIZE", "The size of the game window when windowed.",
+    rows.push_back({tr("WINDOW SIZE"),
+                    tr("The size of the game window when windowed."),
                     [&s] { return std::to_string(s.windowWidth) + " X " + std::to_string(s.windowHeight); },
                     [&s](int step) {
                         std::vector<std::pair<int, int>> sizes(kWindowSizes.begin(), kWindowSizes.end());
@@ -134,38 +145,47 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                             sizes.push_back(current);  // a size saved by hand stays on the list
                             std::sort(sizes.begin(), sizes.end());
                         }
-                        const auto at = static_cast<long long>(std::find(sizes.begin(), sizes.end(), current) -
-                                                               sizes.begin());
+                        const auto at =
+                            static_cast<long long>(std::find(sizes.begin(), sizes.end(), current) - sizes.begin());
                         const auto count = static_cast<long long>(sizes.size());
                         const auto next = static_cast<std::size_t>((at + (step == 0 ? 1 : step) + count) % count);
                         s.windowWidth = sizes[next].first;
                         s.windowHeight = sizes[next].second;
                     },
                     {}});
-    rows.push_back(pick("WINDOW", "Borderless fullscreen covers the screen the game window is on. F11 switches in game.",
-                        s.windowMode, {{"windowed", "WINDOWED"}, {"borderless", "BORDERLESS FULLSCREEN"}}));
-    rows.push_back(pick("SCALING", "How the picture fits the window. Keep aspect adds bars; stretch fills the window.",
-                        s.scaleMode, {{"fit", "KEEP ASPECT"}, {"stretch", "STRETCH"}, {"integer", "INTEGER"}}));
-    rows.push_back(pick("FILTER", "Smooth blends neighbouring pixels when scaling; sharp keeps pixel edges.",
-                        s.presentFilter, {{"linear", "SMOOTH"}, {"nearest", "SHARP"}}));
-    rows.push_back({"VSYNC", "Waits for the display between frames, so the picture never tears.",
-                    [&s] { return std::string(s.vsync ? "ON" : "OFF"); }, [&s](int) { s.vsync = !s.vsync; }, {}});
+    rows.push_back(pick(tr("WINDOW"),
+                        tr("Borderless fullscreen covers the screen the game window is on. F11 switches in game."),
+                        s.windowMode, {{"windowed", tr("WINDOWED")}, {"borderless", tr("BORDERLESS FULLSCREEN")}}));
+    rows.push_back(
+        pick(tr("SCALING"), tr("How the picture fits the window. Keep aspect adds bars; stretch fills the window."),
+             s.scaleMode, {{"fit", tr("KEEP ASPECT")}, {"stretch", tr("STRETCH")}, {"integer", tr("INTEGER")}}));
+    rows.push_back(pick(tr("FILTER"), tr("Smooth blends neighbouring pixels when scaling; sharp keeps pixel edges."),
+                        s.presentFilter, {{"linear", tr("SMOOTH")}, {"nearest", tr("SHARP")}}));
+    rows.push_back({tr("VSYNC"),
+                    tr("Waits for the display between frames, so the picture never tears."),
+                    [&s] { return std::string(s.vsync ? tr("ON") : tr("OFF")); },
+                    [&s](int) { s.vsync = !s.vsync; },
+                    {}});
     std::vector<Choice<int>> limits;
     for (const int limit : core::choices::kFrameLimits) {
-        limits.push_back({limit, limit == 0 ? "UNLIMITED" : nullptr});
+        limits.push_back({limit, {}});
     }
-    rows.push_back({"FRAME LIMIT", "Limits how often the picture is shown. The game's speed does not change.",
-                    [&s] { return s.fpsLimit == 0 ? std::string("UNLIMITED") : std::to_string(s.fpsLimit) + " FPS"; },
-                    [&s, limits](int step) { cycle(limits, s.fpsLimit, step); }, {}});
-    rows.push_back(pick("CAMERA", "How wide the camera sees. Original keeps the game's 4:3 view.", s.cameraAspect,
-                        {{"original", "ORIGINAL"},
+    rows.push_back(
+        {tr("FRAME LIMIT"),
+         tr("Limits how often the picture is shown. The game's speed does not change."),
+         [&s] { return s.fpsLimit == 0 ? std::string(tr("UNLIMITED")) : std::to_string(s.fpsLimit) + " FPS"; },
+         [&s, limits](int step) { cycle(limits, s.fpsLimit, step); },
+         {}});
+    rows.push_back(pick(tr("CAMERA"), tr("How wide the camera sees. Original keeps the game's 4:3 view."),
+                        s.cameraAspect,
+                        {{"original", tr("ORIGINAL")},
                          {"4:3", "4:3"},
-                         {"16:9", "16:9 WIDESCREEN"},
-                         {"21:9", "21:9 ULTRAWIDE"},
-                         {"32:9", "32:9 ULTRAWIDE"}}));
-    rows.push_back({"FIELD OF VIEW",
-                    "The vertical angle the camera sees, in degrees. Original keeps BLACK's own view and aim zoom.",
-                    [&s] { return s.verticalFov == 0 ? std::string("ORIGINAL") : fixed(s.verticalFov, 0); },
+                         {"16:9", tr("16:9 WIDESCREEN")},
+                         {"21:9", tr("21:9 ULTRAWIDE")},
+                         {"32:9", tr("32:9 ULTRAWIDE")}}));
+    rows.push_back({tr("FIELD OF VIEW"),
+                    tr("The vertical angle the camera sees, in degrees. Original keeps BLACK's own view and aim zoom."),
+                    [&s] { return s.verticalFov == 0 ? std::string(tr("ORIGINAL")) : fixed(s.verticalFov, 0); },
                     [&s](int step) {
                         constexpr double kMin = core::choices::kFovMin;
                         constexpr double kMax = core::choices::kFovMax;
@@ -178,8 +198,8 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                         }
                     },
                     {}});
-    rows.push_back({"INTERNAL RESOLUTION",
-                    "How many lines the game draws; the width follows the camera. Higher is sharper and slower.",
+    rows.push_back({tr("INTERNAL RESOLUTION"),
+                    tr("How many lines the game draws; the width follows the camera. Higher is sharper and slower."),
                     [&s] {
                         const auto size = core::renderSize(s);
                         return std::to_string(s.internalHeight) + "P  (" + std::to_string(size[0]) + " X " +
@@ -188,13 +208,13 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                     [&s](int step) {
                         std::vector<Choice<int>> heights;
                         for (const int height : core::choices::kInternalHeights) {
-                            heights.push_back({height, nullptr});
+                            heights.push_back({height, {}});
                         }
                         cycle(heights, s.internalHeight, step);
                     },
                     {}});
-    rows.push_back(pick("MOTION BLUR", "Original keeps BLACK's motion blur; off removes only that effect.",
-                        s.motionBlur, {{"original", "ORIGINAL"}, {"off", "OFF"}}));
+    rows.push_back(pick(tr("MOTION BLUR"), tr("Original keeps BLACK's motion blur; off removes only that effect."),
+                        s.motionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
     return rows;
 }
 
@@ -208,35 +228,48 @@ std::vector<SettingsFlow::Option> SettingsFlow::graphicsOptions() {
                       [&field, list](int step) { cycle(list, field, step); }, gpu};
     };
     std::vector<Option> rows;
-    rows.push_back(pick("ANTI-ALIASING",
-                        "FXAA smooths jagged edges at almost no cost. SSAA draws four times the pixels: the cleanest "
-                        "and the heaviest.",
-                        s.antiAliasing, {{"off", "OFF"}, {"fxaa", "FXAA"}, {"ssaa", "SSAA 4X"}}));
-    rows.push_back({"ANISOTROPIC FILTERING", "Keeps floors and walls seen at a slant sharp. Costs almost nothing.",
-                    [&s] { return s.anisotropy == 1 ? std::string("OFF") : std::to_string(s.anisotropy) + "X"; },
+    rows.push_back(
+        pick(tr("ANTI-ALIASING"),
+             tr("FXAA smooths jagged edges at almost no cost. SSAA draws four times the pixels: the cleanest "
+                "and the heaviest."),
+             s.antiAliasing, {{"off", tr("OFF")}, {"fxaa", tr("FXAA")}, {"ssaa", tr("SSAA 4X")}}));
+    rows.push_back({tr("ANISOTROPIC FILTERING"),
+                    tr("Keeps floors and walls seen at a slant sharp. Costs almost nothing."),
+                    [&s] { return s.anisotropy == 1 ? std::string(tr("OFF")) : std::to_string(s.anisotropy) + "X"; },
                     [&s](int step) {
                         std::vector<Choice<int>> levels;
                         for (const int level : core::choices::kAnisotropy) {
-                            levels.push_back({level, nullptr});
+                            levels.push_back({level, {}});
                         }
                         cycle(levels, s.anisotropy, step);
                     },
                     gpu});
-    rows.push_back(pick("DEPTH OF FIELD", "Blurs what lies behind the point you look at. The weapon and HUD stay sharp.",
-                        s.depthOfField, kSteps));
-    rows.push_back(pick("SHARPENING", "Brings back fine detail that scaling and filtering soften.", s.sharpening, kSteps));
-    rows.push_back(pick("AMBIENT OCCLUSION", "Contact shadows in corners and under objects, from the scene's depth.",
-                        s.aoMethod,
-                        {{"off", "OFF"}, {"ssao", "SSAO"}, {"hbao", "HBAO"}, {"hbao_plus", "HBAO+"}, {"gtao", "GTAO"}}));
-    Option quality = pick("AO QUALITY", "More samples and a wider radius for ambient occlusion, at more GPU cost.",
-                          s.aoQuality, kQualities);
+    rows.push_back(pick(tr("DEPTH OF FIELD"),
+                        tr("Blurs what lies behind the point you look at. The weapon and HUD stay sharp."),
+                        s.depthOfField, steps()));
+    rows.push_back(pick(tr("SHARPENING"), tr("Brings back fine detail that scaling and filtering soften."),
+                        s.sharpening, steps()));
+    rows.push_back(pick(tr("AMBIENT OCCLUSION"),
+                        tr("Contact shadows in corners and under objects, from the scene's depth."), s.aoMethod,
+                        {{"off", tr("OFF")},
+                         {"ssao", tr("SSAO")},
+                         {"hbao", tr("HBAO")},
+                         {"hbao_plus", tr("HBAO+")},
+                         {"gtao", tr("GTAO")}}));
+    Option quality =
+        pick(tr("AO QUALITY"), tr("More samples and a wider radius for ambient occlusion, at more GPU cost."),
+             s.aoQuality, qualities());
     quality.enabled = [&s] { return s.gpuRenderer && s.aoMethod != "off"; };
     rows.push_back(std::move(quality));
-    rows.push_back(pick("REFLECTIONS",
-                        "Reflects the scene on weapons and glass instead of BLACK's low-resolution maps. Original "
-                        "keeps the maps.",
+    rows.push_back(pick(tr("REFLECTIONS"),
+                        tr("Reflects the scene on weapons and glass instead of BLACK's low-resolution maps. Original "
+                           "keeps the maps."),
                         s.reflections,
-                        {{"original", "ORIGINAL"}, {"low", "LOW"}, {"medium", "MEDIUM"}, {"high", "HIGH"}, {"ultra", "ULTRA"}}));
+                        {{"original", tr("ORIGINAL")},
+                         {"low", tr("LOW")},
+                         {"medium", tr("MEDIUM")},
+                         {"high", tr("HIGH")},
+                         {"ultra", tr("ULTRA")}}));
     return rows;
 }
 
@@ -244,88 +277,113 @@ std::vector<SettingsFlow::Option> SettingsFlow::controlsOptions() {
     core::Settings& s = m_settings;
     const auto pick = [](std::string label, std::string help, std::string& field,
                          std::vector<Choice<std::string>> list) {
-        return Option{std::move(label), std::move(help),
+        return Option{std::move(label),
+                      std::move(help),
                       [&field, list] { return std::string(list[indexOf(list, field)].label); },
-                      [&field, list](int step) { cycle(list, field, step); }, {}};
+                      [&field, list](int step) { cycle(list, field, step); },
+                      {}};
     };
     std::vector<Option> rows;
-    rows.push_back({"KEY BINDINGS", "The keys and mouse buttons for each action.", [] { return std::string(); },
-                    [this](int) { open(Section::Bindings); }, {}, false});
-    rows.push_back(pick("DEVICES", "Which devices the game listens to. A controller works alongside by default.",
-                        s.inputMode,
-                        {{"auto", "KEYBOARD, MOUSE AND PAD"},
-                         {"keyboard_mouse", "KEYBOARD AND MOUSE"},
-                         {"controller", "CONTROLLER ONLY"}}));
-    rows.push_back(pick("BUTTON PROMPTS", "Which buttons the game's prompts show.", s.promptMode,
-                        {{"auto", "THE DEVICE IN USE"}, {"keyboard_mouse", "KEYBOARD AND MOUSE"}, {"controller", "CONTROLLER"}}));
-    rows.push_back({"MOUSE SENSITIVITY", "Raw mouse input with no acceleration. 1.00 turns 0.06 degrees per count.",
+    rows.push_back({tr("KEY BINDINGS"),
+                    tr("The keys and mouse buttons for each action."),
+                    [] { return std::string(); },
+                    [this](int) { open(Section::Bindings); },
+                    {},
+                    false});
+    rows.push_back(pick(tr("DEVICES"),
+                        tr("Which devices the game listens to. A controller works alongside by default."), s.inputMode,
+                        {{"auto", tr("KEYBOARD, MOUSE AND PAD")},
+                         {"keyboard_mouse", tr("KEYBOARD AND MOUSE")},
+                         {"controller", tr("CONTROLLER ONLY")}}));
+    rows.push_back(pick(tr("BUTTON PROMPTS"), tr("Which buttons the game's prompts show."), s.promptMode,
+                        {{"auto", tr("THE DEVICE IN USE")},
+                         {"keyboard_mouse", tr("KEYBOARD AND MOUSE")},
+                         {"controller", tr("CONTROLLER")}}));
+    rows.push_back({tr("MOUSE SENSITIVITY"),
+                    tr("Raw mouse input with no acceleration. 1.00 turns 0.06 degrees per count."),
                     [&s] { return fixed(s.mouseSensitivity, 2); },
                     [&s](int step) {
                         const double next = std::round(s.mouseSensitivity * 20.0 + (step == 0 ? 1 : step)) / 20.0;
                         s.mouseSensitivity = std::clamp(next, bindings::kSensitivityMin, bindings::kSensitivityMax);
                     },
                     {}});
-    rows.push_back({"INVERT MOUSE Y", "Moving the mouse forward looks down.",
-                    [&s] { return std::string(s.invertY ? "ON" : "OFF"); }, [&s](int) { s.invertY = !s.invertY; }, {}});
+    rows.push_back({tr("INVERT MOUSE Y"),
+                    tr("Moving the mouse forward looks down."),
+                    [&s] { return std::string(s.invertY ? tr("ON") : tr("OFF")); },
+                    [&s](int) { s.invertY = !s.invertY; },
+                    {}});
     return rows;
 }
 
 std::vector<SettingsFlow::Option> SettingsFlow::gameOptions() {
     core::Settings& s = m_settings;
     const auto toggle = [](std::string label, std::string help, bool& field) {
-        return Option{std::move(label), std::move(help), [&field] { return std::string(field ? "ON" : "OFF"); },
-                      [&field](int) { field = !field; }, {}};
+        return Option{std::move(label),
+                      std::move(help),
+                      [&field] { return std::string(field ? tr("ON") : tr("OFF")); },
+                      [&field](int) { field = !field; },
+                      {}};
     };
     std::vector<Option> rows;
-    rows.push_back({"RENDERER", "The GPU draws the game on your graphics card. The CPU renderer is far slower.",
-                    [&s] { return std::string(s.gpuRenderer ? "GPU (DIRECT3D 11)" : "CPU"); },
-                    [&s](int) { s.gpuRenderer = !s.gpuRenderer; }, {}});
-    rows.push_back({"GAME CLOCK",
-                    "How often the game steps. The original ran at 30; every shown frame is a real one. 240 needs a "
-                    "fast PC and display.",
-                    [&s] { return !s.smooth60 ? std::string("ORIGINAL 30") : std::to_string(s.smoothHz == 0 ? 60 : s.smoothHz); },
+    rows.push_back({tr("RENDERER"),
+                    tr("The GPU draws the game on your graphics card. The CPU renderer is far slower."),
+                    [&s] { return std::string(s.gpuRenderer ? tr("GPU (DIRECT3D 11)") : tr("CPU")); },
+                    [&s](int) { s.gpuRenderer = !s.gpuRenderer; },
+                    {}});
+    rows.push_back({tr("GAME CLOCK"),
+                    tr("How often the game steps. The original ran at 30; every shown frame is a real one. 240 needs a "
+                       "fast PC and display."),
+                    [&s] {
+                        return !s.smooth60 ? std::string(tr("ORIGINAL 30"))
+                                           : std::to_string(s.smoothHz == 0 ? 60 : s.smoothHz);
+                    },
                     [&s](int step) {
-                        const std::vector<Choice<int>> rates = {{30, nullptr}, {60, nullptr}, {120, nullptr}, {240, nullptr}};
+                        const std::vector<Choice<int>> rates = {{30, {}}, {60, {}}, {120, {}}, {240, {}}};
                         int rate = !s.smooth60 ? 30 : (s.smoothHz == 0 ? 60 : s.smoothHz);
                         cycle(rates, rate, step);
                         s.smooth60 = rate != 30;
                         s.smoothHz = rate == 30 || rate == 60 ? 0 : rate;
                     },
                     {}});
-    rows.push_back({"RENDERER THREADS",
-                    "Threads that draw for the game. The default is half of this PC's: " +
-                        std::to_string(core::defaultThreads()) + ".",
+    rows.push_back({tr("RENDERER THREADS"),
+                    trf("Threads that draw for the game. The default is half of this PC's: {0}.",
+                        {std::to_string(core::defaultThreads())}),
                     [&s] { return std::to_string(s.threads); },
-                    [&s](int step) { s.threads = std::clamp(s.threads + (step == 0 ? 1 : step), 1, 64); }, {}});
-    rows.push_back({"MENU LANGUAGE",
-                    "The language of the game's menus. Spanish, French, German and Italian are machine drafts.",
+                    [&s](int step) { s.threads = std::clamp(s.threads + (step == 0 ? 1 : step), 1, 64); },
+                    {}});
+    rows.push_back({tr("MENU LANGUAGE"),
+                    tr("The language of the game's menus. Spanish, French, German and Italian are machine drafts."),
                     [&s] {
-                        const std::vector<Choice<std::string>> names = {
-                            {"en-US", "ENGLISH"},          {"pt-BR", "PORTUGUESE (BRAZIL)"}, {"es", "SPANISH (DRAFT)"},
-                            {"fr", "FRENCH (DRAFT)"},      {"de", "GERMAN (DRAFT)"},          {"it", "ITALIAN (DRAFT)"}};
+                        const std::vector<Choice<std::string>> names = {{"en-US", "ENGLISH"},
+                                                                        {"pt-BR", "PORTUGU\u00CAS (BRASIL)"},
+                                                                        {"es", trf("{0} (DRAFT)", {"ESPA\u00D1OL"})},
+                                                                        {"fr", trf("{0} (DRAFT)", {"FRAN\u00C7AIS"})},
+                                                                        {"de", trf("{0} (DRAFT)", {"DEUTSCH"})},
+                                                                        {"it", trf("{0} (DRAFT)", {"ITALIANO"})}};
                         return std::string(names[indexOf(names, s.menuLanguage)].label);
                     },
                     [&s](int step) {
                         std::vector<Choice<std::string>> languages;
                         for (const std::string_view language : core::choices::kLanguages) {
-                            languages.push_back({std::string(language), nullptr});
+                            languages.push_back({std::string(language), {}});
                         }
                         cycle(languages, s.menuLanguage, step);
                     },
                     {}});
-    rows.push_back(toggle("SKIP MOVIES", "Skips the intro and story movies.", s.skipMovies));
-    rows.push_back(toggle("SKIP STARTUP MENUS", "Presses A through the startup menus for the first minute.",
+    rows.push_back(toggle(tr("SKIP MOVIES"), tr("Skips the intro and story movies."), s.skipMovies));
+    rows.push_back(toggle(tr("SKIP STARTUP MENUS"), tr("Presses A through the startup menus for the first minute."),
                           s.advanceMenus));
-    rows.push_back(toggle("INFINITE AMMO", "Weapons never run out.", s.infiniteAmmo));
-    rows.push_back({"SILVER WEAPONS", "The silver weapons the game unlocks on Hard. Game keeps its own rules.",
+    rows.push_back(toggle(tr("INFINITE AMMO"), tr("Weapons never run out."), s.infiniteAmmo));
+    rows.push_back({tr("SILVER WEAPONS"),
+                    tr("The silver weapons the game unlocks on Hard. Game keeps its own rules."),
                     [&s] {
-                        return std::string(s.silverWeaponMode == "force-on"    ? "ALWAYS"
-                                           : s.silverWeaponMode == "force-off" ? "NEVER"
-                                                                               : "AS THE GAME DECIDES");
+                        return std::string(s.silverWeaponMode == "force-on"    ? tr("ALWAYS")
+                                           : s.silverWeaponMode == "force-off" ? tr("NEVER")
+                                                                               : tr("AS THE GAME DECIDES"));
                     },
                     [&s](int step) {
                         const std::vector<Choice<std::string>> modes = {
-                            {"native", nullptr}, {"force-on", nullptr}, {"force-off", nullptr}};
+                            {"native", {}}, {"force-on", {}}, {"force-off", {}}};
                         cycle(modes, s.silverWeaponMode, step);
                     },
                     {}});
@@ -335,35 +393,45 @@ std::vector<SettingsFlow::Option> SettingsFlow::gameOptions() {
 std::vector<SettingsFlow::Option> SettingsFlow::diagnosticsOptions() {
     core::Settings& s = m_settings;
     const auto toggle = [](std::string label, std::string help, bool& field) {
-        return Option{std::move(label), std::move(help), [&field] { return std::string(field ? "ON" : "OFF"); },
-                      [&field](int) { field = !field; }, {}};
+        return Option{std::move(label),
+                      std::move(help),
+                      [&field] { return std::string(field ? tr("ON") : tr("OFF")); },
+                      [&field](int) { field = !field; },
+                      {}};
     };
     std::vector<Option> rows;
-    rows.push_back(toggle("VISUAL TRACE",
-                          "Records what the CPU renderer draws to visual-trace.log (1 MB at most). Needs the CPU "
-                          "renderer, and slows the frames it records.",
+    rows.push_back(toggle(tr("VISUAL TRACE"),
+                          tr("Records what the CPU renderer draws to visual-trace.log (1 MB at most). Needs the CPU "
+                             "renderer, and slows the frames it records."),
                           s.visualTraceEnabled));
-    Option frames{"TRACE FRAMES", "Which frames to trace: one (120), a range (120-180) or every Nth of a range (120-240/30).",
-                  [&s] { return s.visualTraceFrames; }, {}, [&s] { return s.visualTraceEnabled; }, false};
+    Option frames{tr("TRACE FRAMES"),
+                  tr("Which frames to trace: one (120), a range (120-180) or every Nth of a range (120-240/30)."),
+                  [&s] { return s.visualTraceFrames; },
+                  {},
+                  [&s] { return s.visualTraceEnabled; },
+                  false};
     frames.allowed = "0123456789-/";
     frames.commit = [&s](const std::string& text) -> std::optional<std::string> {
         const auto normalized = core::normalizeTraceFrames(text);
         if (!normalized) {
-            return "Enter a frame (120), a range (120-180) or a stepped range (120-240/30).";
+            return tr("Enter a frame (120), a range (120-180) or a stepped range (120-240/30).");
         }
         s.visualTraceFrames = *normalized;
         return std::nullopt;
     };
     rows.push_back(std::move(frames));
-    rows.push_back(toggle("AUDIO DSP TRACE",
-                          "Samples the audio processor's state about once a second to audio-dsp-trace.log (1 MB at "
-                          "most). No sound is recorded.",
+    rows.push_back(toggle(tr("AUDIO DSP TRACE"),
+                          tr("Samples the audio processor's state about once a second to audio-dsp-trace.log (1 MB at "
+                             "most). No sound is recorded."),
                           s.dspTraceEnabled));
-    Option drawLog{"GPU DRAW LOG",
-                   "Logs every draw of some frames to kgpu-draw-trace.log: a frame, or frame,count (up to 120). Empty "
-                   "turns it off. Needs the GPU renderer.",
-                   [&s] { return s.kgpuDrawLogFrames.empty() ? std::string("OFF") : s.kgpuDrawLogFrames; }, {}, {},
-                   false};
+    Option drawLog{
+        tr("GPU DRAW LOG"),
+        tr("Logs every draw of some frames to kgpu-draw-trace.log: a frame, or frame,count (up to 120). Empty "
+           "turns it off. Needs the GPU renderer."),
+        [&s] { return s.kgpuDrawLogFrames.empty() ? std::string(tr("OFF")) : s.kgpuDrawLogFrames; },
+        {},
+        {},
+        false};
     drawLog.allowed = "0123456789,";
     drawLog.commit = [&s](const std::string& text) -> std::optional<std::string> {
         if (text.empty()) {
@@ -372,13 +440,14 @@ std::vector<SettingsFlow::Option> SettingsFlow::diagnosticsOptions() {
         }
         const auto normalized = core::normalizeDrawLogFrames(text);
         if (!normalized) {
-            return "Enter a frame (2400) or frame,count (2400,2), up to 120 frames.";
+            return tr("Enter a frame (2400) or frame,count (2400,2), up to 120 frames.");
         }
         s.kgpuDrawLogFrames = *normalized;
         return std::nullopt;
     };
     rows.push_back(std::move(drawLog));
-    rows.push_back({"OPEN LOGS FOLDER", "Each game run keeps its logs in reports/launcher-<date and time>.",
+    rows.push_back({tr("OPEN LOGS FOLDER"),
+                    tr("Each game run keeps its logs in reports/launcher-<date and time>."),
                     [] { return std::string(); },
                     [this](int) {
                         const std::filesystem::path reports = m_project.root() / "reports";
@@ -389,9 +458,14 @@ std::vector<SettingsFlow::Option> SettingsFlow::diagnosticsOptions() {
                             m_noticeIsProblem = true;
                         }
                     },
-                    {}, false});
-    rows.push_back({"REPORT A PROBLEM", "Prepares a GitHub issue about the last game run, for you to check and send.",
-                    [] { return std::string(); }, [this](int) { open(Section::Report); }, {}, false});
+                    {},
+                    false});
+    rows.push_back({tr("REPORT A PROBLEM"),
+                    tr("Prepares a GitHub issue about the last game run, for you to check and send."),
+                    [] { return std::string(); },
+                    [this](int) { open(Section::Report); },
+                    {},
+                    false});
     return rows;
 }
 
@@ -408,44 +482,45 @@ void SettingsFlow::prepareReport() {
         m_noticeIsProblem = true;
         return;
     }
-    m_notice = "The report is open on GitHub and copied" +
-               (draft ? " (also saved in reports/issue-drafts)" : std::string()) +
-               ". Attach the session's logs there, then submit it.";
+    m_notice = draft ? tr("The report is open on GitHub and copied (also saved in reports/issue-drafts). Attach "
+                          "the session's logs there, then submit it.")
+                     : tr("The report is open on GitHub and copied. Attach the session's logs there, then submit it.");
     m_noticeIsProblem = false;
 }
 
 Page SettingsFlow::reportPage() const {
     Page page;
     page.id = "settings-report";
-    page.title = "REPORT A PROBLEM";
+    page.title = tr("REPORT A PROBLEM");
     page.listWidth = 640.0f;
     page.notice = m_notice;
     page.noticeIsProblem = m_noticeIsProblem;
     if (!m_summary) {
-        page.rows = {{"NO GAME RUN YET", "", "Play once, then come back here if something goes wrong.", false},
-                     {"BACK", "", "", true}};
+        page.rows = {{tr("NO GAME RUN YET"), "", tr("Play once, then come back here if something goes wrong."), false},
+                     {tr("BACK"), "", "", true}};
         return page;
     }
     const std::string& name = m_summary->folderName;  // launcher-YYYYMMDDTHHMMSSmmmZ-id
-    const std::string when = name.size() >= 22 ? name.substr(9, 4) + "-" + name.substr(13, 2) + "-" +
-                                                     name.substr(15, 2) + "  " + name.substr(18, 2) + ":" +
-                                                     name.substr(20, 2) + " UTC"
-                                               : name;
-    const std::string ended = !m_summary->exitCode      ? std::string("STILL RUNNING OR UNKNOWN")
-                              : *m_summary->exitCode == 0 ? std::string("NORMALLY")
-                                                          : "WITH ERROR " + std::to_string(*m_summary->exitCode);
+    const std::string when = name.size() >= 22
+                                 ? name.substr(9, 4) + "-" + name.substr(13, 2) + "-" + name.substr(15, 2) + "  " +
+                                       name.substr(18, 2) + ":" + name.substr(20, 2) + " UTC"
+                                 : name;
+    const std::string ended = !m_summary->exitCode ? std::string(tr("STILL RUNNING OR UNKNOWN"))
+                              : *m_summary->exitCode == 0
+                                  ? std::string(tr("NORMALLY"))
+                                  : trf("WITH ERROR {0}", {std::to_string(*m_summary->exitCode)});
     page.rows = {
-        {"LAST GAME RUN", when, "The game run this report is about.", false},
-        {"ENDED", ended, "How the game ended.", false},
-        {"ERROR LINES IN ITS LOGS", std::to_string(m_summary->errorLines.size()),
-         "Lines with error, failed, exception or crash in session.log and kernel.log. The report lists the latest.",
+        {tr("LAST GAME RUN"), when, tr("The game run this report is about."), false},
+        {tr("ENDED"), ended, tr("How the game ended."), false},
+        {tr("ERROR LINES IN ITS LOGS"), std::to_string(m_summary->errorLines.size()),
+         tr("Lines with error, failed, exception or crash in session.log and kernel.log. The report lists the latest."),
          false},
-        {"PREPARE THE REPORT", "",
-         "Opens a new GitHub issue filled in with this run's details, without your folder names. Nothing is sent "
-         "until you submit it there.",
+        {tr("PREPARE THE REPORT"), "",
+         tr("Opens a new GitHub issue filled in with this run's details, without your folder names. Nothing is sent "
+            "until you submit it there."),
          true},
-        {"OPEN THIS RUN'S LOGS", "", "Attach session.log and kernel.log from here to the issue.", true},
-        {"BACK", "", "", true},
+        {tr("OPEN THIS RUN'S LOGS"), "", tr("Attach session.log and kernel.log from here to the issue."), true},
+        {tr("BACK"), "", "", true},
     };
     page.initialRow = 3;
     return page;
@@ -519,11 +594,11 @@ void SettingsFlow::updateCapture(double time) {
                     m_notice.clear();
                     return;
                 case CapturedKey::Kind::Reserved:
-                    m_notice = "F11 switches the game window and cannot be bound. Press another key.";
+                    m_notice = tr("F11 switches the game window and cannot be bound. Press another key.");
                     m_noticeIsProblem = true;
                     break;
                 case CapturedKey::Kind::Unbindable:
-                    m_notice = "That key cannot be bound. Press another key.";
+                    m_notice = tr("That key cannot be bound. Press another key.");
                     m_noticeIsProblem = true;
                     break;
             }
@@ -563,40 +638,46 @@ void SettingsFlow::updateCapture(double time) {
 Page SettingsFlow::bindingsPage() const {
     Page page;
     page.id = "settings-bindings";
-    page.title = "KEY BINDINGS";
+    page.title = tr("KEY BINDINGS");
     page.listWidth = 640.0f;
     const auto& actions = bindings::actions();
     for (std::size_t i = 0; i < actions.size(); ++i) {
         const std::vector<std::string> keys = slotsOf(i);
-        MenuRow row{upper(actions[i].label), "", "", true};
+        MenuRow row{tr(upper(actions[i].label)), "", "", true};
         for (std::size_t slot = 0; slot < kSlots; ++slot) {
             row.cells.push_back(slot < keys.size() ? upper(keys[slot]) : std::string("-"));
         }
         if (i == m_selectedRow) {
             row.markedCell = static_cast<int>(m_slot);
         }
-        std::string help = "Enter sets the framed key; left and right choose another of the three; Delete clears "
-                           "it.";
+        std::string help =
+            tr("Enter sets the framed key; left and right choose another of the three; Delete clears "
+               "it.");
         if (m_slot < keys.size()) {
-            help = std::string(bindings::findKey(keys[m_slot])->label) + " (key " + std::to_string(m_slot + 1) + " of 3). " + help;
+            help =
+                trf("{0} (key {1} of 3). ", {tr(bindings::findKey(keys[m_slot])->label), std::to_string(m_slot + 1)}) +
+                help;
         }
         row.help = std::move(help);
         page.rows.push_back(std::move(row));
     }
-    page.rows.push_back({"RESET TO DEFAULTS", "", "Puts every action back on its original keys.", true});
-    page.rows.push_back({"BACK", "", "", true});
+    page.rows.push_back({tr("RESET TO DEFAULTS"), "", tr("Puts every action back on its original keys."), true});
+    page.rows.push_back({tr("BACK"), "", "", true});
 
     if (m_capture.active) {
-        page.notice = m_notice.empty() ? "Press a key or mouse button, or turn the wheel, for " +
-                                             upper(actions[m_capture.action].label) + ". Escape cancels."
+        page.notice = m_notice.empty() ? trf("Press a key or mouse button, or turn the wheel, for {0}. Escape cancels.",
+                                             {tr(upper(actions[m_capture.action].label))})
                                        : m_notice;
         page.noticeIsProblem = !m_notice.empty() && m_noticeIsProblem;
     } else if (!m_notice.empty()) {
         page.notice = m_notice;
         page.noticeIsProblem = m_noticeIsProblem;
     } else if (const auto shared = bindings::sharedKeys(m_settings.bindings); !shared.empty()) {
-        page.notice = "Shared keys (both actions happen): " + shared.front() +
-                      (shared.size() > 1 ? " and " + std::to_string(shared.size() - 1) + " more." : ".");
+        const std::string first = trf("{0}: {1} and {2}", {tr(shared.front().key), tr(upper(shared.front().first)),
+                                                           tr(upper(shared.front().second))});
+        page.notice = shared.size() > 1 ? trf("Shared keys (both actions happen): {0}, and {1} more.",
+                                              {first, std::to_string(shared.size() - 1)})
+                                        : trf("Shared keys (both actions happen): {0}.", {first});
     }
     return page;
 }
@@ -614,26 +695,27 @@ Page SettingsFlow::page() {
     page.noticeIsProblem = m_noticeIsProblem;
     if (m_section == Section::Hub) {
         page.id = "settings";
-        page.title = "SETTINGS";
+        page.title = tr("SETTINGS");
         page.rows = {
-            {"DISPLAY", "", "Window, resolution, camera and field of view.", true},
-            {"GRAPHICS", "", "Anti-aliasing, ambient occlusion, reflections and other effects.", true},
-            {"CONTROLS", "", "Key bindings, mouse and controller.", true},
-            {"GAME", "", "Renderer, game clock, menu language and cheats.", true},
-            {"DIAGNOSTICS", "", "Logs for finding problems, and reporting one.", true},
-            {"BACK", "", "", true},
+            {tr("DISPLAY"), "", tr("Window, resolution, camera and field of view."), true},
+            {tr("GRAPHICS"), "", tr("Anti-aliasing, ambient occlusion, reflections and other effects."), true},
+            {tr("CONTROLS"), "", tr("Key bindings, mouse and controller."), true},
+            {tr("GAME"), "", tr("Renderer, game clock, menu language and cheats."), true},
+            {tr("DIAGNOSTICS"), "", tr("Logs for finding problems, and reporting one."), true},
+            {tr("BACK"), "", "", true},
         };
-        page.initialRow = m_lastSection == Section::Graphics   ? 1
-                          : m_lastSection == Section::Controls ? 2
-                          : m_lastSection == Section::Bindings ? 2
-                          : m_lastSection == Section::Game     ? 3
+        page.initialRow = m_lastSection == Section::Graphics                                          ? 1
+                          : m_lastSection == Section::Controls                                        ? 2
+                          : m_lastSection == Section::Bindings                                        ? 2
+                          : m_lastSection == Section::Game                                            ? 3
                           : m_lastSection == Section::Diagnostics || m_lastSection == Section::Report ? 4
-                                                               : 0;
+                                                                                                      : 0;
         return page;
     }
-    const std::array<const char*, 7> titles = {"SETTINGS",     "DISPLAY", "GRAPHICS",   "CONTROLS",
-                                               "KEY BINDINGS", "GAME",    "DIAGNOSTICS"};
-    page.title = titles.at(static_cast<std::size_t>(m_section));
+    const std::array<const char*, 7> titles = {trMark("SETTINGS"),   trMark("DISPLAY"),      trMark("GRAPHICS"),
+                                               trMark("CONTROLS"),   trMark("KEY BINDINGS"), trMark("GAME"),
+                                               trMark("DIAGNOSTICS")};
+    page.title = tr(titles.at(static_cast<std::size_t>(m_section)));
     page.id = "settings-" + page.title;
     const std::vector<Option> rows = options(m_section);
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -646,14 +728,14 @@ Page SettingsFlow::page() {
         std::string value = option.value();
         if (m_entry.active() && m_entryRow == i) {
             value = m_entry.shown(m_time);
-            help = "Type the value, then Enter. Escape keeps the old one.";
+            help = tr("Type the value, then Enter. Escape keeps the old one.");
         }
         page.rows.push_back({option.label, value, help, enabled, option.adjustable});
     }
-    page.rows.push_back({"BACK", "", "", true});
+    page.rows.push_back({tr("BACK"), "", "", true});
     if (m_section == Section::Diagnostics && page.notice.empty()) {
         if (const auto problem = core::settingsProblem(m_settings)) {
-            page.notice = "Play will not start: " + *problem;
+            page.notice = trf("Play will not start: {0}", {*problem});
             page.noticeIsProblem = true;
         }
     }
@@ -715,7 +797,7 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
     }
     if (option.commit) {
         m_entryRow = event.row;
-        m_entry.begin(option.value() == "OFF" ? std::string() : option.value(), option.allowed, 24);
+        m_entry.begin(option.value() == tr("OFF") ? std::string() : option.value(), option.allowed, 24);
         m_notice.clear();
         return Outcome::Stay;
     }

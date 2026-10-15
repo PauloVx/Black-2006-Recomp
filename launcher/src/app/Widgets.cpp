@@ -1,6 +1,7 @@
 #include "app/Widgets.h"
 
 #include "app/Theme.h"
+#include "app/Translations.h"
 
 #include "Walnut/Image.h"
 
@@ -111,8 +112,8 @@ std::optional<MenuEvent> MenuList::draw(const std::vector<MenuRow>& rows, const 
                       row.adjustable && !selected && row.enabled ? toU32(colors::kLogo) : color);
         }
         for (std::size_t cell = 0; cell < row.cells.size(); ++cell) {
-            const float right = layout.origin.x + layout.width -
-                                layout.cellWidth * static_cast<float>(row.cells.size() - 1 - cell);
+            const float right =
+                layout.origin.x + layout.width - layout.cellWidth * static_cast<float>(row.cells.size() - 1 - cell);
             const float left = right - layout.cellWidth + 12.0f;
             const std::string& text = row.cells[cell];
             const float x = (left + right - font.width(text, layout.textSize)) * 0.5f;
@@ -208,7 +209,7 @@ void drawBanner(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const BannerArt& 
         logoBottom = at.y + logoSize.y;
     }
     if (art.caption != nullptr && art.caption->usable()) {
-        drawSpaced(list, *art.caption, ImVec2(at.x + 6.0f, logoBottom + 18.0f), "XBOX 2006  /  RECOMPILED FOR PC",
+        drawSpaced(list, *art.caption, ImVec2(at.x + 6.0f, logoBottom + 18.0f), tr("XBOX 2006  /  RECOMPILED FOR PC"),
                    11.0f, 3.2f, toU32(colors::kRow));
     }
 

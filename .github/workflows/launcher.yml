@@ -6,12 +6,14 @@ on:
     paths:
       - 'launcher/**'
       - 'scripts/check-launcher.py'
+      - 'scripts/check-launcher-translations.py'
       - '.gitmodules'
       - '.github/workflows/launcher.yml'
   pull_request:
     paths:
       - 'launcher/**'
       - 'scripts/check-launcher.py'
+      - 'scripts/check-launcher-translations.py'
       - '.gitmodules'
       - '.github/workflows/launcher.yml'
 
@@ -56,6 +58,8 @@ jobs:
           pip install clang-format==19.1.7 clang-tidy==19.1.0
       - name: Formatting
         run: python3 scripts/check-launcher.py
+      - name: Translations
+        run: python3 scripts/check-launcher-translations.py
       - name: Build with warnings as errors
         working-directory: launcher
         run: |

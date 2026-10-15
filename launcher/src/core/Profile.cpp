@@ -91,7 +91,8 @@ std::string timeStamp() {
     std::array<char, 40> text{};
     const std::size_t length = std::strftime(text.data(), text.size(), "%Y%m%d_%H%M%S", &local);
     std::array<char, 8> millis{};
-    std::snprintf(millis.data(), millis.size(), "_%03d", static_cast<int>(ms));  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    std::snprintf(millis.data(), millis.size(), "_%03d",
+                  static_cast<int>(ms));  // NOLINT(cppcoreguidelines-pro-type-vararg)
     return std::string(text.data(), length) + millis.data();
 }
 
@@ -316,7 +317,8 @@ std::vector<fs::path> findProfiles(const ProjectLayout& project) {
 
 fs::path backupFolder(const ProjectLayout& project, const fs::path& profile) {
     std::string key = toUtf8(fs::absolute(profile));
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     Sha256 hash;
     hash.update(std::as_bytes(std::span(key)));
     return project.localDirectory() / "profile-backups" / ("Profile_" + Sha256::toHex(hash.finish()).substr(0, 24));
@@ -329,8 +331,8 @@ std::optional<std::string> backupTime(const fs::path& backup) {
     if (!std::regex_search(name, match, stamp)) {
         return std::nullopt;
     }
-    return match[1].str() + "-" + match[2].str() + "-" + match[3].str() + "  " + match[4].str() + ":" +
-           match[5].str() + ":" + match[6].str();
+    return match[1].str() + "-" + match[2].str() + "-" + match[3].str() + "  " + match[4].str() + ":" + match[5].str() +
+           ":" + match[6].str();
 }
 
 std::vector<fs::path> listBackups(const fs::path& folder) {

@@ -28,11 +28,11 @@ TEST_CASE("tokens are canonical, unique and capped") {
 
 TEST_CASE("repair keeps only real changes") {
     const bindings::Overrides repaired = bindings::repair({
-        {"fire", "Mouse2"},          // changed: kept, canonical name
-        {"RELOAD", "R"},             // the default: dropped
-        {"USE", "None"},             // cleared on purpose: kept
-        {"GRENADE", "Banana"},       // nothing usable: dropped
-        {"NOT_AN_ACTION", "W"},      // dropped
+        {"fire", "Mouse2"},      // changed: kept, canonical name
+        {"RELOAD", "R"},         // the default: dropped
+        {"USE", "None"},         // cleared on purpose: kept
+        {"GRENADE", "Banana"},   // nothing usable: dropped
+        {"NOT_AN_ACTION", "W"},  // dropped
     });
     CHECK(repaired == bindings::Overrides{{"FIRE", "Mouse2"}, {"USE", "None"}});
 }
@@ -61,5 +61,7 @@ TEST_CASE("sharedKeys reports a key used twice") {
     CHECK(bindings::sharedKeys({}).empty());
     const auto shared = bindings::sharedKeys({{"AIM", "Mouse1"}});
     REQUIRE(shared.size() == 1);
-    CHECK(shared[0] == "Left mouse button: Fire and Aim / zoom");
+    CHECK(std::string(shared[0].key) == "Left mouse button");
+    CHECK(std::string(shared[0].first) == "Fire");
+    CHECK(std::string(shared[0].second) == "Aim / zoom");
 }

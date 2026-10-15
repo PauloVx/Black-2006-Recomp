@@ -1,5 +1,6 @@
 #include "app/SaveFlow.h"
 
+#include "app/Translations.h"
 #include "core/Files.h"
 #include "core/Process.h"
 #include "core/Text.h"
@@ -15,13 +16,14 @@ namespace {
 
 namespace profile = core::profile;
 
-constexpr std::array<const char*, profile::kDifficulties> kDifficulties = {"EASY", "NORMAL", "HARD", "BLACK OPS"};
+constexpr std::array<const char*, profile::kDifficulties> kDifficulties = {trMark("EASY"), trMark("NORMAL"),
+                                                                           trMark("HARD"), trMark("BLACK OPS")};
 
 std::string resultName(std::uint32_t result) {
     switch (result) {
-        case 0: return "DONE";
-        case 1: return "BELOW TARGET";
-        case 2: return "TARGET MET";
+        case 0: return tr("DONE");
+        case 1: return tr("BELOW TARGET");
+        case 2: return tr("TARGET MET");
         default: return "-";
     }
 }
@@ -34,7 +36,9 @@ std::string upper(std::string text) {
 
 }  // namespace
 
-SaveFlow::SaveFlow(core::ProjectLayout project) : m_project(std::move(project)) { loadProfiles(); }
+SaveFlow::SaveFlow(core::ProjectLayout project) : m_project(std::move(project)) {
+    loadProfiles();
+}
 
 void SaveFlow::say(std::string text, bool problem) {
     m_notice = std::move(text);
@@ -89,8 +93,7 @@ void SaveFlow::change(core::Result<profile::Bytes> edited, const std::string& do
 
 void SaveFlow::saveChanges() {
     const auto& path = m_profiles[m_profile];
-    const auto applied =
-        profile::apply(path, m_working, profile::backupFolder(m_project, path), m_originalHash);
+    const auto applied = profile::apply(path, m_working, profile::backupFolder(m_project, path), m_originalHash);
     if (!applied) {
         say(applied.error().message, true);
         return;
@@ -100,7 +103,7 @@ void SaveFlow::saveChanges() {
         profile::logAction(m_project, "APPLIED", m_slot, path, m_originalHash, after, core::toUtf8(*applied.value()));
     }
     load(m_profile);
-    say(applied.value() ? "Saved. The file as it was is kept in the backups." : "Nothing had changed.");
+    say(applied.value() ? tr("Saved. The file as it was is kept in the backups.") : tr("Nothing had changed."));
 }
 
 void SaveFlow::update(double time, std::size_t selectedRow) {
@@ -113,7 +116,7 @@ void SaveFlow::update(double time, std::size_t selectedRow) {
     m_inputUsed = false;
     if (m_entry.update()) {
         m_entry.end();
-        change(profile::setName(m_working, m_slot, m_entry.text()), "Renamed.");
+        change(profile::setName(m_working, m_slot, m_entry.text()), tr("Renamed."));
         if (m_noticeIsProblem) {
             m_entry.begin(m_entry.text(), {}, profile::kMaxNameLength);
         }
@@ -125,38 +128,39 @@ void SaveFlow::update(double time, std::size_t selectedRow) {
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
         m_cell = 1 - m_cell;
     } else if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-        change(profile::restoreMission(m_working, m_original, m_slot, selectedRow), "Mission put back as it was.");
+        change(profile::restoreMission(m_working, m_original, m_slot, selectedRow), tr("Mission put back as it was."));
     }
 }
 
 Page SaveFlow::profilePage() const {
     Page page;
     page.id = "saves";
-    page.title = "SAVE GAME";
+    page.title = tr("SAVE GAME");
     page.listWidth = 640.0f;
     if (!m_slots) {
-        page.rows = {{"NO SAVE YET", "", "Play and make a profile in the game first; it appears here.", false},
-                     {"BACK", "", "", true}};
+        page.rows = {{tr("NO SAVE YET"), "", tr("Play and make a profile in the game first; it appears here."), false},
+                     {tr("BACK"), "", "", true}};
         return page;
     }
     if (m_profiles.size() > 1) {
-        page.rows.push_back({"PROFILE FILE", core::toUtf8(m_profiles[m_profile].parent_path().filename()),
-                             "This game folder has more than one save; left and right choose which.", true, true});
+        page.rows.push_back({tr("PROFILE FILE"), core::toUtf8(m_profiles[m_profile].parent_path().filename()),
+                             tr("This game folder has more than one save; left and right choose which."), true, true});
     }
     for (std::size_t slot = 0; slot < profile::kSlots; ++slot) {
         const profile::Slot& data = m_slots->at(slot);
-        MenuRow row{"SLOT " + std::to_string(slot + 1), "EMPTY", "An empty slot. Make a profile in it in the game.",
-                    data.active};
+        MenuRow row{trf("SLOT {0}", {std::to_string(slot + 1)}), tr("EMPTY"),
+                    tr("An empty slot. Make a profile in it in the game."), data.active};
         if (data.active) {
-            row.value = upper(data.name) + "   " + std::to_string(finished(slot)) + " OF 32 DONE";
-            row.help = "Rename this profile, or change its missions.";
+            row.value = upper(data.name) + "   " + trf("{0} OF 32 DONE", {std::to_string(finished(slot))});
+            row.help = tr("Rename this profile, or change its missions.");
         }
         page.rows.push_back(std::move(row));
     }
-    page.rows.push_back({"BACKUPS", std::to_string(m_backups.size()),
-                         "Every save and restore keeps the file as it was. Put one of them back.", !m_backups.empty()});
-    page.rows.push_back({"OPEN SAVE FOLDER", "", "The folder with the profile file.", true});
-    page.rows.push_back({"BACK", "", "", true});
+    page.rows.push_back({tr("BACKUPS"), std::to_string(m_backups.size()),
+                         tr("Every save and restore keeps the file as it was. Put one of them back."),
+                         !m_backups.empty()});
+    page.rows.push_back({tr("OPEN SAVE FOLDER"), "", tr("The folder with the profile file."), true});
+    page.rows.push_back({tr("BACK"), "", "", true});
     return page;
 }
 
@@ -164,22 +168,22 @@ Page SaveFlow::slotPage() const {
     const profile::Slot& data = m_slots->at(m_slot);
     Page page;
     page.id = "saves-slot";
-    page.title = "SLOT " + std::to_string(m_slot + 1) + ":  " + upper(data.name);
+    page.title = trf("SLOT {0}:  {1}", {std::to_string(m_slot + 1), upper(data.name)});
     page.listWidth = 640.0f;
-    MenuRow name{"NAME", upper(data.name), "Enter to type a new name (letters, digits and punctuation).", true};
+    MenuRow name{tr("NAME"), upper(data.name), tr("Enter to type a new name (letters, digits and punctuation)."), true};
     if (m_entry.active()) {
         name.value = m_entry.shown(m_time);
-        name.help = "Type the name, then Enter. Escape keeps the old one.";
+        name.help = tr("Type the name, then Enter. Escape keeps the old one.");
     }
     page.rows.push_back(std::move(name));
-    page.rows.push_back({"MISSIONS", std::to_string(finished(m_slot)) + " OF 32 DONE",
-                         "Which missions are open on each difficulty, and their results.", true});
+    page.rows.push_back({tr("MISSIONS"), trf("{0} OF 32 DONE", {std::to_string(finished(m_slot))}),
+                         tr("Which missions are open on each difficulty, and their results."), true});
     page.rows.push_back(
-        {"UNLOCK EVERY MISSION", "", "Opens every mission on every difficulty, with its target met.", true});
-    page.rows.push_back({"SAVE CHANGES", pending() ? "PENDING" : "",
-                         "Writes the changes to the profile, keeping the old file in the backups.", pending()});
-    page.rows.push_back({"UNDO CHANGES", "", "Forgets the changes not saved yet.", pending()});
-    page.rows.push_back({"BACK", "", "", true});
+        {tr("UNLOCK EVERY MISSION"), "", tr("Opens every mission on every difficulty, with its target met."), true});
+    page.rows.push_back({tr("SAVE CHANGES"), pending() ? tr("PENDING") : "",
+                         tr("Writes the changes to the profile, keeping the old file in the backups."), pending()});
+    page.rows.push_back({tr("UNDO CHANGES"), "", tr("Forgets the changes not saved yet."), pending()});
+    page.rows.push_back({tr("BACK"), "", "", true});
     page.initialRow = m_slotRow;
     return page;
 }
@@ -188,37 +192,37 @@ Page SaveFlow::missionsPage() const {
     const profile::Slot& data = m_slots->at(m_slot);
     Page page;
     page.id = "saves-missions";
-    page.title = "MISSIONS:  " + upper(data.name);
+    page.title = trf("MISSIONS:  {0}", {upper(data.name)});
     page.listWidth = 640.0f;
     for (std::size_t mission = 0; mission < profile::kMissions; ++mission) {
-        MenuRow row{std::string(kDifficulties.at(mission / profile::kMissionsPerDifficulty)) + "  " +
+        MenuRow row{tr(kDifficulties.at(mission / profile::kMissionsPerDifficulty)) + "  " +
                         std::to_string(mission % profile::kMissionsPerDifficulty + 1),
                     "",
-                    "Enter changes the framed value; left and right choose open or result; Delete puts the mission "
-                    "back as it was.",
+                    tr("Enter changes the framed value; left and right choose open or result; Delete puts the mission "
+                       "back as it was."),
                     true};
-        row.cells = {data.available.at(mission) ? "OPEN" : "LOCKED", resultName(data.results.at(mission))};
+        row.cells = {data.available.at(mission) ? tr("OPEN") : tr("LOCKED"), resultName(data.results.at(mission))};
         if (mission == m_selectedRow) {
             row.markedCell = static_cast<int>(m_cell);
         }
         page.rows.push_back(std::move(row));
     }
-    page.rows.push_back({"BACK", "", "", true});
+    page.rows.push_back({tr("BACK"), "", "", true});
     return page;
 }
 
 Page SaveFlow::backupsPage() const {
     Page page;
     page.id = "saves-backups";
-    page.title = "BACKUPS";
+    page.title = tr("BACKUPS");
     page.listWidth = 640.0f;
     for (std::size_t i = 0; i < m_backups.size(); ++i) {
         const bool beforeRestore = core::toUtf8(m_backups[i].filename()).starts_with("Profile_before_restore_");
-        page.rows.push_back({profile::backupTime(m_backups[i]).value_or(core::toUtf8(m_backups[i].filename())), beforeRestore ? "BEFORE A RESTORE" : "BEFORE A SAVE",
-                             "Puts this file back. The profile as it is now is backed up first.",
-                             true});
+        page.rows.push_back({profile::backupTime(m_backups[i]).value_or(core::toUtf8(m_backups[i].filename())),
+                             beforeRestore ? tr("BEFORE A RESTORE") : tr("BEFORE A SAVE"),
+                             tr("Puts this file back. The profile as it is now is backed up first."), true});
     }
-    page.rows.push_back({"BACK", "", "", true});
+    page.rows.push_back({tr("BACK"), "", "", true});
     return page;
 }
 
@@ -238,8 +242,8 @@ Page SaveFlow::page() {
         page.notice = m_notice;
         page.noticeIsProblem = m_noticeIsProblem;
     } else if (pending() && m_screen != Screen::Backups) {
-        page.notice = m_screen == Screen::Slot ? "Not saved yet: choose Save changes."
-                                               : "Not saved yet: Save changes on the slot's page writes them.";
+        page.notice = m_screen == Screen::Slot ? tr("Not saved yet: choose Save changes.")
+                                               : tr("Not saved yet: Save changes on the slot's page writes them.");
     }
     return page;
 }
@@ -249,6 +253,7 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
         return Outcome::Stay;
     }
     const std::optional<std::size_t> confirmed = std::exchange(m_confirm, std::nullopt);
+    m_leaving = false;
     m_notice.clear();
     if (!m_slots || m_screen == Screen::Profile) {
         if (!m_slots) {
@@ -258,7 +263,7 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
         if (m_profiles.size() > 1) {
             if (row == 0) {
                 if (pending()) {
-                    say("Save or undo this profile's changes first.", true);
+                    say(tr("Save or undo this profile's changes first."), true);
                 } else {
                     const auto count = static_cast<long long>(m_profiles.size());
                     const long long step = event.step == 0 ? 1 : event.step;
@@ -293,17 +298,17 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
                 break;
             case 2:
                 if (confirmed == 2u) {
-                    change(profile::unlockAll(m_working, m_slot), "Every mission is open with its target met.");
+                    change(profile::unlockAll(m_working, m_slot), tr("Every mission is open with its target met."));
                 } else {
                     m_confirm = 2;
-                    say("Press Enter again to open every mission on every difficulty, with its target met.");
+                    say(tr("Press Enter again to open every mission on every difficulty, with its target met."));
                 }
                 break;
             case 3: saveChanges(); break;
             case 4:
                 m_working = m_original;
                 m_slots = profile::read(m_working).value();
-                say("Changes undone.");
+                say(tr("Changes undone."));
                 break;
             default: return back();
         }
@@ -316,13 +321,13 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
         const profile::Slot& data = m_slots->at(m_slot);
         if (m_cell == 0) {
             change(profile::setAvailable(m_working, m_slot, event.row, !data.available.at(event.row)),
-                   "Mission changed.");
+                   tr("Mission changed."));
         } else {
             const std::uint32_t current = data.results.at(event.row);
-            const std::uint32_t next = current == profile::kNoResult ? 0
+            const std::uint32_t next = current == profile::kNoResult        ? 0
                                        : current >= profile::kHighestResult ? profile::kNoResult
                                                                             : current + 1;
-            change(profile::setResult(m_working, m_slot, event.row, next), "Mission changed.");
+            change(profile::setResult(m_working, m_slot, event.row, next), tr("Mission changed."));
         }
         return Outcome::Stay;
     }
@@ -331,7 +336,7 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
     }
     if (confirmed != event.row) {
         m_confirm = event.row;
-        say("Press Enter again to put this backup back. The profile as it is now is backed up first.");
+        say(tr("Press Enter again to put this backup back. The profile as it is now is backed up first."));
         return Outcome::Stay;
     }
     const auto& path = m_profiles[m_profile];
@@ -343,7 +348,7 @@ SaveFlow::Outcome SaveFlow::handle(MenuEvent event) {
     profile::logAction(m_project, "RESTORED", m_slot, path, m_originalHash, "", core::toUtf8(m_backups[event.row]));
     load(m_profile);
     m_screen = Screen::Profile;
-    say("Backup put back. The file it replaced is in the backups too.");
+    say(tr("Backup put back. The file it replaced is in the backups too."));
     return Outcome::Stay;
 }
 
@@ -361,10 +366,11 @@ SaveFlow::Outcome SaveFlow::back() {
         case Screen::Profile: break;
     }
     if (pending()) {
-        if (m_notice.starts_with("Unsaved")) {
+        if (m_leaving) {
             return Outcome::Back;  // the second Escape leaves them
         }
-        say("Unsaved changes. Escape again to leave without them, or open the slot and save.", true);
+        say(tr("Unsaved changes. Escape again to leave without them, or open the slot and save."), true);
+        m_leaving = true;
         return Outcome::Stay;
     }
     return Outcome::Back;

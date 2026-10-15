@@ -62,7 +62,9 @@ std::optional<double> parseNumber(std::string_view text) {
     return value;
 }
 
-bool validFov(double fov) { return fov == 0.0 || (std::isfinite(fov) && fov >= choices::kFovMin && fov <= choices::kFovMax); }
+bool validFov(double fov) {
+    return fov == 0.0 || (std::isfinite(fov) && fov >= choices::kFovMin && fov <= choices::kFovMax);
+}
 bool validSensitivity(double value) {
     return std::isfinite(value) && value >= bindings::kSensitivityMin && value <= bindings::kSensitivityMax;
 }
@@ -157,7 +159,8 @@ std::optional<std::string> normalizeTraceFrames(std::string_view value) {
     }
     const auto first = parseDigits(range.substr(0, dash));
     const auto last = dash == std::string_view::npos ? first : parseDigits(range.substr(dash + 1));
-    const auto step = slash == std::string_view::npos ? std::optional<long long>(1) : parseDigits(text.substr(slash + 1));
+    const auto step =
+        slash == std::string_view::npos ? std::optional<long long>(1) : parseDigits(text.substr(slash + 1));
     if (!first || !last || !step || *first <= 0 || *last <= 0 || *step <= 0 || *last < *first) {
         return std::nullopt;
     }
@@ -178,7 +181,8 @@ std::optional<std::string> normalizeDrawLogFrames(std::string_view value) {
         return std::nullopt;
     }
     const auto first = parseDigits(text.substr(0, comma));
-    const auto count = comma == std::string_view::npos ? std::optional<long long>(1) : parseDigits(text.substr(comma + 1));
+    const auto count =
+        comma == std::string_view::npos ? std::optional<long long>(1) : parseDigits(text.substr(comma + 1));
     if (!first || !count || *first <= 0 || *first > 2147483647 || *count <= 0 || *count > 120) {
         return std::nullopt;
     }
@@ -188,7 +192,8 @@ std::optional<std::string> normalizeDrawLogFrames(std::string_view value) {
 std::optional<std::string> settingsProblem(const Settings& settings) {
     if (settings.visualTraceEnabled) {
         if (settings.gpuRenderer) {
-            return "The detailed visual trace needs the CPU renderer. Turn off the GPU renderer for this diagnostic run.";
+            return "The detailed visual trace needs the CPU renderer. Turn off the GPU renderer for this diagnostic "
+                   "run.";
         }
         if (!normalizeTraceFrames(settings.visualTraceFrames)) {
             return "Visual trace frames: enter a frame (120), a range (120-180) or a stepped range (120-240/30).";
@@ -206,7 +211,8 @@ std::optional<std::string> settingsProblem(const Settings& settings) {
 }
 
 std::string videoIni(const Settings& s) {
-    std::string text = "; BLACK video settings. Edited by the in-game Video Settings page and by the launcher.\n[video]\n";
+    std::string text =
+        "; BLACK video settings. Edited by the in-game Video Settings page and by the launcher.\n[video]\n";
     const auto line = [&text](std::string_view key, const std::string& value) {
         text.append(key).append("=").append(value).push_back('\n');
     };
@@ -398,7 +404,8 @@ Settings settingsFromJson(std::string_view text) {
     readField(json, "DspTraceEnabled", s.dspTraceEnabled, kAny);
     readField(json, "OutputWidth", s.windowWidth, [](long long v) { return v >= 320 && v <= 7680; });
     readField(json, "OutputHeight", s.windowHeight, [](long long v) { return v >= 240 && v <= 4320; });
-    readField(json, "InternalHeight", s.internalHeight, [](long long v) { return contains(choices::kInternalHeights, v); });
+    readField(json, "InternalHeight", s.internalHeight,
+              [](long long v) { return contains(choices::kInternalHeights, v); });
     readField(json, "AntiAliasing", s.antiAliasing, among(choices::kAntiAliasing));
     readField(json, "Anisotropy", s.anisotropy, [](long long v) { return contains(choices::kAnisotropy, v); });
     readField(json, "DepthOfField", s.depthOfField, among(choices::kSteps));
@@ -438,8 +445,8 @@ Settings loadSettings(const ProjectLayout& project) {
                                                      json.value().size()));
     }
     if (auto video = readFile(local / "video.ini")) {
-        applyVideoIni(settings,
-                      std::string_view(reinterpret_cast<const char*>(video.value().data()), video.value().size()));  // NOLINT
+        applyVideoIni(settings, std::string_view(reinterpret_cast<const char*>(video.value().data()),
+                                                 video.value().size()));  // NOLINT
     }
     if (auto controls = readFile(local / "controls.ini")) {
         const std::string_view text(reinterpret_cast<const char*>(controls.value().data()),  // NOLINT

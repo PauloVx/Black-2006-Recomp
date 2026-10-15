@@ -6,6 +6,7 @@
 #include "app/SaveFlow.h"
 #include "app/SettingsFlow.h"
 #include "app/Theme.h"
+#include "app/Translations.h"
 #include "core/Files.h"
 #include "core/Process.h"
 #include "core/Settings.h"
@@ -66,6 +67,9 @@ void LauncherLayer::OnAttach() {
     acceptDroppedFiles(Walnut::Application::Get().GetWindowHandle());
     installKeyCapture(Walnut::Application::Get().GetWindowHandle());
     refresh();
+    if (m_project) {
+        setLanguage(core::loadSettings(*m_project).menuLanguage);
+    }
     setWindowIcon();
     if (m_initialDisc && m_disc) {
         m_screen = Screen::Disc;
@@ -136,7 +140,7 @@ bool LauncherLayer::ready() const noexcept {
 Page LauncherLayer::mainPage() {
     Page page;
     page.id = ready() ? "main" : "setup";
-    page.title = ready() ? "MAIN MENU" : "SETUP";
+    page.title = ready() ? tr("MAIN MENU") : tr("SETUP");
     page.notice = m_notice;
     page.noticeIsProblem = true;
     m_mainActions.clear();
@@ -146,52 +150,56 @@ Page LauncherLayer::mainPage() {
     };
     const bool canConfigure = m_project.has_value() && !playing();
 
-    MenuRow disc{"YOUR DISC", "", "", m_disc != nullptr && !playing()};
+    MenuRow disc{tr("YOUR DISC"), "", "", m_disc != nullptr && !playing()};
     switch (m_gameFiles.state) {
         case core::GameFilesState::Missing:
-            disc.value = "CHOOSE";
-            disc.help = "Choose an ISO of your own original Xbox BLACK disc, or a folder with its files.";
+            disc.value = tr("CHOOSE");
+            disc.help = tr("Choose an ISO of your own original Xbox BLACK disc, or a folder with its files.");
             break;
         case core::GameFilesState::Unreadable:
-            disc.value = "UNREADABLE";
-            disc.help = "The game files could not be read: " + m_gameFiles.error;
+            disc.value = tr("UNREADABLE");
+            disc.help = trf("The game files could not be read: {0}", {m_gameFiles.error});
             break;
         case core::GameFilesState::UnsupportedVersion:
-            disc.value = "WRONG RELEASE";
-            disc.help = "The game folder holds a different release of BLACK. Choose the original Xbox retail release.";
+            disc.value = tr("WRONG RELEASE");
+            disc.help =
+                tr("The game folder holds a different release of BLACK. Choose the original Xbox retail release.");
             break;
         case core::GameFilesState::Supported:
-            disc.value = "READY";
-            disc.help = "The supported Xbox retail release of BLACK is in place.";
+            disc.value = tr("READY");
+            disc.help = tr("The supported Xbox retail release of BLACK is in place.");
             break;
     }
-    MenuRow build{"BUILD THE GAME", m_gameExecutable ? "DONE" : "NOT BUILT", "", false};
-    build.help = m_gameExecutable ? "The PC game has been built from your disc."
-                                  : "Turns your disc into the PC game. For now, run Build BLACK in the game folder.";
+    MenuRow build{tr("BUILD THE GAME"), m_gameExecutable ? tr("DONE") : tr("NOT BUILT"), "", false};
+    build.help = m_gameExecutable
+                     ? tr("The PC game has been built from your disc.")
+                     : tr("Turns your disc into the PC game. For now, run Build BLACK in the game folder.");
 
     if (playing()) {
-        add(Action::Play, {"STOP GAME", "RUNNING", "Ends the game at once. Save your progress in the game first.",
-                           true});
-        add(Action::Settings, {"SETTINGS", "", "Available when the game is closed.", false});
-        add(Action::Saves, {"SAVE GAME", "", "Available when the game is closed.", false});
+        add(Action::Play,
+            {tr("STOP GAME"), tr("RUNNING"), tr("Ends the game at once. Save your progress in the game first."), true});
+        add(Action::Settings, {tr("SETTINGS"), "", tr("Available when the game is closed."), false});
+        add(Action::Saves, {tr("SAVE GAME"), "", tr("Available when the game is closed."), false});
         add(Action::Disc, disc);
         add(Action::Build, build);
     } else if (ready()) {
-        add(Action::Play, {"PLAY", "", "Starts BLACK with your saved settings.", true});
-        add(Action::Settings, {"SETTINGS", "", "Display, graphics, controls and language.", canConfigure});
-        add(Action::Saves, {"SAVE GAME", "", "Rename a profile, open missions, or put a backup back.", canConfigure});
+        add(Action::Play, {tr("PLAY"), "", tr("Starts BLACK with your saved settings."), true});
+        add(Action::Settings, {tr("SETTINGS"), "", tr("Display, graphics, controls and language."), canConfigure});
+        add(Action::Saves,
+            {tr("SAVE GAME"), "", tr("Rename a profile, open missions, or put a backup back."), canConfigure});
         add(Action::Disc, disc);
         add(Action::Build, build);
     } else {
         add(Action::Disc, disc);
         add(Action::Build, build);
-        add(Action::Play, {"PLAY", "", "Available once your disc is in place and the game is built.", false});
-        add(Action::Settings, {"SETTINGS", "", "Display, graphics, controls and language.", canConfigure});
-        add(Action::Saves, {"SAVE GAME", "", "Rename a profile, open missions, or put a backup back.", canConfigure});
+        add(Action::Play, {tr("PLAY"), "", tr("Available once your disc is in place and the game is built."), false});
+        add(Action::Settings, {tr("SETTINGS"), "", tr("Display, graphics, controls and language."), canConfigure});
+        add(Action::Saves,
+            {tr("SAVE GAME"), "", tr("Rename a profile, open missions, or put a backup back."), canConfigure});
     }
-    add(Action::OpenFolder,
-        {"OPEN GAME FOLDER", "", "Opens the folder with the game, your saves and settings.", m_project.has_value()});
-    add(Action::Quit, {"QUIT", "", "Closes the launcher.", true});
+    add(Action::OpenFolder, {tr("OPEN GAME FOLDER"), "", tr("Opens the folder with the game, your saves and settings."),
+                             m_project.has_value()});
+    add(Action::Quit, {tr("QUIT"), "", tr("Closes the launcher."), true});
     return page;
 }
 
@@ -240,7 +248,7 @@ void LauncherLayer::startGame() {
     }
     m_session = std::move(session).value();
     m_notice.clear();
-    m_lastRun = "RUNNING";
+    m_lastRun = LastRun::Running;
     m_lastLogs = m_session->directory();
 }
 
@@ -250,10 +258,9 @@ void LauncherLayer::checkGame() {
     }
     const int code = m_session->exitCode().value_or(-1);
     const std::string failure = m_session->logFailure();
-    m_lastRun = m_session->stopRequested() ? "STOPPED"
-                : code == 0              ? "CLOSED NORMALLY"
-                                         : "ENDED WITH ERROR " + std::to_string(code);
-    m_notice = failure.empty() ? std::string() : "The game's log could not be written: " + failure;
+    m_lastRun = m_session->stopRequested() ? LastRun::Stopped : code == 0 ? LastRun::Closed : LastRun::Failed;
+    m_lastExitCode = code;
+    m_notice = failure.empty() ? std::string() : trf("The game's log could not be written: {0}", {failure});
     m_session.reset();
 }
 
@@ -377,39 +384,46 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     }
 
     float x = topLeft.x + kPageMargin;
-    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "UP/DOWN", "CHOOSE", 11.0f) + 26.0f;
+    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("UP/DOWN"), tr("CHOOSE"), 11.0f) + 26.0f;
     if (settings) {
-        x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "LEFT/RIGHT", "CHANGE", 11.0f) + 26.0f;
+        x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("LEFT/RIGHT"), tr("CHANGE"), 11.0f) + 26.0f;
     }
-    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ENTER", "SELECT", 11.0f) + 26.0f;
-    drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ESC", main ? "QUIT" : "BACK", 11.0f);
+    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ENTER"), tr("SELECT"), 11.0f) + 26.0f;
+    x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), tr("ESC"), main ? tr("QUIT") : tr("BACK"), 11.0f);
 
-    const std::string version = std::string("LAUNCHER ") + BLACK_LAUNCHER_VERSION;
-    m_rowFont.draw(list, ImVec2(topLeft.x + size.x - 40.0f - m_rowFont.width(version, 11.0f), promptY), version, 11.0f,
-                   toU32(colors::kMuted));
+    const std::string version = trf("LAUNCHER {0}", {BLACK_LAUNCHER_VERSION});
+    const float versionX = topLeft.x + size.x - 40.0f - m_rowFont.width(version, 11.0f);
+    if (versionX > x + 24.0f) {  // longer languages' prompts take its place
+        m_rowFont.draw(list, ImVec2(versionX, promptY), version, 11.0f, toU32(colors::kMuted));
+    }
 }
 
 void LauncherLayer::drawStatus(ImDrawList& list, ImVec2 topLeft, float width) const {
-    const auto line = [&](float y, const char* label, const std::string& value, const ImVec4& mark) {
+    const auto line = [&](float y, const std::string& label, const std::string& value, const ImVec4& mark) {
         list.AddCircleFilled(ImVec2(topLeft.x + 4.0f, y + 6.0f), 3.5f, toU32(mark));
         m_rowFont.draw(list, ImVec2(topLeft.x + 16.0f, y), label, 11.0f, toU32(colors::kRow));
         drawWrapped(list, m_rowFont, ImVec2(topLeft.x + 16.0f, y + 19.0f), value, 11.0f, width - 16.0f,
                     toU32(colors::kText));
     };
 
-    m_rowFont.draw(list, topLeft, "THIS COPY", 11.0f, toU32(colors::kMuted));
+    m_rowFont.draw(list, topLeft, tr("THIS COPY"), 11.0f, toU32(colors::kMuted));
     list.AddLine(ImVec2(topLeft.x, topLeft.y + 20.0f), ImVec2(topLeft.x + width, topLeft.y + 20.0f),
                  toU32(colors::kRail, 0.25f));
     const bool discReady = m_gameFiles.state == core::GameFilesState::Supported;
-    line(topLeft.y + 36.0f, "DISC", discReady ? "XBOX RETAIL RELEASE" : "NOT IN PLACE",
+    line(topLeft.y + 36.0f, tr("DISC"), discReady ? tr("XBOX RETAIL RELEASE") : tr("NOT IN PLACE"),
          discReady ? colors::kGood : colors::kBad);
-    line(topLeft.y + 92.0f, "GAME", m_gameExecutable ? "BUILT" : "NOT BUILT",
+    line(topLeft.y + 92.0f, tr("GAME"), m_gameExecutable ? tr("BUILT") : tr("NOT BUILT"),
          m_gameExecutable ? colors::kGood : colors::kBad);
-    line(topLeft.y + 148.0f, "LOOK", m_artFromGame ? "MENU FONTS FROM YOUR DISC" : "STAND-IN FONTS",
+    line(topLeft.y + 148.0f, tr("LOOK"), m_artFromGame ? tr("MENU FONTS FROM YOUR DISC") : tr("STAND-IN FONTS"),
          m_artFromGame ? colors::kGood : colors::kMuted);
-    if (!m_lastRun.empty()) {
-        const bool fine = playing() || m_lastRun == "CLOSED NORMALLY" || m_lastRun == "STOPPED";
-        line(topLeft.y + 204.0f, playing() ? "NOW" : "LAST GAME", m_lastRun, fine ? colors::kGood : colors::kBad);
+    if (m_lastRun != LastRun::None) {
+        const std::string state = m_lastRun == LastRun::Running   ? tr("RUNNING")
+                                  : m_lastRun == LastRun::Stopped ? tr("STOPPED")
+                                  : m_lastRun == LastRun::Closed
+                                      ? tr("CLOSED NORMALLY")
+                                      : trf("ENDED WITH ERROR {0}", {std::to_string(m_lastExitCode)});
+        line(topLeft.y + 204.0f, playing() ? tr("NOW") : tr("LAST GAME"), state,
+             m_lastRun == LastRun::Failed ? colors::kBad : colors::kGood);
     }
 }
 

@@ -16,12 +16,12 @@
 #endif
 #include <windows.h>
 #else
-#include <cerrno>
-#include <csignal>
-#include <cstring>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <cerrno>
+#include <csignal>
+#include <cstring>
 
 extern char** environ;  // NOLINT(readability-redundant-declaration): POSIX declares it nowhere in a header
 #endif
@@ -31,8 +31,7 @@ namespace {
 
 bool startsWithAny(std::string_view text, const std::vector<std::string>& prefixes) {
     for (const std::string& prefix : prefixes) {
-        if (text.size() >= prefix.size() &&
-            std::equal(prefix.begin(), prefix.end(), text.begin(), [](char a, char b) {
+        if (text.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), text.begin(), [](char a, char b) {
                 return std::toupper(static_cast<unsigned char>(a)) == std::toupper(static_cast<unsigned char>(b));
             })) {
             return true;
@@ -126,7 +125,9 @@ std::wstring quoteArgument(const std::wstring& argument) {
     return quoted;
 }
 
-std::wstring wide(const std::string& text) { return pathFromUtf8(text).wstring(); }
+std::wstring wide(const std::string& text) {
+    return pathFromUtf8(text).wstring();
+}
 
 std::wstring environmentBlock(const ChildOptions& options) {
     std::wstring block;
@@ -159,7 +160,8 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
         }
         SetHandleInformation(readEnds.at(i), HANDLE_FLAG_INHERIT, 0);
     }
-    HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    HANDLE input =
+        CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
 
     std::wstring commandLine = quoteArgument(options.program.wstring());
     for (const std::string& argument : options.arguments) {
@@ -205,7 +207,9 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
     return std::unique_ptr<ChildProcess>(new ChildProcess(std::move(impl)));
 }
 
-int ChildProcess::pid() const noexcept { return static_cast<int>(m_impl->pid); }
+int ChildProcess::pid() const noexcept {
+    return static_cast<int>(m_impl->pid);
+}
 
 int ChildProcess::wait() {
     const std::scoped_lock lock(m_impl->waitMutex);
@@ -267,7 +271,8 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
         }
     }
     std::vector<std::string> variables;
-    for (char** entry = environ; *entry != nullptr; ++entry) {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    for (char** entry = environ; *entry != nullptr;
+         ++entry) {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         const std::string_view text(*entry);
         const std::string name(text.substr(0, text.find('=')));
         if (!startsWithAny(name, options.dropPrefixes) && !options.environment.contains(name)) {
@@ -324,7 +329,9 @@ Result<std::unique_ptr<ChildProcess>> ChildProcess::start(ChildOptions options) 
     return std::unique_ptr<ChildProcess>(new ChildProcess(std::move(impl)));
 }
 
-int ChildProcess::pid() const noexcept { return static_cast<int>(m_impl->pid); }
+int ChildProcess::pid() const noexcept {
+    return static_cast<int>(m_impl->pid);
+}
 
 int ChildProcess::wait() {
     const std::scoped_lock lock(m_impl->waitMutex);
@@ -356,6 +363,8 @@ void ChildProcess::kill() {
 
 ChildProcess::ChildProcess(std::unique_ptr<Impl> impl) : m_impl(std::move(impl)) {}
 
-ChildProcess::~ChildProcess() { wait(); }
+ChildProcess::~ChildProcess() {
+    wait();
+}
 
 }  // namespace black::core

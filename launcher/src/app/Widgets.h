@@ -21,7 +21,7 @@ struct MenuRow {
     std::string value;
     std::string help;  // shown under the list while the row is selected
     bool enabled = true;
-    bool adjustable = false;  // a setting: left/right (and the arrows beside its value) change it
+    bool adjustable = false;         // a setting: left/right (and the arrows beside its value) change it
     std::vector<std::string> cells;  // instead of a value: aligned columns at the right (key bindings)
     int markedCell = -1;
 };

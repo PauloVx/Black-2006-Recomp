@@ -49,7 +49,6 @@ private:
         double since = 0;
     };
 
-
     [[nodiscard]] std::vector<Option> options(Section section);
     [[nodiscard]] std::vector<Option> displayOptions();
     [[nodiscard]] std::vector<Option> graphicsOptions();

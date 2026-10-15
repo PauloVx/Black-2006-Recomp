@@ -51,12 +51,13 @@ private:
 
     Screen m_screen = Screen::Profile;
     std::size_t m_slot = 0;
-    std::size_t m_cell = 0;  // missions: 0 open/locked, 1 result
+    std::size_t m_cell = 0;     // missions: 0 open/locked, 1 result
     std::size_t m_slotRow = 0;  // the slot page's selection when it is shown again
     std::size_t m_selectedRow = 0;
     std::optional<std::size_t> m_confirm;  // the row waiting for a second Enter
     TextEntry m_entry;
     bool m_inputUsed = false;
+    bool m_leaving = false;  // Escape once more leaves without saving
     double m_time = 0;
     std::string m_notice;
     bool m_noticeIsProblem = false;

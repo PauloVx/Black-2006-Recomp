@@ -2,6 +2,7 @@
 #include "app/LauncherLayer.h"
 #include "app/NativeDialogs.h"
 #include "app/Theme.h"
+#include "app/Translations.h"
 #include "core/GameSession.h"
 #include "core/Text.h"
 
@@ -73,14 +74,16 @@ int playWithoutWindow(const std::filesystem::path& start) {
         black::app::showError("BLACK", "The launcher is not inside the BLACK project folder.");
         return 1;
     }
-    auto session = black::core::GameSession::start(*project, black::core::loadSettings(*project));
+    const black::core::Settings settings = black::core::loadSettings(*project);
+    black::app::setLanguage(settings.menuLanguage);
+    auto session = black::core::GameSession::start(*project, settings);
     if (!session) {
         black::app::showError("BLACK", session.error().message);
         return 1;
     }
     const int code = session.value()->wait();
     if (const std::string failure = session.value()->logFailure(); !failure.empty()) {
-        black::app::showError("BLACK", "The game's log could not be written: " + failure);
+        black::app::showError("BLACK", black::app::trf("The game's log could not be written: {0}", {failure}));
     }
     return code;
 }

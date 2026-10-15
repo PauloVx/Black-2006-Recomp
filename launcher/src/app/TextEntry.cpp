@@ -33,6 +33,8 @@ bool TextEntry::update() {
     return ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
 }
 
-std::string TextEntry::shown(double time) const { return m_text + (std::fmod(time, 1.0) < 0.5 ? "_" : " "); }
+std::string TextEntry::shown(double time) const {
+    return m_text + (std::fmod(time, 1.0) < 0.5 ? "_" : " ");
+}
 
 }  // namespace black::app

@@ -34,7 +34,7 @@ enum class PathStyle { Native, Wine };
 class GameSession {
 public:
     [[nodiscard]] static Result<std::unique_ptr<GameSession>> start(const ProjectLayout& project,
-                                                                     const Settings& settings);
+                                                                    const Settings& settings);
 
     GameSession(const GameSession&) = delete;
     GameSession& operator=(const GameSession&) = delete;

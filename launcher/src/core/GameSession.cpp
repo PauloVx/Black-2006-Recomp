@@ -241,7 +241,8 @@ struct GameSession::Lock {
         std::error_code error;
         fs::create_directories(project.localDirectory(), error);
         const std::string path = (project.localDirectory() / ".game.lock").string();
-        lock->file = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);  // NOLINT(cppcoreguidelines-pro-type-vararg)
+        lock->file =
+            open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);  // NOLINT(cppcoreguidelines-pro-type-vararg)
         if (lock->file < 0 || flock(lock->file, LOCK_EX | LOCK_NB) != 0) {
             return nullptr;
         }
@@ -422,13 +423,12 @@ Result<std::unique_ptr<GameSession>> GameSession::start(const ProjectLayout& pro
     if (auto written = writeText(folder / "launch.json", launch.dump(2) + "\n"); !written) {
         return written.error();
     }
-    session->writeLine("[launcher] BLACK PC / " +
-                           std::string(settings.gpuRenderer ? "GPU Kelvin (Direct3D 11)" : "CPU Kelvin") +
-                           (settings.smooth60 ? " / " + std::to_string(settings.smoothHz != 0 ? settings.smoothHz : 60) +
-                                                    " FPS timing"
-                                              : "") +
-                           " / " + std::to_string(settings.threads) + " threads",
-                       false);
+    session->writeLine(
+        "[launcher] BLACK PC / " + std::string(settings.gpuRenderer ? "GPU Kelvin (Direct3D 11)" : "CPU Kelvin") +
+            (settings.smooth60 ? " / " + std::to_string(settings.smoothHz != 0 ? settings.smoothHz : 60) + " FPS timing"
+                               : "") +
+            " / " + std::to_string(settings.threads) + " threads",
+        false);
     session->writeLine("[launcher] menu text: " + settings.menuLanguage, false);
 
     environment.insert(command.value().environment.begin(), command.value().environment.end());

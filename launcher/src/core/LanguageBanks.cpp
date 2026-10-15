@@ -66,8 +66,10 @@ Result<bool> installLanguageBank(const ProjectLayout& project, std::string_view 
     const fs::path english = languageBankPath(project, "en-US");
     if (!fs::is_regular_file(english, error)) {
         if (hashOf(target) != retailEnglishSha256) {
-            return Error{"The game's MainUS.bin is not the retail English one. Put the original back (from your "
-                         "disc) at " + toUtf8(english) + " before changing the menu language."};
+            return Error{
+                "The game's MainUS.bin is not the retail English one. Put the original back (from your "
+                "disc) at " +
+                toUtf8(english) + " before changing the menu language."};
         }
         fs::create_directories(english.parent_path(), error);
         if (auto kept = replaceFile(target, english, false); !kept) {

@@ -106,7 +106,9 @@ void onKey(GLFWwindow* window, int key, int scancode, int action, int mods) {
 
 }  // namespace
 
-void installKeyCapture(GLFWwindow* window) { glfwSetKeyCallback(window, onKey); }
+void installKeyCapture(GLFWwindow* window) {
+    glfwSetKeyCallback(window, onKey);
+}
 
 void beginKeyCapture() {
     const std::scoped_lock lock(g_mutex);

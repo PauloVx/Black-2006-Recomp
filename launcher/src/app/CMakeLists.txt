@@ -4,7 +4,12 @@ set(BLACK_FONTS "${BLACK_ASSETS}/fonts")
 black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
     "logoImage=${BLACK_ASSETS}/images/black-logo.png"
     "rowFont=${BLACK_FONTS}/RussoOne-Regular.ttf"
-    "titleFont=${BLACK_FONTS}/SairaCondensed-ExtraBold.ttf")
+    "titleFont=${BLACK_FONTS}/SairaCondensed-ExtraBold.ttf"
+    "translationsPtBr=${BLACK_ASSETS}/translations/pt-BR.json"
+    "translationsEs=${BLACK_ASSETS}/translations/es.json"
+    "translationsFr=${BLACK_ASSETS}/translations/fr.json"
+    "translationsDe=${BLACK_ASSETS}/translations/de.json"
+    "translationsIt=${BLACK_ASSETS}/translations/it.json")
 
 add_executable(black_launcher
     "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp"
@@ -17,10 +22,11 @@ add_executable(black_launcher
     SaveFlow.cpp
     SettingsFlow.cpp
     TextEntry.cpp
+    Translations.cpp
     Theme.cpp
     Widgets.cpp)
 target_include_directories(black_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-target_link_libraries(black_launcher PRIVATE black_launcher_core black_walnut)
+target_link_libraries(black_launcher PRIVATE black_launcher_core black_walnut black_json)
 set_target_properties(black_launcher PROPERTIES
     OUTPUT_NAME "BLACK Launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

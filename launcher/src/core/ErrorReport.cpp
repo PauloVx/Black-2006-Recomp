@@ -176,8 +176,8 @@ SessionSummary summarizeSession(const ProjectLayout& project, const fs::path& se
 std::vector<fs::path> sessionAttachments(const fs::path& session) {
     std::vector<fs::path> found;
     std::error_code error;
-    for (const char* name : {"session.log", "kernel.log", "visual-trace.log", "audio-dsp-trace.log",
-                             "kgpu-draw-trace.log"}) {
+    for (const char* name :
+         {"session.log", "kernel.log", "visual-trace.log", "audio-dsp-trace.log", "kgpu-draw-trace.log"}) {
         if (fs::is_regular_file(session / name, error)) {
             found.push_back(session / name);
         }

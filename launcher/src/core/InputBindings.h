@@ -17,7 +17,7 @@ inline constexpr double kSensitivityMin = 0.1;
 inline constexpr double kSensitivityMax = 10.0;
 
 struct Action {
-    std::string_view name;   // as in RECOMP_BLACK_BIND_<name>
+    std::string_view name;  // as in RECOMP_BLACK_BIND_<name>
     std::string_view label;
     std::string_view defaultKeys;
 };
@@ -54,7 +54,12 @@ using Overrides = std::map<std::string, std::string>;
 /// controls.ini with [keyboard] replaced; the game's other sections ([controller], layout) are kept.
 [[nodiscard]] std::string toControlsIni(std::string_view existing, const Overrides& overrides);
 
-/// Actions that share a key, as "KEY: ACTION, ACTION" lines.
-[[nodiscard]] std::vector<std::string> sharedKeys(const Overrides& overrides);
+struct SharedKey {
+    std::string_view key;  // the key's label
+    std::string_view first;
+    std::string_view second;  // action labels
+};
+/// Pairs of actions that share a key (allowed: both happen).
+[[nodiscard]] std::vector<SharedKey> sharedKeys(const Overrides& overrides);
 
 }  // namespace black::core::bindings
