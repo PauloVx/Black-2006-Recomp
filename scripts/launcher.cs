@@ -303,7 +303,7 @@ namespace BlackXboxLauncher
         internal static readonly int[] FrameLimits = { 0, 30, 60, 120, 144, 165, 240 };
         internal static readonly int[] InternalHeights = { 480, 720, 1080, 1440, 2160 };
         internal static readonly int[] AnisotropyLevels = { 1, 2, 4, 8, 16 };
-        internal const double FovMin = 35.0, FovMax = 100.0;
+        internal const double FovMin = 35.0, FovMax = 120.0;
         internal const long RenderPixelLimit = 16777216L;
 
         internal static bool IsFrameLimit(int value) { return Array.IndexOf(FrameLimits, value) >= 0; }
