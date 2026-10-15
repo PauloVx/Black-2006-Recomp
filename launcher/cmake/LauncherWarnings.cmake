@@ -1,0 +1,15 @@
+# Strict warnings for the launcher's own code. Vendored libraries keep their defaults.
+function(black_launcher_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+        if(BLACK_LAUNCHER_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+                                                  -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual)
+        if(BLACK_LAUNCHER_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()

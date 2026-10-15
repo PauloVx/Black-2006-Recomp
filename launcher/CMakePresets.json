@@ -1,0 +1,67 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-release",
+      "inherits": "windows",
+      "displayName": "Windows",
+      "binaryDir": "${sourceDir}/../build-launcher"
+    },
+    {
+      "name": "windows-ci",
+      "inherits": "windows-release",
+      "displayName": "Windows (warnings as errors)",
+      "binaryDir": "${sourceDir}/../build-launcher-ci",
+      "cacheVariables": { "BLACK_LAUNCHER_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "linux",
+      "hidden": true,
+      "generator": "Ninja",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "linux",
+      "displayName": "Linux",
+      "binaryDir": "${sourceDir}/../build-launcher-linux",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": "linux",
+      "displayName": "Linux (debug)",
+      "binaryDir": "${sourceDir}/../build-launcher-linux-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-ci",
+      "inherits": "linux-release",
+      "displayName": "Linux (warnings as errors)",
+      "binaryDir": "${sourceDir}/../build-launcher-linux-ci",
+      "cacheVariables": { "BLACK_LAUNCHER_WARNINGS_AS_ERRORS": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-release", "configurePreset": "windows-release", "configuration": "Release" },
+    { "name": "windows-debug", "configurePreset": "windows-release", "configuration": "Debug" },
+    { "name": "windows-ci", "configurePreset": "windows-ci", "configuration": "Release" },
+    { "name": "linux-release", "configurePreset": "linux-release" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "linux-ci", "configurePreset": "linux-ci" }
+  ],
+  "testPresets": [
+    { "name": "windows-release", "configurePreset": "windows-release", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "windows-ci", "configurePreset": "windows-ci", "configuration": "Release", "output": { "outputOnFailure": true } },
+    { "name": "linux-release", "configurePreset": "linux-release", "output": { "outputOnFailure": true } },
+    { "name": "linux-ci", "configurePreset": "linux-ci", "output": { "outputOnFailure": true } }
+  ]
+}
