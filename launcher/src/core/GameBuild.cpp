@@ -227,6 +227,19 @@ bool generatedCodeIsCurrent(const ProjectLayout& project) {
             return false;
         }
     }
+    // The recompiler decides what the generated code says too.
+    const fs::path recompiler = root / "third_party" / "xboxrecomp" / "tools" / "recomp";
+    for (fs::recursive_directory_iterator it(recompiler, error), end; !error && it != end; it.increment(error)) {
+        const fs::path& path = it->path();
+        if (path.extension() != ".py" || toUtf8(path.filename()).starts_with("test_")) {
+            continue;
+        }
+        std::error_code missing;
+        const auto changed = fs::last_write_time(path, missing);
+        if (!missing && changed > made) {
+            return false;
+        }
+    }
     return true;
 }
 

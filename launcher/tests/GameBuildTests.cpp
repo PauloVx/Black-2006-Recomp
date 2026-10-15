@@ -76,3 +76,21 @@ TEST_CASE("Translated code is current until the disc or the translator's inputs 
     std::filesystem::last_write_time(folder.path() / "scripts/generate.py", later + std::chrono::hours(1));
     CHECK_FALSE(generatedCodeIsCurrent(project));
 }
+
+TEST_CASE("Translated code is out of date when the recompiler changes, not its tests") {
+    const black::tests::TempFolder folder;
+    const ProjectLayout project(folder.path());
+    folder.write("third_party/xboxrecomp/tools/recomp/lifter.py", "py");
+    folder.write("third_party/xboxrecomp/tools/recomp/test_lifter.py", "py");
+    folder.write("src/recomp/gen/post_transform_audit.json", "{}");
+    const auto audit = folder.path() / "src/recomp/gen/post_transform_audit.json";
+    const auto later = std::filesystem::last_write_time(audit) + std::chrono::hours(1);
+    std::filesystem::last_write_time(audit, later);
+    CHECK(generatedCodeIsCurrent(project));
+
+    const auto tools = folder.path() / "third_party/xboxrecomp/tools/recomp";
+    std::filesystem::last_write_time(tools / "test_lifter.py", later + std::chrono::hours(1));
+    CHECK(generatedCodeIsCurrent(project));
+    std::filesystem::last_write_time(tools / "lifter.py", later + std::chrono::hours(1));
+    CHECK_FALSE(generatedCodeIsCurrent(project));
+}
