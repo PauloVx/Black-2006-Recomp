@@ -11,7 +11,6 @@
 
 namespace black::core {
 
-/// SHA-256 (FIPS 180-4), used to recognise the supported retail default.xbe.
 class Sha256 {
 public:
     using Digest = std::array<std::uint8_t, 32>;
@@ -34,7 +33,6 @@ private:
     std::uint64_t m_totalBytes = 0;
 };
 
-/// The SHA-256 of a whole file, read in chunks.
 [[nodiscard]] Result<Sha256::Digest> sha256File(const std::filesystem::path& path);
 
 }  // namespace black::core

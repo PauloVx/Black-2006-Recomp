@@ -1,12 +1,20 @@
 #include "app/EmbeddedAssets.h"
 #include "app/LauncherLayer.h"
 #include "app/Theme.h"
+#include "core/Text.h"
 
 #include "Walnut/Application.h"
 #include "Walnut/EntryPoint.h"  // defines main()/WinMain: include in this file only
 
 #include <filesystem>
 #include <memory>
+#include <optional>
+
+#ifdef _WIN32
+#include <windows.h>
+// after windows.h
+#include <shellapi.h>
+#endif
 
 namespace {
 
@@ -19,8 +27,6 @@ Walnut::FontSpecification embeddedFont(const char* name, std::span<const unsigne
     return font;
 }
 
-/// The launcher sits in the project folder; when started from elsewhere (an IDE, a shortcut) it also searches upwards
-/// from the current folder.
 std::filesystem::path searchStart(char** argv) {
     if (argv != nullptr && argv[0] != nullptr) {
         std::error_code error;
@@ -32,10 +38,30 @@ std::filesystem::path searchStart(char** argv) {
     return std::filesystem::current_path();
 }
 
+std::optional<std::filesystem::path> discArgument(int argc, char** argv) {
+#ifdef _WIN32
+    // argv is in the ANSI code page on Windows; the wide command line keeps any path intact
+    (void)argv;
+    int count = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    std::optional<std::filesystem::path> disc;
+    if (wide != nullptr && count > 1) {
+        disc = std::filesystem::path(wide[1]);
+    }
+    LocalFree(wide);
+    (void)argc;
+    return disc;
+#else
+    if (argc > 1 && argv[1] != nullptr) {
+        return black::core::pathFromUtf8(argv[1]);
+    }
+    return std::nullopt;
+#endif
+}
+
 }  // namespace
 
 Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
-    (void)argc;
     using black::app::LauncherLayer;
 
     Walnut::ApplicationSpecification specification;
@@ -50,7 +76,6 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
     specification.TitlebarColor = black::app::toU32(black::app::colors::kTitlebar);
     specification.UseDockspace = true;  // hosts the custom titlebar; the launcher draws one window below it
     specification.UseViewports = false;
-    // Stand-ins for the game's menu fonts until the disc is in place.
     specification.Fonts = {
         embeddedFont(LauncherLayer::kRowFont, black::assets::rowFont(), 26.0f),
         embeddedFont(LauncherLayer::kTitleFont, black::assets::titleFont(), 44.0f),
@@ -58,6 +83,7 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
 
     // Walnut's entry point owns and deletes the application.
     auto* application = new Walnut::Application(specification);  // NOLINT(cppcoreguidelines-owning-memory)
-    application->PushLayer(std::make_shared<LauncherLayer>(searchStart(argv)));
+    std::optional<std::filesystem::path> disc = discArgument(argc, argv);
+    application->PushLayer(std::make_shared<LauncherLayer>(searchStart(argv), std::move(disc)));
     return application;
 }

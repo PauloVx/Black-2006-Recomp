@@ -24,11 +24,9 @@ enum class DxtFormat : std::uint32_t {
     Dxt5 = 0x0F,  ///< DXT4/5: interpolated alpha
 };
 
-/// Decodes a DXT3/DXT5 texture. Width and height must be multiples of 4.
 [[nodiscard]] Result<RgbaImage> decodeDxt(std::span<const std::uint8_t> data, std::uint32_t width, std::uint32_t height,
                                           std::uint32_t format);
 
-/// One glyph of a game font, in atlas texels.
 struct BitmapGlyph {
     char16_t code = 0;
     float u = 0, v = 0, width = 0, height = 0;  ///< the glyph's cell in the atlas (0 x 0 for a space)
@@ -42,10 +40,9 @@ struct BitmapFont {
     std::vector<BitmapGlyph> glyphs;
     /// The text size at which one atlas texel is one unit (256 / 15 for Small, 256 / 30 for Big).
     float nominalSize = 0;
-    /// The top of the capitals ('A'), so text is placed by its cap line like the game's menus.
+    /// The top of 'A': text is placed by its cap line, like the game's menus.
     float capTop = 0;
 
-    /// The glyph for a character; lower-case letters fall back to capitals (the fonts are mostly upper-case).
     [[nodiscard]] const BitmapGlyph* find(char16_t code) const noexcept;
 };
 
@@ -53,15 +50,14 @@ struct BitmapFont {
 /// ({u, v, w, h, x, y, advance} as fractions of the atlas, code at +0x1C), the texture header, then DXT pixels.
 [[nodiscard]] Result<BitmapFont> parseBitmapFont(std::span<const std::uint8_t> data);
 
-/// Art from the player's own disc files, used to make the launcher look like the game. Absent pieces stay empty.
+/// Fonts from the player's disc files; missing ones stay empty.
 struct GameArt {
-    std::optional<BitmapFont> smallFont;  ///< menu rows and help text
-    std::optional<BitmapFont> bigFont;    ///< page titles
+    std::optional<BitmapFont> smallFont;
+    std::optional<BitmapFont> bigFont;
 
     [[nodiscard]] bool complete() const noexcept { return smallFont && bigFont; }
 };
 
-/// Loads what it can from game/language/fonts.
 [[nodiscard]] GameArt loadGameArt(const ProjectLayout& project);
 
 }  // namespace black::core

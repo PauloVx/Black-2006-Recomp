@@ -66,10 +66,10 @@ TEST_CASE("DXT5 decodes colours and interpolated alpha") {
     const auto image = decodeDxt(redBlock(), 4, 4, 0x0F);
     REQUIRE(image.ok());
     CHECK(image.value().pixels.size() == 64);
-    CHECK(image.value().pixels[0] == 255);  // R
-    CHECK(image.value().pixels[1] == 0);    // G
-    CHECK(image.value().pixels[2] == 0);    // B
-    CHECK(image.value().pixels[3] == 255);  // A
+    CHECK(image.value().pixels[0] == 255);
+    CHECK(image.value().pixels[1] == 0);
+    CHECK(image.value().pixels[2] == 0);
+    CHECK(image.value().pixels[3] == 255);
 }
 
 TEST_CASE("DXT3 uses its explicit 4-bit alpha") {
@@ -81,9 +81,9 @@ TEST_CASE("DXT3 uses its explicit 4-bit alpha") {
 }
 
 TEST_CASE("DXT decoding refuses what it cannot read") {
-    CHECK_FALSE(decodeDxt(redBlock(), 4, 4, 0x0C).ok());  // another format
-    CHECK_FALSE(decodeDxt(redBlock(), 6, 4, 0x0F).ok());  // not a multiple of 4
-    CHECK_FALSE(decodeDxt(redBlock(), 8, 8, 0x0F).ok());  // truncated
+    CHECK_FALSE(decodeDxt(redBlock(), 4, 4, 0x0C).ok());
+    CHECK_FALSE(decodeDxt(redBlock(), 6, 4, 0x0F).ok());
+    CHECK_FALSE(decodeDxt(redBlock(), 8, 8, 0x0F).ok());
 }
 
 TEST_CASE("A game font gives its glyphs, size and cap line") {
@@ -96,7 +96,7 @@ TEST_CASE("A game font gives its glyphs, size and cap line") {
     CHECK(a->width == doctest::Approx(2.0f));
     CHECK(a->advance == doctest::Approx(3.0f));
     CHECK(font.value().capTop == doctest::Approx(1.0f));
-    CHECK(font.value().find(u'a') == a);  // lower case falls back to capitals
+    CHECK(font.value().find(u'a') == a);
     const BitmapGlyph* space = font.value().find(u' ');
     REQUIRE(space != nullptr);
     CHECK(space->width == 0.0f);

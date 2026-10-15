@@ -8,9 +8,11 @@ black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
 
 add_executable(black_launcher
     "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp"
+    DiscFlow.cpp
     LauncherLayer.cpp
     Main.cpp
     MenuFont.cpp
+    NativeDialogs.cpp
     Theme.cpp
     Widgets.cpp)
 target_include_directories(black_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
@@ -20,6 +22,8 @@ set_target_properties(black_launcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 target_compile_definitions(black_launcher PRIVATE BLACK_LAUNCHER_VERSION="${PROJECT_VERSION}")
 if(WIN32)
+    target_compile_definitions(black_launcher PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(black_launcher PRIVATE ole32 shell32)
     # Release builds open no console window; Debug keeps the console for logs. Both start at main().
     if(MSVC)
         target_link_options(black_launcher PRIVATE $<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>)

@@ -9,7 +9,6 @@
 namespace black::app {
 namespace {
 
-/// Cap height and cap top of a TrueType font at its atlas size, from its 'H'.
 struct TrueTypeCaps {
     float top = 0;
     float height = 1;
@@ -35,7 +34,6 @@ std::string capitals(std::string_view text) {
     return upper;
 }
 
-/// The bitmap font's cap height in atlas texels.
 float capHeightOf(const core::BitmapFont& font) {
     const core::BitmapGlyph* capital = font.find(u'A');
     return capital != nullptr && capital->height > 0 ? capital->height : font.nominalSize * 0.7f;

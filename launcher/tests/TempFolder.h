@@ -9,7 +9,6 @@
 
 namespace black::tests {
 
-/// A fresh folder under the system temp directory, removed when the test ends.
 class TempFolder {
 public:
     TempFolder() {
@@ -30,7 +29,6 @@ public:
 
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return m_path; }
 
-    /// Writes `contents` to `relative`, creating folders as needed.
     void write(const std::filesystem::path& relative, std::string_view contents) const {
         const std::filesystem::path file = m_path / relative;
         std::filesystem::create_directories(file.parent_path());

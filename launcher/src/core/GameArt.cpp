@@ -125,7 +125,6 @@ const BitmapGlyph* BitmapFont::find(char16_t code) const noexcept {
     if (const BitmapGlyph* glyph = lookup(code)) {
         return glyph;
     }
-    // Lower-case Latin and Latin-1 letters fall back to their capitals.
     const bool lowerAscii = code >= u'a' && code <= u'z';
     const bool lowerLatin1 = code >= 0xE0 && code <= 0xFE && code != 0xF7;
     if (lowerAscii || lowerLatin1) {

@@ -1,5 +1,7 @@
 # Unit tests for black_launcher_core. They need no game files, GPU or window.
 add_executable(black_launcher_tests
+    DiscTests.cpp
+    FormatTests.cpp
     GameArtTests.cpp
     GameFilesTests.cpp
     ProjectLayoutTests.cpp

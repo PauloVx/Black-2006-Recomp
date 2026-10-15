@@ -1,6 +1,7 @@
 #include "app/LauncherLayer.h"
 
 #include "app/EmbeddedAssets.h"
+#include "app/NativeDialogs.h"
 #include "app/Theme.h"
 #include "core/Files.h"
 #include "core/Process.h"
@@ -12,8 +13,6 @@
 #include <GLFW/glfw3.h>
 #include "imgui.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <system_error>
 #include <utility>
@@ -27,38 +26,11 @@ constexpr float kMenuWidth = 470.0f;
 constexpr float kRowText = 14.0f;
 constexpr float kHelpText = 12.0f;
 
-/// Words broken onto lines no wider than `maxWidth`.
-std::vector<std::string> wrapText(const MenuFont& font, const std::string& text, float size, float maxWidth) {
-    std::vector<std::string> lines;
-    std::string line;
-    std::size_t start = 0;
-    while (start < text.size()) {
-        std::size_t end = text.find(' ', start);
-        if (end == std::string::npos) {
-            end = text.size();
-        }
-        const std::string word = text.substr(start, end - start);
-        const std::string candidate = line.empty() ? word : line + ' ' + word;
-        if (!line.empty() && font.width(candidate, size) > maxWidth) {
-            lines.push_back(line);
-            line = word;
-        } else {
-            line = candidate;
-        }
-        start = end + 1;
-    }
-    if (!line.empty()) {
-        lines.push_back(line);
-    }
-    return lines;
-}
-
 bool isFile(const std::filesystem::path& path) {
     std::error_code error;
     return std::filesystem::is_regular_file(path, error);
 }
 
-/// An encoded image (any format stb_image reads) decoded for the GPU, or nothing when it cannot be read.
 std::shared_ptr<Walnut::Image> decodeImage(std::span<const unsigned char> encoded) {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
@@ -70,7 +42,6 @@ std::shared_ptr<Walnut::Image> decodeImage(std::span<const unsigned char> encode
     return std::make_shared<Walnut::Image>(width, height, Walnut::ImageFormat::RGBA, pixels.get());
 }
 
-/// An image file decoded for the GPU, or nothing when it is absent or unreadable.
 std::shared_ptr<Walnut::Image> loadImage(const std::filesystem::path& path) {
     if (!isFile(path)) {
         return nullptr;
@@ -81,13 +52,19 @@ std::shared_ptr<Walnut::Image> loadImage(const std::filesystem::path& path) {
 
 }  // namespace
 
-LauncherLayer::LauncherLayer(std::filesystem::path start) : m_start(std::move(start)) {}
+LauncherLayer::LauncherLayer(std::filesystem::path start, std::optional<std::filesystem::path> disc)
+    : m_start(std::move(start)), m_initialDisc(std::move(disc)) {}
 
 void LauncherLayer::OnAttach() {
-    ImGui::GetIO().IniFilename = nullptr;  // nothing to remember between runs: no stray imgui.ini next to the game
+    ImGui::GetIO().IniFilename = nullptr;  // no imgui.ini next to the game
     applyTheme();
+    acceptDroppedFiles(Walnut::Application::Get().GetWindowHandle());
     refresh();
-    setIcons();
+    setWindowIcon();
+    if (m_initialDisc && m_disc) {
+        m_screen = Screen::Disc;
+        m_disc->offer(std::move(*m_initialDisc));
+    }
 }
 
 void LauncherLayer::refresh() {
@@ -95,7 +72,12 @@ void LauncherLayer::refresh() {
     m_gameFiles = m_project ? core::inspectGameFiles(m_project->defaultXbe()) : core::GameFilesStatus{};
     m_gameExecutable = m_project ? m_project->gameExecutable() : std::nullopt;
     loadArt();
-    buildRows();
+    if (m_project && !m_disc) {
+        m_disc = std::make_unique<DiscFlow>(m_project->gameDirectory(), Walnut::Application::Get().GetWindowHandle());
+    }
+    if (m_disc) {
+        m_disc->setFonts(&m_rowFont, &m_titleFont);
+    }
 }
 
 void LauncherLayer::loadArt() {
@@ -122,14 +104,14 @@ void LauncherLayer::loadArt() {
     }
 }
 
-void LauncherLayer::setIcons() {
-    ImFont* bold = Walnut::Application::GetFont(kTitleFont);
-    if (bold == nullptr) {
+void LauncherLayer::setWindowIcon() {
+    ImFont* titles = Walnut::Application::GetFont(kTitleFont);
+    if (titles == nullptr) {
         return;
     }
-    // The taskbar icon: a tan "B" on a dark square, readable on any theme (the titlebar itself shows no icon).
-    IconPixels window = makeGlyphIcon(*bold, 'B', 64, true);
-    GLFWimage image{window.size, window.size, window.rgba.data()};
+    constexpr int kSize = 64;
+    std::vector<unsigned char> pixels = makeWindowIcon(*titles, 'B', kSize);
+    GLFWimage image{kSize, kSize, pixels.data()};
     glfwSetWindowIcon(Walnut::Application::Get().GetWindowHandle(), 1, &image);
 }
 
@@ -137,23 +119,25 @@ bool LauncherLayer::ready() const noexcept {
     return m_gameFiles.state == core::GameFilesState::Supported && m_gameExecutable.has_value();
 }
 
-void LauncherLayer::buildRows() {
-    m_rows.clear();
-    m_rowActions.clear();
-    const auto add = [this](Action action, MenuRow row) {
-        m_rows.push_back(std::move(row));
-        m_rowActions.push_back(action);
+Page LauncherLayer::mainPage() {
+    Page page;
+    page.id = ready() ? "main" : "setup";
+    page.title = ready() ? "MAIN MENU" : "SETUP";
+    page.notice = m_notice;
+    page.noticeIsProblem = true;
+    m_mainActions.clear();
+    const auto add = [&](Action action, MenuRow row) {
+        page.rows.push_back(std::move(row));
+        m_mainActions.push_back(action);
     };
-    const bool canPlay = ready() && m_project.has_value() && isFile(m_project->legacyPlay());
-    const bool canConfigure = m_project.has_value() && isFile(m_project->legacySettings());
+    const bool canPlay = ready() && m_project && isFile(m_project->legacyPlay());
+    const bool canConfigure = m_project && isFile(m_project->legacySettings());
 
-    MenuRow disc{"YOUR DISC", "", "", false};
+    MenuRow disc{"YOUR DISC", "", "", m_disc != nullptr};
     switch (m_gameFiles.state) {
         case core::GameFilesState::Missing:
-            disc.value = "NOT FOUND";
-            disc.help =
-                "The game needs the files of your own original Xbox BLACK disc. Choosing an ISO here comes "
-                "with the setup wizard; for now, extract the disc into the game folder.";
+            disc.value = "CHOOSE";
+            disc.help = "Choose an ISO of your own original Xbox BLACK disc, or a folder with its files.";
             break;
         case core::GameFilesState::Unreadable:
             disc.value = "UNREADABLE";
@@ -161,9 +145,7 @@ void LauncherLayer::buildRows() {
             break;
         case core::GameFilesState::UnsupportedVersion:
             disc.value = "WRONG RELEASE";
-            disc.help =
-                "These files are from a different release of BLACK. Only the original Xbox retail release "
-                "is supported.";
+            disc.help = "The game folder holds a different release of BLACK. Choose the original Xbox retail release.";
             break;
         case core::GameFilesState::Supported:
             disc.value = "READY";
@@ -172,8 +154,7 @@ void LauncherLayer::buildRows() {
     }
     MenuRow build{"BUILD THE GAME", m_gameExecutable ? "DONE" : "NOT BUILT", "", false};
     build.help = m_gameExecutable ? "The PC game has been built from your disc."
-                                  : "Turns your disc into the PC game. Building from the launcher comes with the setup "
-                                    "wizard; for now, run Build BLACK.";
+                                  : "Turns your disc into the PC game. For now, run Build BLACK in the game folder.";
 
     if (ready()) {
         add(Action::Play, {"PLAY", "", "Starts BLACK with your saved settings.", canPlay});
@@ -189,6 +170,15 @@ void LauncherLayer::buildRows() {
     add(Action::OpenFolder,
         {"OPEN GAME FOLDER", "", "Opens the folder with the game, your saves and settings.", m_project.has_value()});
     add(Action::Quit, {"QUIT", "", "Closes the launcher.", true});
+    return page;
+}
+
+void LauncherLayer::openDiscPages() {
+    if (m_disc) {
+        m_disc->restart();
+        m_screen = Screen::Disc;
+        m_notice.clear();
+    }
 }
 
 void LauncherLayer::run(Action action) {
@@ -201,7 +191,7 @@ void LauncherLayer::run(Action action) {
         case Action::Settings: result = core::startDetached(m_project->legacySettings(), {}, m_project->root()); break;
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
-        case Action::Disc:
+        case Action::Disc: openDiscPages(); break;
         case Action::Build: break;
     }
     m_notice = result ? std::string() : result.error().message;
@@ -216,14 +206,27 @@ void LauncherLayer::OnUIRender() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
                      ImGuiWindowFlags_NoSavedSettings);
 
+    for (std::filesystem::path& dropped : takeDroppedFiles()) {
+        if (m_disc && !m_disc->copying()) {
+            m_screen = Screen::Disc;
+            m_disc->offer(std::move(dropped));
+        }
+    }
+
+    const double time = ImGui::GetTime();
+    const Page page = m_screen == Screen::Disc && m_disc ? m_disc->page(time) : mainPage();
     ImDrawList& list = *ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
     drawBanner(list, origin, ImVec2(size.x, kBannerHeight), {m_logo.get(), &m_captionFont});
-    drawPage(list, ImVec2(origin.x, origin.y + kBannerHeight), ImVec2(size.x, size.y - kBannerHeight));
+    drawPage(list, ImVec2(origin.x, origin.y + kBannerHeight), ImVec2(size.x, size.y - kBannerHeight), page);
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        Walnut::Application::Get().Close();
+        if (m_screen == Screen::Main) {
+            Walnut::Application::Get().Close();
+        } else if (m_disc && m_disc->back() == DiscFlow::Outcome::Back) {
+            m_screen = Screen::Main;
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
         refresh();
@@ -231,44 +234,60 @@ void LauncherLayer::OnUIRender() {
     ImGui::End();
 }
 
-void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size) {
+void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page) {
     drawRails(list, topLeft.x + 30.0f, topLeft.y + 18.0f, topLeft.y + size.y - 18.0f);
+    const bool main = m_screen == Screen::Main;
+    const float contentWidth = main ? kMenuWidth : size.x - kPageMargin * 2.0f;
 
-    // The page title, as on the game's own pages (the logo is in the banner above)
     float y = topLeft.y + 30.0f;
-    m_titleFont.draw(list, ImVec2(topLeft.x + kPageMargin, y), ready() ? "MAIN MENU" : "SETUP", 22.0f,
-                     toU32(colors::kText));
+    m_titleFont.draw(list, ImVec2(topLeft.x + kPageMargin, y), page.title, 22.0f, toU32(colors::kText));
     y += 22.0f + 24.0f;
+    if (page.body) {
+        y += page.body(list, ImVec2(topLeft.x + kPageMargin, y), contentWidth);
+    }
 
-    // The menu
+    if (page.id != m_pageId) {
+        m_pageId = page.id;
+        m_menu.select(page.initialRow);
+    }
     MenuList::Layout layout;
     layout.origin = ImVec2(topLeft.x + kPageMargin, y);
-    layout.width = kMenuWidth;
+    layout.width = main ? kMenuWidth : contentWidth;
     layout.rowHeight = 31.0f;
     layout.textSize = kRowText;
-    layout.selectorEnd = topLeft.x + kPageMargin + kMenuWidth + 32.0f;
-    if (const auto activated = m_menu.draw(m_rows, m_rowFont, layout)) {
-        run(m_rowActions[*activated]);
+    layout.selectorEnd = main ? topLeft.x + kPageMargin + kMenuWidth + 32.0f : 0.0f;
+    if (const auto activated = m_menu.draw(page.rows, m_rowFont, layout, true)) {
+        if (main) {
+            run(m_mainActions[*activated]);
+        } else if (m_disc) {
+            const DiscFlow::Outcome outcome = m_disc->activate(*activated);
+            if (outcome != DiscFlow::Outcome::Stay) {
+                m_screen = Screen::Main;
+            }
+            if (outcome == DiscFlow::Outcome::Imported) {
+                refresh();
+            }
+        }
     }
-    y += layout.rowHeight * static_cast<float>(m_rows.size()) + 16.0f;
+    y += layout.rowHeight * static_cast<float>(page.rows.size()) + 16.0f;
 
-    // Help for the selected row (or what went wrong), under the list like the game's
-    const std::string& help = !m_notice.empty() ? m_notice : m_rows[m_menu.selected()].help;
-    const ImU32 helpColor = !m_notice.empty() ? toU32(colors::kBad) : toU32(colors::kRow);
-    for (const std::string& line : wrapText(m_rowFont, help, kHelpText, kMenuWidth)) {
-        m_rowFont.draw(list, ImVec2(topLeft.x + kPageMargin, y), line, kHelpText, helpColor);
-        y += kHelpText + 9.0f;
+    const bool showNotice = !page.notice.empty();
+    const std::string help = showNotice          ? page.notice
+                             : page.rows.empty() ? std::string()
+                                                 : page.rows[std::min(m_menu.selected(), page.rows.size() - 1)].help;
+    drawWrapped(list, m_rowFont, ImVec2(topLeft.x + kPageMargin, y), help, kHelpText, contentWidth,
+                showNotice && page.noticeIsProblem ? toU32(colors::kBad) : toU32(colors::kRow));
+
+    if (main) {
+        drawStatus(list, ImVec2(topLeft.x + kPageMargin + kMenuWidth + 64.0f, topLeft.y + 30.0f),
+                   size.x - (kPageMargin + kMenuWidth + 64.0f) - 40.0f);
     }
 
-    drawStatus(list, ImVec2(topLeft.x + kPageMargin + kMenuWidth + 64.0f, topLeft.y + 30.0f),
-               size.x - (kPageMargin + kMenuWidth + 64.0f) - 40.0f);
-
-    // Prompts along the bottom, like the game's button prompts
     const float promptY = topLeft.y + size.y - 34.0f;
     float x = topLeft.x + kPageMargin;
     x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "UP/DOWN", "CHOOSE", 11.0f) + 26.0f;
     x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ENTER", "SELECT", 11.0f) + 26.0f;
-    drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ESC", "QUIT", 11.0f);
+    drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ESC", main ? "QUIT" : "BACK", 11.0f);
 
     const std::string version = std::string("LAUNCHER ") + BLACK_LAUNCHER_VERSION;
     m_rowFont.draw(list, ImVec2(topLeft.x + size.x - 40.0f - m_rowFont.width(version, 11.0f), promptY), version, 11.0f,
@@ -279,10 +298,8 @@ void LauncherLayer::drawStatus(ImDrawList& list, ImVec2 topLeft, float width) co
     const auto line = [&](float y, const char* label, const std::string& value, const ImVec4& mark) {
         list.AddCircleFilled(ImVec2(topLeft.x + 4.0f, y + 6.0f), 3.5f, toU32(mark));
         m_rowFont.draw(list, ImVec2(topLeft.x + 16.0f, y), label, 11.0f, toU32(colors::kRow));
-        for (const std::string& text : wrapText(m_rowFont, value, 11.0f, width - 16.0f)) {
-            y += 19.0f;
-            m_rowFont.draw(list, ImVec2(topLeft.x + 16.0f, y), text, 11.0f, toU32(colors::kText));
-        }
+        drawWrapped(list, m_rowFont, ImVec2(topLeft.x + 16.0f, y + 19.0f), value, 11.0f, width - 16.0f,
+                    toU32(colors::kText));
     };
 
     m_rowFont.draw(list, topLeft, "THIS COPY", 11.0f, toU32(colors::kMuted));

@@ -12,7 +12,6 @@ namespace black::core {
     return {text.begin(), text.end()};
 }
 
-/// A path from UTF-8 text, such as a file dialog result.
 [[nodiscard]] inline std::filesystem::path pathFromUtf8(const std::string& text) {
     return std::filesystem::path(std::u8string(text.begin(), text.end()));
 }

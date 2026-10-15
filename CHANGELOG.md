@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**The launcher sets up your disc.** Choose an ISO (XISO or a full Redump-style dump) or a folder, or drop
+it onto the window: the launcher reads the Xbox disc itself, checks it is the supported release before copying, and
+copies it into `game/` with a progress bar, percentage, current file, speed and time left. Copying can be stopped
+and carries on where it left off; saves in the game folder are kept.
+
 **A new launcher in C++ (preview).** `launcher/` is a Walnut (Vulkan + Dear ImGui) application
 drawn like the game's own menu pages: BLACK's logo, colours, rails and selection, and, once your
 disc files are in place, the game's own menu fonts read from them. It shows whether the disc and build

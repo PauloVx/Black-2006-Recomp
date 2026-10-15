@@ -1,8 +1,8 @@
 #pragma once
 
+#include "app/DiscFlow.h"
 #include "app/MenuFont.h"
 #include "app/Widgets.h"
-#include "core/GameArt.h"
 #include "core/GameFiles.h"
 #include "core/ProjectLayout.h"
 
@@ -20,37 +20,35 @@ class Image;
 
 namespace black::app {
 
-/// The launcher's screen: a banner, then a menu page in the style of BLACK's own (Video Settings and friends),
-/// drawn with the game's own menu fonts once the player's disc files are in place.
 class LauncherLayer final : public Walnut::Layer {
 public:
-    /// Fonts Main.cpp adds to the atlas (Walnut::Application::GetFont).
     static constexpr const char* kRowFont = "Rows";
     static constexpr const char* kTitleFont = "Titles";
 
-    explicit LauncherLayer(std::filesystem::path start);
+    /// `disc`: an ISO or folder to open with, from the command line (or dropped on the icon)
+    LauncherLayer(std::filesystem::path start, std::optional<std::filesystem::path> disc);
 
     void OnAttach() override;
     void OnUIRender() override;
 
 private:
+    enum class Screen { Main, Disc };
     enum class Action { Play, Settings, Disc, Build, OpenFolder, Quit };
 
-    /// Reads the project's state from disk again (after a step changes it, or on request).
     void refresh();
-    /// Uses the disc's menu fonts when they can be read, else the bundled stand-ins; the logo is built in
-    /// (local/logo.png replaces it).
     void loadArt();
-    void setIcons();
+    void setWindowIcon();
 
     [[nodiscard]] bool ready() const noexcept;
-    void buildRows();
+    [[nodiscard]] Page mainPage();
     void run(Action action);
+    void openDiscPages();
 
-    void drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size);
+    void drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page);
     void drawStatus(ImDrawList& list, ImVec2 topLeft, float width) const;
 
     std::filesystem::path m_start;
+    std::optional<std::filesystem::path> m_initialDisc;
     std::optional<core::ProjectLayout> m_project;
     core::GameFilesStatus m_gameFiles;
     std::optional<std::filesystem::path> m_gameExecutable;
@@ -61,10 +59,12 @@ private:
     std::shared_ptr<Walnut::Image> m_logo;
     bool m_artFromGame = false;
 
+    Screen m_screen = Screen::Main;
+    std::unique_ptr<DiscFlow> m_disc;
     MenuList m_menu;
-    std::vector<MenuRow> m_rows;
-    std::vector<Action> m_rowActions;
-    std::string m_notice;  ///< the result of the last action, when it failed
+    std::string m_pageId;
+    std::vector<Action> m_mainActions;
+    std::string m_notice;
 };
 
 }  // namespace black::app

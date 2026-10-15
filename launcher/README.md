@@ -3,9 +3,11 @@
 The player-facing launcher, in C++20 on [Walnut](https://github.com/StudioCherno/Walnut) (Vulkan + Dear ImGui).
 It will replace the C# launcher; see [the plan](../docs/plans/new-launcher.md).
 
-It currently shows where a copy stands (disc, build) and offers Play, Settings, Open game folder and Quit. Play and
-Settings start the existing `BLACK PC Launcher` / `BLACK PC Settings` until the settings pages and the setup wizard
-(ISO, build tools, build) move here.
+It shows where a copy stands and sets up the disc: an ISO (XISO or a full Redump-style dump) or a folder of extracted
+files, chosen with the system's file dialog, dropped onto the window or given on the command line. The launcher reads
+Xbox disc images itself (`src/core/Xdvdfs`), checks `default.xbe` before copying, and copies into `game/` with
+progress, resume and cancel. Play and Settings still start the existing `BLACK PC Launcher` / `BLACK PC Settings` until
+the build step and the settings pages move here.
 
 ## Building
 
