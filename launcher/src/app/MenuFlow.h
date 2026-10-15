@@ -27,6 +27,8 @@ public:
     virtual Outcome back() = 0;
     /// Reading a key or typed text: the menu keys are not the menu's meanwhile.
     [[nodiscard]] virtual bool busy() const = 0;
+    /// Whether Escape can leave now (not while a build runs, say).
+    [[nodiscard]] virtual bool canLeave() const { return true; }
 };
 
 }  // namespace black::app

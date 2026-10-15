@@ -17,6 +17,10 @@ inline constexpr std::string_view kRetailEnglishBankSha256 =
 [[nodiscard]] bool isMachineDraft(std::string_view language);
 [[nodiscard]] std::filesystem::path languageBankPath(const ProjectLayout& project, std::string_view language);
 
+/// Keeps the game's retail English bank as en-US, once (true when it was kept now).
+[[nodiscard]] Result<bool> preserveEnglishBank(const ProjectLayout& project,
+                                               std::string_view retailEnglishSha256 = kRetailEnglishBankSha256);
+
 /// Puts the language's bank in the game, after keeping the retail English one. Nothing changes when it is already
 /// there.
 [[nodiscard]] Result<bool> installLanguageBank(const ProjectLayout& project, std::string_view language,

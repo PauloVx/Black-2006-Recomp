@@ -14,6 +14,11 @@ and drawn like the game's own menu pages, with the game's menu fonts once your d
 - **Your disc**: choose an ISO (XISO or a full Redump dump) or a folder of extracted files, or drop it onto the
   window. The launcher checks it is the supported release, then copies it into `game/` with progress; a stopped
   copy carries on where it left off.
+- **Build the game** turns your disc into the PC game. It looks for the tools that needs (Visual Studio's C++
+  tools, CMake, Python and Rust), installs the missing ones with winget when you ask, then runs each step with
+  its progress: preparing the tools, translating the code from your disc, setting up the build, compiling and
+  making the menu languages. A stopped build carries on where it left off, a failed one shows the step and its
+  output, and everything is logged in `reports/build-<date and time>.log`.
 - **Play** starts the game and keeps its output in `reports/launcher-<date and time>/`. While it runs, the same row
   stops it. `BLACK Launcher --play` starts it with no window, for shortcuts.
 - **Settings**: display, graphics, controls with key bindings read by key position (as the game stores them),
@@ -40,8 +45,8 @@ See [launcher/README.md](launcher/README.md) to build or change it.
 ## Release archives
 
 The starter release includes **BLACK Launcher** built for Windows (`BLACK Launcher.exe`) and for Linux. Open it,
-choose your disc, then run **Build BLACK.cmd** on Windows or **Build BLACK.sh** on Linux with the build
-prerequisites installed. After that, **Play** in the launcher starts the game.
+choose your disc, then **Build the game**: it installs what it needs and builds. After that, **Play** starts the
+game. Nothing else needs to be run.
 
 Linux can generate and compile the complete game without a Windows installation; the launcher runs natively and
 starts the game through Wine/Proton. See [Linux build and setup](docs/linux.md). **Play BLACK.sh** and
@@ -151,10 +156,11 @@ For a build entirely on Linux, follow [the Linux guide](docs/linux.md) and run
 Requirements:
 
 - Windows x64, an AVX2-capable CPU, and a Direct3D 11 graphics device.
-- Visual Studio 2022 with **Desktop development with C++** and a Windows SDK.
-- Git, CMake 3.20 or newer, and Python 3.10 or newer (`py -3`).
-- Rustup with the `x86_64-pc-windows-msvc` toolchain (the pinned DSP build uses Rust 1.98.1).
-- The supported retail original Xbox release of BLACK, extracted into `game/`.
+- Visual Studio 2022's C++ tools (the Build Tools are enough), CMake 3.21 or newer, Python 3.10 or newer and
+  Rustup (the pinned DSP build fetches Rust 1.98.1 itself). The launcher's **Build the game** installs any of
+  these that are missing, with winget. Git is needed only to fetch a clone's submodules.
+- The supported retail original Xbox release of BLACK, extracted into `game/` (the launcher does this from an
+  ISO or a folder).
 
 The supported `game/default.xbe` has SHA-256:
 
@@ -178,17 +184,19 @@ The runtime is a submodule: `third_party/xboxrecomp` is
 [PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) on its `black` branch,
 a fork of XboxRecomp that carries this project's runtime changes as ordinary commits.
 `third_party/dsp56300` is the pinned DSP56300 audio core. In an existing clone, run
-`git submodule update --init --recursive` (setup does this when they are missing).
-Setup then creates a local Python environment, generates code from your XBE, and builds
-the game and launcher. Generated code and build outputs stay outside Git. Building the
-generated C code can take several minutes.
+`git submodule update --init --recursive` (the build does this when they are missing).
+The build creates a local Python environment, generates code from your XBE, and compiles
+the game. Generated code and build outputs stay outside Git. Building the generated C code
+can take several minutes; later builds only redo what changed.
 
 To change the runtime, work inside `third_party/xboxrecomp` on the `black` branch,
 commit and push there, then commit the new submodule commit in this repository.
 
-Setup builds **BLACK Launcher.exe** first, since that is where the disc is set up: with no disc in `game/` yet,
-it stops there and asks you to choose one in the launcher, then run it again. The launcher needs only CMake and
-Visual Studio; its Vulkan headers are a submodule, so no Vulkan SDK is needed.
+`scripts/setup.ps1` (and **Build BLACK.cmd**) builds **BLACK Launcher.exe**, then runs
+`BLACK Launcher.exe --build`: the same build as the launcher's **Build the game**, in the terminal
+(`-FromScratch` translates the code again). With no disc in `game/` yet, it stops and asks you to choose one
+in the launcher. The launcher itself needs only CMake and Visual Studio; its Vulkan headers are a submodule,
+so no Vulkan SDK is needed.
 
 Leave **Settings > Game > Skip movies** and **Skip startup menus** off to watch the full opening and navigate
 manually. Local settings live in `local/`

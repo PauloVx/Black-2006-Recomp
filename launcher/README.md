@@ -11,8 +11,15 @@ cancel. It plays the game (`src/core/GameSession`: the `RECOMP_*` environment, t
 `reports/launcher-*` session with capped diagnostic logs), edits every setting the game reads, edits save profiles
 (`src/core/Profile`: checksums and the HMAC-SHA1 signature, backups first) and prepares problem reports.
 
+It builds the game (`src/core/Toolchain`: finds Visual Studio's C++ tools, CMake, Python and Rust, also where
+their installers put them, and installs missing ones with winget; `src/core/GameBuild`: the stages, with progress
+read from `generate.py`, MSBuild and Ninja, a log in `reports/build-*.log`, and stopping that ends the whole
+process tree). On Linux the build runs `scripts/setup-linux.sh --game-only`, and missing tools are listed with the
+command that installs them.
+
 `BLACK Launcher --play` starts the game with the saved settings and no window, and waits for it: the shortcuts
-(`Play BLACK.sh`) use it.
+(`Play BLACK.sh`) use it. `BLACK Launcher --build [--from-scratch]` builds the game in the terminal;
+`scripts/setup.ps1` uses it.
 
 ## Building
 

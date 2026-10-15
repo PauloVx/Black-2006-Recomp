@@ -2,12 +2,16 @@
 # Generate and build on Linux using native compilers. Wine is only for play.
 set -euo pipefail
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-mode=${1:-build}
-case "$mode" in
-    build|--prepare-only|--skip-generate) ;;
-    *) printf 'Usage: %s [--prepare-only|--skip-generate]\n' "$0" >&2; exit 1 ;;
-esac
-[[ $# -le 1 ]] || { echo 'Unexpected arguments.' >&2; exit 1; }
+# --game-only: the launcher builds the game with it (and is running, so it is not rebuilt)
+prepare_only=0 skip_generate=0 game_only=0
+for argument in "$@"; do
+    case "$argument" in
+        --prepare-only) prepare_only=1 ;;
+        --skip-generate) skip_generate=1 ;;
+        --game-only) game_only=1 ;;
+        *) printf 'Usage: %s [--prepare-only] [--skip-generate] [--game-only]\n' "$0" >&2; exit 1 ;;
+    esac
+done
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Use an x86_64 Linux host.' >&2; exit 1; }
 # Ubuntu keeps clang-cl and several LLVM utilities in its versioned bin folder.
 if [[ -d /usr/lib/llvm-18/bin ]]; then export PATH="/usr/lib/llvm-18/bin:$PATH"; fi
@@ -27,14 +31,14 @@ build_launcher() {
     mkdir -p "$1"
     cp "$project_root/build-launcher-linux/bin/BLACK Launcher" "$1/BLACK Launcher"
 }
-if [[ "$mode" == build ]]; then
+if (( ! prepare_only && ! game_only )); then
     build_launcher "$project_root"   # first: the disc is set up from the launcher
     if [[ ! -f "$project_root/game/default.xbe" ]]; then
         printf 'Next: open %s/BLACK Settings.sh, choose your disc, then run Build BLACK.sh again.\n' "$project_root"
         exit 0
     fi
 fi
-if [[ "$mode" != --prepare-only ]]; then
+if (( ! prepare_only )); then
     printf '%s  %s\n' df2739c372d254a90aeeccf5971d12097f22d89fbb90db021fda96dd4deb68f6 "$project_root/game/default.xbe" | sha256sum --check
 fi
 tool_root="$project_root/.work/linux-toolchain"
@@ -62,11 +66,11 @@ done
 if [[ ! -x "$project_root/.venv/bin/python" ]]; then python3 -m venv "$project_root/.venv"; fi
 python="$project_root/.venv/bin/python"
 "$python" -m pip install capstone==5.0.7
-if [[ "$mode" == --prepare-only ]]; then
+if (( prepare_only )); then
     build_launcher "$project_root/build-release-launchers"
     exit 0
 fi
-if [[ "$mode" != --skip-generate ]]; then "$python" "$project_root/scripts/generate.py"; fi
+if (( ! skip_generate )); then "$python" "$project_root/scripts/generate.py"; fi
 build="$project_root/build-linux-wine"
 cmake -S "$project_root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$project_root/cmake/linux-windows-clang.cmake" \

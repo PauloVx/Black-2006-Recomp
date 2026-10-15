@@ -47,6 +47,7 @@ private:
     void run(Action action);
     void openDiscPages();
     void openFlow(std::unique_ptr<MenuFlow> flow);
+    void closeFlow();
     void startGame();
     void checkGame();
     [[nodiscard]] bool playing() const noexcept { return m_session != nullptr; }

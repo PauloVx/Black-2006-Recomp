@@ -48,6 +48,24 @@ fs::path languageBankPath(const ProjectLayout& project, std::string_view languag
     return project.localDirectory() / "language-banks" / fs::path(language) / "MainUS.bin";
 }
 
+Result<bool> preserveEnglishBank(const ProjectLayout& project, std::string_view retailEnglishSha256) {
+    const fs::path english = languageBankPath(project, "en-US");
+    const fs::path game = gameBankPath(project);
+    std::error_code error;
+    if (fs::is_regular_file(english, error)) {
+        return false;
+    }
+    if (!fs::is_regular_file(game, error)) {
+        return Error{"The game's menu text (game/language/strings/MainUS.bin) is missing."};
+    }
+    if (hashOf(game) != retailEnglishSha256) {
+        return Error{"The game's MainUS.bin is not the retail English one. Put the original back (from your disc) at " +
+                     toUtf8(english) + " before changing the menu language."};
+    }
+    fs::create_directories(english.parent_path(), error);
+    return replaceFile(game, english, false);
+}
+
 Result<bool> installLanguageBank(const ProjectLayout& project, std::string_view language,
                                  std::string_view retailEnglishSha256) {
     if (std::find(choices::kLanguages.begin(), choices::kLanguages.end(), language) == choices::kLanguages.end()) {
@@ -62,22 +80,12 @@ Result<bool> installLanguageBank(const ProjectLayout& project, std::string_view 
     if (language != "en-US" && !fs::is_regular_file(source, error)) {
         return Error{"The " + std::string(language) + " menu text is missing: " + toUtf8(source)};
     }
-
-    const fs::path english = languageBankPath(project, "en-US");
-    if (!fs::is_regular_file(english, error)) {
-        if (hashOf(target) != retailEnglishSha256) {
-            return Error{
-                "The game's MainUS.bin is not the retail English one. Put the original back (from your "
-                "disc) at " +
-                toUtf8(english) + " before changing the menu language."};
-        }
-        fs::create_directories(english.parent_path(), error);
-        if (auto kept = replaceFile(target, english, false); !kept) {
-            return kept.error();
-        }
-        if (language == "en-US") {
-            return true;
-        }
+    const auto preserved = preserveEnglishBank(project, retailEnglishSha256);
+    if (!preserved) {
+        return preserved;
+    }
+    if (preserved.value() && language == "en-US") {
+        return true;
     }
     if (hashOf(source) == hashOf(target)) {
         return true;

@@ -5,6 +5,7 @@ add_executable(black_launcher_tests
     ErrorReportTests.cpp
     FormatTests.cpp
     GameArtTests.cpp
+    GameBuildTests.cpp
     GameFilesTests.cpp
     GameSessionTests.cpp
     InputBindingsTests.cpp
