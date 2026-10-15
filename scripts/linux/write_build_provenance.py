@@ -35,17 +35,17 @@ def main():
             if path.is_file() and '__pycache__' not in path.parts:
                 sources.append(path)
     tools = {}
-    for program in ('clang-cl', 'lld-link', 'llvm-lib', 'mcs', 'mono', 'rustc', 'cargo', 'xwin', 'cmake', 'ninja'):
+    for program in ('clang-cl', 'lld-link', 'llvm-lib', 'c++', 'rustc', 'cargo', 'xwin', 'cmake', 'ninja'):
         resolved = shutil.which(program)
         if not resolved:
             raise RuntimeError(f'Missing build tool {program}')
         if program in ('rustc', 'cargo'):
             resolved = subprocess.check_output(['rustup', 'which', '--toolchain', '1.98.1', program], text=True).strip()
         resolved = Path(resolved).resolve()
-        if resolved.read_bytes()[:4] != b'\x7fELF' and program != 'mcs':
+        if resolved.read_bytes()[:4] != b'\x7fELF':
             raise RuntimeError(f'Build tool is not Linux ELF: {resolved}')
         tools[program] = {'path': str(resolved), 'sha256': digest(resolved)}
-        if program in ('clang-cl', 'lld-link', 'mcs', 'mono', 'rustc', 'cargo', 'xwin', 'cmake', 'ninja'):
+        if program in ('clang-cl', 'lld-link', 'c++', 'rustc', 'cargo', 'xwin', 'cmake', 'ninja'):
             # LLVM selects clang-cl/lld-link behavior from argv[0], even though
             # their aliases resolve to the same underlying ELF driver.
             tools[program]['version'] = subprocess.check_output([shutil.which(program), '--version'], text=True).splitlines()[0]
@@ -62,7 +62,7 @@ def main():
             'generated_audit_sha256': digest(marker),
             'inputs': {str(path.relative_to(root)): digest(path) for path in sources},
             'outputs': {str(path.relative_to(root)): digest(path) for path in [root / 'bin/black_xbox_recomp.exe',
-                        root / 'BLACK PC Launcher.exe', root / 'BLACK PC Settings.exe']}}
+                        root / 'BLACK Launcher']}}
     (build / 'linux-build-provenance.json').write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
     print('Linux build provenance: ' + str(build / 'linux-build-provenance.json'))
 

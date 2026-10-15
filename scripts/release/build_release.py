@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a public starter release from tracked host sources and two launchers.
+"""Build a public starter release from tracked host sources and the prebuilt launcher.
 
 Never traverses the local game/build/report trees. The game executable, assets,
 generated code, profiles and language banks are deliberately outside this pack.
@@ -29,7 +29,8 @@ PRIVATE_DIRS = {'game', 'local', 'save', 'reports', '.work', '.venv',
                 '.wine', '.proton', 'releases', 'recomp'}
 BINARY_SUFFIXES = {'.exe', '.dll', '.pdb', '.bin', '.xbe', '.iso', '.xiso', '.zip',
                    '.7z', '.wav', '.xmv', '.ssh', '.bks', '.obj', '.lib', '.a'}
-LAUNCHERS = ('BLACK PC Launcher.exe', 'BLACK PC Settings.exe')
+# The launcher for each host it was built on: Windows (PE) and Linux (ELF, native; it runs the game in Wine).
+LAUNCHERS = {'BLACK Launcher.exe': (b'MZ', 'windows-x86_64'), 'BLACK Launcher': (b'\x7fELF', 'linux-x86_64-wine')}
 SECRET = re.compile(rb'(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,}|'
                     rb'AKIA[A-Z0-9]{16}|sk-(?:proj-)?[A-Za-z0-9_-]{40,}|'
                     rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)')
@@ -101,6 +102,10 @@ def collect_sources(root):
     return entries
 
 
+def executable(name):
+    return name.endswith('.sh') or name == 'BLACK Launcher'
+
+
 def build(root, launchers, output, version, allow_dirty=False):
     if not VERSION.fullmatch(version):
         raise ValueError('Use a semantic version such as 0.1.0-alpha.1')
@@ -109,13 +114,19 @@ def build(root, launchers, output, version, allow_dirty=False):
     if dirty and not allow_dirty:
         raise ValueError('Commit the release sources first, or use --allow-dirty for local validation only')
     entries = collect_sources(root)
-    for name in LAUNCHERS:
+    platforms = []
+    for name, (magic, platform) in LAUNCHERS.items():
+        if not (launchers / name).exists():
+            continue
         data = safe_file(launchers / name, launchers).read_bytes()
-        if not data.startswith(b'MZ'):
-            raise ValueError(f'Not a compiled Windows launcher: {name}')
+        if not data.startswith(magic):
+            raise ValueError(f'Not a compiled {platform} launcher: {name}')
         entries[name] = data
+        platforms.append(platform)
+    if not platforms:
+        raise ValueError(f'No launcher in {launchers}: build it first')
     marker = {'version': version, 'kind': 'public-starter', 'source_commit': commit,
-              'source_dirty': dirty, 'platforms': ['windows-x86_64', 'linux-x86_64-wine'],
+              'source_dirty': dirty, 'platforms': platforms,
               'retail_xbe_sha256': 'DF2739C372D254A90AEECCF5971D12097F22D89FBB90DB021FDA96DD4DEB68F6',
               'game_executable_included': False, 'game_files_included': False,
               'files': {name: digest(data) for name, data in sorted(entries.items())}}
@@ -133,7 +144,7 @@ def build(root, launchers, output, version, allow_dirty=False):
         for name, data in sorted(entries.items()):
             item = zipfile.ZipInfo(f'{prefix}/{name}', (1980, 1, 1, 0, 0, 0))
             item.create_system = 3
-            item.external_attr = (0o100755 if name.endswith('.sh') else 0o100644) << 16
+            item.external_attr = (0o100755 if executable(name) else 0o100644) << 16
             item.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(item, data)
     with tar_path.open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', filename='', mtime=0) as compressed:
@@ -141,7 +152,7 @@ def build(root, launchers, output, version, allow_dirty=False):
             for name, data in sorted(entries.items()):
                 item = tarfile.TarInfo(f'{prefix}/{name}')
                 item.size = len(data)
-                item.mode = 0o755 if name.endswith('.sh') else 0o644
+                item.mode = 0o755 if executable(name) else 0o644
                 item.mtime = 0
                 archive.addfile(item, io.BytesIO(data))
     checksum_path.write_text(''.join(f'{digest(path.read_bytes())}  {path.name}\n'

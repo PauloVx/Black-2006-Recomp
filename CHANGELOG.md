@@ -7,12 +7,25 @@ it onto the window: the launcher reads the Xbox disc itself, checks it is the su
 copies it into `game/` with a progress bar, percentage, current file, speed and time left. Copying can be stopped
 and carries on where it left off; saves in the game folder are kept.
 
-**A new launcher in C++ (preview).** `launcher/` is a Walnut (Vulkan + Dear ImGui) application
-drawn like the game's own menu pages: BLACK's logo, colours, rails and selection, and, once your
-disc files are in place, the game's own menu fonts read from them. It shows whether the disc and build
-are in place and offers Play, Settings, Open game folder and Quit; Play and Settings still hand over to
-the current launcher. Build it with `cmake --preset windows-release` in `launcher/` (see
-`launcher/README.md`); unit tests and a Windows/Linux CI workflow come with it.
+**BLACK Launcher replaces BLACK PC Launcher and BLACK PC Settings.** One launcher, in C++ on Walnut
+(Vulkan + Dear ImGui) and drawn like the game's own menu pages, now does everything the C# launchers did:
+
+- **Play** starts the game with the same environment, menu-language bank and `reports/launcher-*` session
+  logs (capped diagnostic traces, `launch.json`, `exit.json`, the kernel log); the same row stops it.
+  `BLACK Launcher --play` plays with no window, for shortcuts.
+- **Settings** pages for display, graphics, controls and game, saved at once to the files the game reads.
+  Key bindings are read by key position, like the game stores them, with three keys per action.
+- **Diagnostics**: the visual, DSP and GPU draw traces, the logs folder, and a problem report that opens a
+  pre-filled GitHub issue without your folder names.
+- **Save game**: rename a profile, open or lock missions and set their results, unlock them all, and put
+  any backup back. Profiles are re-signed as the game does and backed up before every change.
+- All of it in the six menu languages. The game's fonts lack A- and O-tilde, so the launcher draws them
+  with the tilde of the font's N-tilde.
+
+Setup builds the launcher first, because that is where the disc is set up; it needs only CMake and Visual
+Studio (no Vulkan SDK: the headers are a submodule). On Linux the launcher is native and starts the game
+through Wine/Proton itself; Mono and .NET in Wine are no longer needed. The C# sources, their catalogs and
+tests are gone; release archives carry `BLACK Launcher.exe` and the Linux `BLACK Launcher`.
 
 **XboxRecomp is now a submodule.** `third_party/xboxrecomp` is PauloVx/xboxrecomp on its
 `black` branch, where the runtime changes are ordinary commits; `patches/xboxrecomp.patch` and

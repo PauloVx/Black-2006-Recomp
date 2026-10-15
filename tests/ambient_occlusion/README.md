@@ -1,9 +1,9 @@
 # Ambient occlusion regressions
 
-These tests use the authored production launcher and the XboxRecomp source from the
-`third_party/xboxrecomp` and `third_party/dsp56300` submodules
-(`git submodule update --init --recursive`). They require Windows, Visual Studio 2022's C/C++
-tools, Python and the .NET Framework compiler. Retail BLACK files are not needed.
+These tests use the XboxRecomp source from the `third_party/xboxrecomp` and `third_party/dsp56300`
+submodules (`git submodule update --init --recursive`). They require Windows, Visual Studio 2022's C/C++
+tools and Python. Retail BLACK files are not needed. The launcher's settings model has its own unit tests
+in `launcher/tests`.
 
 ```powershell
 cmake -S tests/ambient_occlusion -B build-ambient-occlusion -G "Visual Studio 17 2022" -A x64
@@ -26,10 +26,6 @@ The workflow first compiles the production renderer, video and input libraries, 
   autofocus and CoC passes additionally verify that minority foreground silhouettes do not
   pull focus from the background, deliberate foreground subjects acquire focus, invalid depth
   and history stay finite, and sky/temporal smoothing retain their intended behavior.
-- The actual launcher model and controls: all choices, file/JSON persistence, legacy and invalid
-  inputs, culture independence, in-game editability, English labels and saved-choice reload.
-  Language switches preserve edited numeric and text settings in both the UI and saved JSON.
-  Synthetic language banks cover first-run English preservation and Portuguese/English switching.
 - The authored camera hook and guard regressions in `camera/`.
 - Focus timing across 30/60 Hz and interrupted scenes, alongside AO draw-order checks.
 - The extracted production autofocus coordinator across missing, invalid or incompatible

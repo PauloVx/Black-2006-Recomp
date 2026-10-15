@@ -11,7 +11,7 @@ on:
       - 'third_party/**'
       - '.gitmodules'
       - 'tests/linux_build/**'
-      - 'tests/launcher_language/**'
+      - 'launcher/**'
       - '.github/workflows/release-launchers.yml'
   workflow_dispatch:
 
@@ -28,12 +28,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Compile both host entry points
+      - name: Build the launcher
         shell: pwsh
-        run: ./scripts/build-launcher.ps1 -Force -OutputDirectory build-release-launchers
-      - name: Direct and portable launcher regressions without retail files
-        shell: pwsh
-        run: ./tests/launcher_language/test-direct-launch.ps1 -LauncherDirectory build-release-launchers
+        run: ./scripts/build-launcher.ps1 -OutputDirectory build-release-launchers
       - name: Package and audit starter
         shell: pwsh
         run: |
@@ -68,12 +65,14 @@ jobs:
       - name: Install native Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 clang-tools-18 llvm-18 lld-18 mono-devel python3-venv cmake ninja-build build-essential wine64
-      - name: Prepare pinned toolchain and build both launchers on Linux
+          sudo apt-get install -y clang-18 clang-tools-18 llvm-18 lld-18 python3-venv cmake ninja-build build-essential wine64 \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libwayland-bin \
+            wayland-protocols libxkbcommon-dev libvulkan1
+      - name: Prepare pinned toolchain and build the native launcher
         run: bash scripts/setup-linux.sh --prepare-only
       - name: Compile and run production runtime and Rust ABI check under Wine
         run: bash scripts/linux/test_cross_build.sh
-      - name: Package Linux-built host launchers
+      - name: Package the Linux-built launcher
         run: python3 scripts/release/build_release.py --version 0.1.0-alpha.2
       - uses: actions/upload-artifact@v4
         with:

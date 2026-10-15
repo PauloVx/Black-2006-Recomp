@@ -6,38 +6,52 @@ keyboard and mouse controls, XInput controller support, video settings, a PC
 launcher, and native audio output. Movies are enabled by default. The Windows
 build can also run on x86_64 Linux through Wine/Proton; see [Linux setup](docs/linux.md).
 
-## New launcher (preview)
+## The launcher
 
-`launcher/` holds a new launcher, written in C++ on [Walnut](https://github.com/StudioCherno/Walnut). It is drawn like
-the game's own menu pages and is meant to make setup a few clicks. Choose your disc as an ISO or a folder, or drop it
-onto the window. The launcher checks that it is the supported release and copies it into `game/`, showing what it is
-doing as it goes. Building and settings move here next; until then **Play** and **Settings** open the current launcher.
-See [launcher/README.md](launcher/README.md) to build it.
+**BLACK Launcher** sets the game up and starts it. It is written in C++ on [Walnut](https://github.com/StudioCherno/Walnut)
+and drawn like the game's own menu pages, with the game's menu fonts once your disc is in place.
+
+- **Your disc**: choose an ISO (XISO or a full Redump dump) or a folder of extracted files, or drop it onto the
+  window. The launcher checks it is the supported release, then copies it into `game/` with progress; a stopped
+  copy carries on where it left off.
+- **Play** starts the game and keeps its output in `reports/launcher-<date and time>/`. While it runs, the same row
+  stops it. `BLACK Launcher --play` starts it with no window, for shortcuts.
+- **Settings**: display, graphics, controls with key bindings read by key position (as the game stores them),
+  game options and the menu language, and diagnostics. Changes are saved at once to `local/video.ini`,
+  `local/controls.ini` and `local/xbox-launcher.json`, which the game's own settings pages also edit.
+  **Diagnostics** turns on the detailed traces and prepares a GitHub issue about the last game run, without your
+  folder names, for you to check and send.
+- **Save game**: rename a profile slot, open or lock missions and set their results, or unlock them all. Every save
+  backs the profile up first (`local/profile-backups/`), and any backup can be put back.
+- It speaks the six menu languages (Settings > Game > Menu language).
+
+See [launcher/README.md](launcher/README.md) to build or change it.
 
 | Main menu | Your disc |
 | --- | --- |
 | ![Main menu](docs/images/launcher-main.png) | ![Choosing a disc](docs/images/launcher-disc.png) |
 | **Checking the disc** | **Copying** |
 | ![Review before copying](docs/images/launcher-disc-review.png) | ![Copying with progress](docs/images/launcher-copying.png) |
+| **Settings** | **Key bindings** |
+| ![Display settings](docs/images/launcher-settings.png) | ![Key bindings](docs/images/launcher-bindings.png) |
+| **Save game** | **In Portuguese** |
+| ![Save game missions](docs/images/launcher-save.png) | ![The main menu in Brazilian Portuguese](docs/images/launcher-pt-br.png) |
 
-## Release launchers
+## Release archives
 
-The starter release includes **BLACK PC Launcher.exe** for one-click play and
-**BLACK PC Settings.exe** for settings. Supply your own original Xbox files in
-`game/`, then open **Build BLACK.cmd** on Windows or **Build BLACK.sh** on Linux
-with the build prerequisites installed. After that, open the play launcher to
-use your saved settings.
+The starter release includes **BLACK Launcher** built for Windows (`BLACK Launcher.exe`) and for Linux. Open it,
+choose your disc, then run **Build BLACK.cmd** on Windows or **Build BLACK.sh** on Linux with the build
+prerequisites installed. After that, **Play** in the launcher starts the game.
 
-Linux can generate and compile the complete game without a Windows installation;
-see [Linux build and setup](docs/linux.md). Use **Play BLACK.sh** or **BLACK Settings.sh**
-with Wine/Proton. **Install Linux Shortcuts.sh** creates clickable desktop entries.
-The public starter contains
-host source and compiled host launchers; game executables, generated game code,
+Linux can generate and compile the complete game without a Windows installation; the launcher runs natively and
+starts the game through Wine/Proton. See [Linux build and setup](docs/linux.md). **Play BLACK.sh** and
+**BLACK Settings.sh** open the launcher; **Install Linux Shortcuts.sh** creates clickable desktop entries.
+The public starter contains host source and the compiled launcher; game executables, generated game code,
 retail files, language banks, settings and saves are excluded.
 
-The launcher recognizes both a portable `bin/black_xbox_recomp.exe` and the existing
-`build-vs2022/Release/black_xbox_recomp.exe` layout. Keep `black-release.json` beside
-the release launchers. Archive/file SHA-256 checksums are included.
+The launcher finds the game at a portable `bin/black_xbox_recomp.exe` or in the
+`build-vs2022/Release/` layout. Keep `black-release.json` beside the launcher. Archive and file SHA-256
+checksums are included.
 
 Startup logos skip on one press of Escape, Enter, Space, left click, or controller
 A / B / Start. During a cutscene, the first press shows **Press again to skip**
@@ -48,7 +62,7 @@ keep playing normally. See the [movie skip tests](tests/movie_skip/README.md).
 
 Ambient occlusion adds contact shading from scene depth with **SSAO Classic,
 HBAO, HBAO+, and GTAO**, each with Low, Medium, High, and Ultra quality. Choose
-the method and quality on the launcher's **Graphics** tab or the in-game
+the method and quality in the launcher's **Settings > Graphics** or the in-game
 **Video Settings > Graphics** page. AO defaults to **Off**, with **High** quality
 selected for when it is enabled. The launcher's labels and help follow the
 selected menu language. The in-game **Video Settings > Graphics** page also
@@ -57,12 +71,11 @@ Brazilian Portuguese.
 
 These are local implementations of the techniques; HBAO+ does not use the
 vendor SDK. The [AO regression tests](tests/ambient_occlusion/README.md) exercise
-the actual shaders, settings, launcher controls, and native camera hook without
-game files.
+the actual shaders, settings and native camera hook without game files.
 
 **Reflections** replaces BLACK's 128 x 128 environment maps (weapons, windows,
 glass) with screen-space reflections of the scene. Choose Original, Low, Medium,
-High (default) or Ultra on the launcher's **Graphics** tab or the in-game
+High (default) or Ultra in the launcher's **Settings > Graphics** or the in-game
 **Video Settings > Graphics** page. Original keeps the game's maps. See
 [docs/reflections.md](docs/reflections.md).
 
@@ -128,7 +141,7 @@ they are stored separately from the native XMV video files.
 This repository contains host source and build tooling. **You must supply your
 own original Xbox game files.** Game assets, the XBE, generated game-function
 bodies, recordings, and prebuilt game executables are excluded. Release archives
-may include compiled host launchers that contain no game code.
+include the compiled launcher, which contains no game code.
 
 ## Build
 
@@ -158,7 +171,7 @@ Clone with submodules, then build from PowerShell in this repository:
 ```powershell
 git clone --recursive https://github.com/PauloVx/Black-2006-Recomp.git
 .\scripts\setup.ps1
-.\'BLACK PC Launcher.exe'
+.\'BLACK Launcher.exe'
 ```
 
 The runtime is a submodule: `third_party/xboxrecomp` is
@@ -173,11 +186,12 @@ generated C code can take several minutes.
 To change the runtime, work inside `third_party/xboxrecomp` on the `black` branch,
 commit and push there, then commit the new submodule commit in this repository.
 
-**BLACK PC Launcher.exe** starts the game directly using your saved preferences.
-Open **BLACK PC Settings.exe** to configure controls and video settings separately,
-or run `BLACK PC Launcher.exe --settings`. The settings window also retains its **Play** button.
-Leave **Skip movies** and **Advance startup menus automatically** unchecked to
-watch the full opening and navigate manually. Local settings live in `local/`
+Setup builds **BLACK Launcher.exe** first, since that is where the disc is set up: with no disc in `game/` yet,
+it stops there and asks you to choose one in the launcher, then run it again. The launcher needs only CMake and
+Visual Studio; its Vulkan headers are a submodule, so no Vulkan SDK is needed.
+
+Leave **Settings > Game > Skip movies** and **Skip startup menus** off to watch the full opening and navigate
+manually. Local settings live in `local/`
 and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 `game/UDATA/` and `game/TDATA/` through the native partition mapping. Close the
 game and back up all three data directories before moving or removing the
@@ -203,7 +217,7 @@ without the HUD, menus or (unless shown) the weapon. The camera stays within a c
 photo mode started, so it cannot leave the built level. See [Photo mode](docs/photo-mode.md) and the
 [photo tests](tests/photo/README.md).
 
-The launcher's **Game > Menu language** setting chooses English, Brazilian
+The launcher's **Settings > Game > Menu language** chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
 are marked as machine-draft translations and still need fluent-speaker review.
@@ -265,6 +279,8 @@ Development included assistance from Claude Code and OpenAI Codex.
 | `launcher/vendor/glfw` | [TheCherno/glfw](https://github.com/TheCherno/glfw), a fork of [GLFW](https://github.com/glfw/glfw) | Launcher window, custom titlebar |
 | `launcher/vendor/glm` | [g-truc/glm](https://github.com/g-truc/glm) | Maths for Walnut |
 | `launcher/vendor/spdlog` | [gabime/spdlog](https://github.com/gabime/spdlog) | Walnut's logging |
+| `launcher/vendor/json` | [nlohmann/json](https://github.com/nlohmann/json) | Launcher settings, logs and translations |
+| `launcher/vendor/vulkan-headers` | [KhronosGroup/Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | Building the launcher without the Vulkan SDK |
 | `launcher/vendor/doctest` | [doctest/doctest](https://github.com/doctest/doctest) | Launcher unit tests |
 
 The launcher's stand-in fonts are [Russo One](https://fonts.google.com/specimen/Russo+One) and

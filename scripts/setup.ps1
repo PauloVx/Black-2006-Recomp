@@ -21,14 +21,21 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     if ($exitCode -ne 0) { throw "$Program failed with exit code $exitCode" }
 }
 
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git must be installed and available on PATH.' }
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw 'CMake 3.21 or later must be installed and available on PATH.' }
+
+# The launcher comes first: it is where the disc is set up
+if (-not $SkipBuild) {
+    & (Join-Path $PSScriptRoot 'build-launcher.ps1')
+    if (-not $?) { throw 'The launcher could not be built.' }
+}
 if (-not (Test-Path -LiteralPath $xbe -PathType Leaf)) {
-    throw 'Copy your extracted original Xbox BLACK files into game\ first (including default.xbe).'
+    Write-Output "Next: open $(Join-Path $projectRoot 'BLACK Launcher.exe'), choose your disc, then run Build BLACK again."
+    return
 }
 if ((Get-FileHash -LiteralPath $xbe -Algorithm SHA256).Hash -ne $expectedXbe) {
     throw 'default.xbe does not match the supported retail Xbox release; see README.md.'
 }
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git must be installed and available on PATH.' }
-if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw 'CMake 3.20 or later must be installed and available on PATH.' }
 
 # XboxRecomp (PauloVx's fork, branch black) and the DSP56300 core are submodules at the commits this
 # checkout records. Only missing ones are fetched, so a checked-out runtime branch with new commits is left alone.
@@ -64,7 +71,7 @@ if (-not $SkipBuild) {
     $build = Join-Path $projectRoot 'build-vs2022'
     Invoke-Checked cmake @('-S', $projectRoot, '-B', $build, '-G', 'Visual Studio 17 2022', '-A', 'x64')
     Invoke-Checked cmake @('--build', $build, '--config', 'Release', '--target', 'black_xbox_recomp')
-    & (Join-Path $PSScriptRoot 'build-launcher.ps1')
-    if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed.' }
-    Write-Output "Ready: $(Join-Path $projectRoot 'BLACK PC Launcher.exe')"
 }
+& (Join-Path $PSScriptRoot 'localization\build-language-banks.ps1') -Python $python
+Write-Output "Ready: $(Join-Path $projectRoot 'BLACK Launcher.exe')"
+

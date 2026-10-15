@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $launchers = Join-Path $projectRoot 'build-release-launchers'
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot 'releases' }
-& (Join-Path $PSScriptRoot 'build-launcher.ps1') -Force -OutputDirectory $launchers
+& (Join-Path $PSScriptRoot 'build-launcher.ps1') -OutputDirectory $launchers
 $releaseArgs = @((Join-Path $PSScriptRoot 'release\build_release.py'), '--version', $Version,
     '--launchers', $launchers, '--output', [IO.Path]::GetFullPath($OutputDirectory))
 if ($AllowDirty) { $releaseArgs += '--allow-dirty' }

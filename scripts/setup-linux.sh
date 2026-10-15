@@ -11,11 +11,30 @@ esac
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Use an x86_64 Linux host.' >&2; exit 1; }
 # Ubuntu keeps clang-cl and several LLVM utilities in its versioned bin folder.
 if [[ -d /usr/lib/llvm-18/bin ]]; then export PATH="/usr/lib/llvm-18/bin:$PATH"; fi
-for tool in python3 git cmake ninja clang-cl lld-link llvm-lib llvm-rc llvm-mt mcs cc; do
+for tool in python3 git cmake ninja clang-cl lld-link llvm-lib llvm-rc llvm-mt cc c++; do
     command -v "$tool" >/dev/null || { echo "Missing $tool; see docs/linux.md for Linux build dependencies." >&2; exit 1; }
 done
+# The native launcher (launcher/, C++ on Walnut), copied to $1. It needs the X11/Wayland development packages
+# listed in docs/linux.md, and the Vulkan loader every graphics driver installs.
+build_launcher() {
+    if [[ ! -f "$project_root/launcher/CMakeLists.txt" && -x "$1/BLACK Launcher" ]]; then
+        return  # a release archive has the launcher already built, and not its sources
+    fi
+    if [[ -e "$project_root/.git" && ! -d "$project_root/launcher/vendor/walnut/Walnut" ]]; then
+        git -C "$project_root" submodule update --init --recursive
+    fi
+    (cd "$project_root/launcher" && cmake --preset linux-release && cmake --build --preset linux-release --target black_launcher)
+    mkdir -p "$1"
+    cp "$project_root/build-launcher-linux/bin/BLACK Launcher" "$1/BLACK Launcher"
+}
+if [[ "$mode" == build ]]; then
+    build_launcher "$project_root"   # first: the disc is set up from the launcher
+    if [[ ! -f "$project_root/game/default.xbe" ]]; then
+        printf 'Next: open %s/BLACK Settings.sh, choose your disc, then run Build BLACK.sh again.\n' "$project_root"
+        exit 0
+    fi
+fi
 if [[ "$mode" != --prepare-only ]]; then
-    [[ -f "$project_root/game/default.xbe" ]] || { echo 'Supply your original Xbox files under game/ first.' >&2; exit 1; }
     printf '%s  %s\n' df2739c372d254a90aeeccf5971d12097f22d89fbb90db021fda96dd4deb68f6 "$project_root/game/default.xbe" | sha256sum --check
 fi
 tool_root="$project_root/.work/linux-toolchain"
@@ -44,7 +63,7 @@ if [[ ! -x "$project_root/.venv/bin/python" ]]; then python3 -m venv "$project_r
 python="$project_root/.venv/bin/python"
 "$python" -m pip install capstone==5.0.7
 if [[ "$mode" == --prepare-only ]]; then
-    "$python" "$project_root/scripts/linux/build_launcher.py" --output "$project_root/build-release-launchers"
+    build_launcher "$project_root/build-release-launchers"
     exit 0
 fi
 if [[ "$mode" != --skip-generate ]]; then "$python" "$project_root/scripts/generate.py"; fi
@@ -57,6 +76,5 @@ jobs=${BLACK_BUILD_JOBS:-2}
 cmake --build "$build" --target black_xbox_recomp --parallel "$jobs"
 mkdir -p "$project_root/bin"
 cp "$build/black_xbox_recomp.exe" "$project_root/bin/black_xbox_recomp.exe"
-"$python" "$project_root/scripts/linux/build_launcher.py"
 "$python" "$project_root/scripts/linux/write_build_provenance.py"
 printf 'Ready: %s/Play BLACK.sh\nSettings: %s/BLACK Settings.sh\n' "$project_root" "$project_root"

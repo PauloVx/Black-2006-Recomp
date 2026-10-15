@@ -9,6 +9,7 @@
 /save/
 /reports/
 /*.exe
+/BLACK Launcher
 /*.pdb
 /*.log
 __pycache__/

@@ -1,19 +1,25 @@
 # BLACK Launcher
 
 The player-facing launcher, in C++20 on [Walnut](https://github.com/StudioCherno/Walnut) (Vulkan + Dear ImGui).
-It will replace the C# launcher; see [the plan](../docs/plans/new-launcher.md).
+It replaced the C# launcher; see [the plan](../docs/plans/new-launcher.md) for what is still to come (building the
+game from the launcher).
 
-It shows where a copy stands and sets up the disc: an ISO (XISO or a full Redump-style dump) or a folder of extracted
-files, chosen with the system's file dialog, dropped onto the window or given on the command line. The launcher reads
-Xbox disc images itself (`src/core/Xdvdfs`), checks `default.xbe` before copying, and copies into `game/` with
-progress, resume and cancel. Play and Settings still start the existing `BLACK PC Launcher` / `BLACK PC Settings` until
-the build step and the settings pages move here.
+It sets up the disc: an ISO (XISO or a full Redump-style dump) or a folder of extracted files, chosen with the
+system's file dialog, dropped onto the window or given on the command line. The launcher reads Xbox disc images
+itself (`src/core/Xdvdfs`), checks `default.xbe` before copying, and copies into `game/` with progress, resume and
+cancel. It plays the game (`src/core/GameSession`: the `RECOMP_*` environment, the menu-language bank, and a
+`reports/launcher-*` session with capped diagnostic logs), edits every setting the game reads, edits save profiles
+(`src/core/Profile`: checksums and the HMAC-SHA1 signature, backups first) and prepares problem reports.
+
+`BLACK Launcher --play` starts the game with the saved settings and no window, and waits for it: the shortcuts
+(`Play BLACK.sh`) use it.
 
 ## Building
 
-Needs CMake 3.21+, a C++20 compiler and the Vulkan headers and loader: the
-[Vulkan SDK](https://vulkan.lunarg.com/) on Windows, `libvulkan-dev` on Linux. Players only need a graphics driver
-with Vulkan.
+Needs CMake 3.21+ and a C++20 compiler; nothing else. The Vulkan headers are a submodule
+(`vendor/vulkan-headers`), and the launcher links against the Vulkan loader that graphics drivers install: on
+Windows through an import library made at configure time. `-DBLACK_LAUNCHER_VULKAN_SDK=ON` builds against an
+installed SDK instead.
 
 ```powershell
 git submodule update --init --recursive
@@ -23,21 +29,23 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
-On Linux (Ubuntu: `sudo apt install build-essential cmake ninja-build libvulkan-dev libx11-dev libxrandr-dev
-libxinerama-dev libxcursor-dev libxi-dev libwayland-dev wayland-protocols libxkbcommon-dev`), use the `linux-release`
-presets. The launcher is written to `build-launcher*/bin/` and finds the project folder by searching upwards from
-itself, so it runs from the build folder too.
+On Linux (Ubuntu: `sudo apt install build-essential cmake ninja-build libx11-dev libxrandr-dev libxinerama-dev
+libxcursor-dev libxi-dev libwayland-dev wayland-protocols libxkbcommon-dev`, plus a graphics driver with Vulkan),
+use the `linux-release` presets. The launcher is written to `build-launcher*/bin/` and finds the project folder
+by searching upwards from itself, so it runs from the build folder too. `scripts/build-launcher.ps1` and
+`scripts/setup-linux.sh` build it and copy it to the project folder.
 
 ## Layout
 
 ```
 launcher/
-  src/core/   the logic, with no UI: project layout, disc check (SHA-256), the game's menu fonts (DXT,
-              "4.1v" fonts), files, processes. Unit-tested.
-  src/app/    the Walnut application: the screen, the game-style widgets, the theme
+  src/core/   the logic, with no UI: project layout, disc import (XDVDFS), settings and key bindings, playing
+              the game, save profiles, problem reports, the game's menu fonts. Unit-tested.
+  src/app/    the Walnut application: the pages (disc, settings, saves), the game-style widgets, key capture,
+              translations, the theme
   tests/      doctest unit tests for src/core; no game files, GPU or window needed
-  assets/     the logo and stand-in fonts (SIL Open Font License), built into the executable
-  vendor/     submodules: walnut, imgui, glfw, glm, spdlog, doctest
+  assets/     the logo, stand-in fonts (SIL Open Font License) and translations, built into the executable
+  vendor/     submodules: walnut, imgui, glfw, glm, spdlog, json, vulkan-headers, doctest
 ```
 
 ## The look
@@ -48,6 +56,13 @@ banner shows BLACK's logo (`assets/images/black-logo.png`, built in; a `local/lo
 player's disc files are in place, text uses the game's own `Small`/`Big` menu fonts, read from `language/fonts` at
 run time and never shipped. Until then the closest free fonts stand in: Russo One for rows and help, Saira
 Condensed ExtraBold for titles.
+
+## Translations
+
+All text a player sees goes through `tr()` / `trf()` (`src/app/Translations.h`), looked up by its English in
+`assets/translations/<language>.json`. `python scripts/check-launcher-translations.py` lists text with no
+translation (CI runs it); `--update` adds new text to every catalog for translators to fill in. The game's fonts
+have no A- or O-tilde, so `MenuFont` draws those with the tilde of the font's own N-tilde.
 
 ## Walnut
 

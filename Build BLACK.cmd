@@ -9,5 +9,5 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo Ready. Open BLACK PC Launcher.exe to play or BLACK PC Settings.exe to configure.
+echo Done. Open BLACK Launcher.exe to set up your disc, change settings and play.
 pause
