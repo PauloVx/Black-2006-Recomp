@@ -4,6 +4,7 @@
 #include "pc_movie_skip.h"
 #include "pc_video_menu.h"
 #include "pc_input.h"
+#include "pc_controls.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,21 @@ static unsigned checks, failures;
 PcDevice pc_input_prompt_device(void) { return PC_DEVICE_KEYBOARD_MOUSE; }
 void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { (void)slot; (void)filter; }
 void pc_input_set_capture_query(int (*query)(void)) { (void)query; }
+/* The Controls pages are never opened here either. */
+const PcActionInfo pc_input_actions[PC_ACTION_COUNT];
+unsigned pc_input_binding(PcAction action, int index) { (void)action; (void)index; return 0; }
+int pc_input_source_label(unsigned source, char *out, size_t cap) { (void)source; (void)out; (void)cap; return 0; }
+int pc_controls_key_bind(PcAction action, int column, unsigned source) { (void)action; (void)column; (void)source; return 0; }
+void pc_controls_key_reset(void) {}
+int pc_controls_pad_action(PcAction action) { (void)action; return 0; }
+int pc_controls_pad_layout(void) { return 0; }
+int pc_controls_pad_layout_step(int dir) { (void)dir; return 0; }
+int pc_controls_pad_control(PcAction action) { (void)action; return -1; }
+int pc_controls_pad_bind(PcAction action, int control) { (void)action; (void)control; return 0; }
+void pc_controls_pad_reset(void) {}
+uint32_t pc_controls_pad_held(const uint8_t report[20]) { (void)report; return 0; }
+uint16_t pc_controls_pad_glyph(int control, const char **mark) { (void)control; if (mark) *mark = NULL; return 0; }
+const char *pc_controls_pad_name(int control) { (void)control; return ""; }
 void pc_video_menu_hide_hint(int hide) { (void)hide; }
 void pc_video_menu_set_native_opener(void (*request)(void)) { (void)request; }
 const char *pc_video_menu_row_help(int row) { (void)row; return ""; }

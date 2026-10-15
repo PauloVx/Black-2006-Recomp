@@ -21,7 +21,7 @@ add_custom_target(controls-definition ALL DEPENDS "${definition}")
 add_executable(controls-test test_controls.c
     "${runtime_video}/pc_menu.c" "${runtime_video}/pc_menu_assets.c" "${runtime_video}/pc_movie_skip.c"
     "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c"
-    "${runtime_input}/pc_input.c" "${runtime_input}/pc_controls.c")
+    "${runtime_input}/pc_input.c" "${runtime_input}/pc_controls.c" "${runtime_video}/pc_photo.c")
 add_dependencies(controls-test controls-definition)
 target_include_directories(controls-test PRIVATE "${runtime_video}" "${runtime_input}")
 target_compile_definitions(controls-test PRIVATE _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)
