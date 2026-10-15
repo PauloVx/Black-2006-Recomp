@@ -908,6 +908,72 @@ void black_viewmodel_muzzle_constants(uint32_t upload, uint32_t caller)
 static double black_fov_vertical, black_fov_window_per_aspect;
 static volatile LONG black_fov_announced;
 
+/* BEGIN BLACK_PHOTO_MODE
+ * Photo mode (xboxrecomp/src/video/pc_photo.c), opened from the pause menu's PHOTO MODE item. The paused game keeps
+ * producing its world camera, renderer[2D67F4]+D450, about sixty times a second through D2F40, which copies the
+ * camera entity's matrix into the RwCamera's frame ([camera+58]+4: modelling matrix at +10, LTM at +50, rows
+ * right / up / at / pos of 16 bytes) and then sets the view window from +70. While photo mode is on, the view window
+ * is scaled for its field of view before the original runs, and both matrices are replaced with the photo camera's
+ * after it, so the picture and the frustum the renderer culls with follow it. The original rebuilds the matrices
+ * from the entity every update, so leaving photo mode needs no restoring; the first-person weapon, drawn from the
+ * gameplay camera, leaves the picture as soon as the camera moves. Only the player's own view of a paused mission
+ * opens it: the camera entity's FOV-enable byte +16A4 is clear while a scripted camera runs (BLACK_PC_FOV). */
+#include "pc_photo.h"
+extern void kgpu_request_capture(const char *path);
+extern int kgpu_capture_result(void);
+extern int black_pc_input_gameplay_blocked_query(void);
+
+static float black_photo_f32(uint32_t va) { float v; memcpy(&v, (const void *)((uintptr_t)g_xbox_mem_offset + va), 4); return v; }
+static void black_photo_put(uint32_t va, float v) { memcpy((void *)((uintptr_t)g_xbox_mem_offset + va), &v, 4); }
+
+/* The world camera bound to the player's camera entity, outside scripted camera mode; 0 otherwise. */
+static uint32_t black_photo_world_camera(void)
+{
+    uint32_t renderer, owner, camera;
+    if (!black_pc_ram_span(0x002D67F4u, 4u) || !black_pc_ram_span(0x002D12B8u, 4u)) return 0;
+    renderer = GUEST32(0x002D67F4u);
+    owner = GUEST32(0x002D12B8u);
+    if (!black_pc_ram_span(renderer, 0xD4F0u) || !black_pc_ram_span(owner, 0x16A5u)) return 0;
+    camera = renderer + 0xD450u;
+    if (GUEST32(camera + 0x68u) != owner + 0x740u ||
+        !*(const unsigned char *)((uintptr_t)g_xbox_mem_offset + owner + 0x16A4u)) return 0;
+    return camera;
+}
+
+static int black_photo_can_start(void)
+{
+    return black_pc_input_gameplay_blocked_query() && black_photo_world_camera() != 0;
+}
+
+static const PcPhotoHost black_photo_host = { black_photo_can_start, kgpu_request_capture, kgpu_capture_result };
+
+void black_photo_install(void) { pc_photo_set_host(&black_photo_host); }
+
+/* After D2F40: the photo camera replaces both of the RwCamera frame's matrices. */
+static void black_photo_camera(uint32_t camera)
+{
+    const unsigned caller_csr = _mm_getcsr();
+    uint32_t rwcam, frame, row;
+    float m[4][3];
+    int k;
+    if (!pc_photo_active() || camera != black_photo_world_camera()) return;
+    rwcam = GUEST32(camera + 0x58u);
+    if (!black_pc_ram_span(rwcam, 8u)) return;
+    frame = GUEST32(rwcam + 4u);
+    if (!black_pc_ram_span(frame, 0x90u)) return;
+    _mm_setcsr(0x1F80u);
+    for (row = 0; row < 4; row++)
+        for (k = 0; k < 3; k++) m[row][k] = black_photo_f32(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u);
+    if (pc_photo_camera(m, black_photo_f32(camera + 0x4Cu)))
+        for (row = 0; row < 4; row++)
+            for (k = 0; k < 3; k++) {
+                black_photo_put(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);   /* modelling */
+                black_photo_put(frame + 0x50u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);   /* LTM */
+            }
+    _mm_setcsr(caller_csr);
+}
+/* END BLACK_PHOTO_MODE */
+
 /* The gameplay FOV is a video setting too (pc_video.c): the Video Settings page changes it while the game runs. */
 static void black_fov_refresh(void)
 {
@@ -982,12 +1048,25 @@ void sub_000D2F40(void)
         if (black_pc_ram_span(renderer, 0xD4F0u) && camera == renderer + 0xD450u)
             black_viewmodel_scale(adjusted ? saved_window : 0u, adjusted ? new_window : 0u);
     }
+    if (pc_photo_active() && camera == black_photo_world_camera()) {
+        /* photo mode's field of view scales the window the original builds the lens from */
+        const uint32_t base_window = adjusted ? new_window : GUEST32(camera + 0x70u);
+        float photo_window;
+        if (!adjusted) saved_window = base_window;
+        memcpy(&photo_window, &base_window, sizeof(photo_window));
+        photo_window *= pc_photo_zoom();
+        memcpy(&new_window, &photo_window, sizeof(new_window));
+        adjusted = saved_window > 0u && saved_window < 0x7F800000u && new_window > 0u && new_window < 0x7F800000u;
+    }
+    /* photo mode leaves the first-person weapon out: its draws (BLACK_VIEWMODEL_OWNER) scale to nothing */
+    if (pc_photo_weapon_hidden() && camera == black_photo_world_camera()) black_vm_scale_bits = 0u;
     fesetenv(&caller_environment);
     _mm_setcsr(caller_csr);
     if (adjusted) GUEST32(camera + 0x70u) = new_window;
     sub_000D2F40_gen();
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
     black_ao_camera_publish(camera);
+    black_photo_camera(camera);
 }
 /* END BLACK_PC_FOV */
 
@@ -1374,7 +1453,8 @@ void sub_00168A30(void)
      * producer's controls or sticky flags, including the first call. */
     _mm_setcsr(caller_csr);
     sub_00168A30_gen();
-    if (black_motion_blur_off)
+    /* photo mode keeps photos sharp: the camera it turns is not a fast look */
+    if (black_motion_blur_off || pc_photo_active())
         GUEST32(effect + 0x20u) = 0u;
 }
 /* END BLACK_PC_MOTION_BLUR */
@@ -1399,7 +1479,7 @@ void sub_001772E0(void)
     PcVideoSettings video;
     pc_video_get(&video);
     _mm_setcsr(caller_csr);
-    if (video.dof == PCV_STEP_OFF) GUEST32(effect + 0x34u) = 0u;
+    if (video.dof == PCV_STEP_OFF || pc_photo_active()) GUEST32(effect + 0x34u) = 0u;   /* photo mode: no reload/aim blur */
     sub_001772E0_gen();
     GUEST32(effect + 0x34u) = mode;
 }

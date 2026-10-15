@@ -28,9 +28,10 @@ target_link_libraries(movie-input-test PRIVATE user32)
 # settings and input services stay stubbed, without opening profile files.
 add_executable(movie-overlay-test test_overlay.c
     "${XBOXRECOMP_DIR}/src/video/pc_menu.c"
+    "${XBOXRECOMP_DIR}/src/video/pc_photo.c"
     "${XBOXRECOMP_DIR}/src/video/pc_movie_skip.c")
 target_compile_definitions(movie-overlay-test PRIVATE PC_MOVIE_SKIP_TEST)
-target_link_libraries(movie-overlay-test PRIVATE user32 gdi32)
+target_link_libraries(movie-overlay-test PRIVATE user32 gdi32 shell32 ole32)
 
 add_executable(movie-wrapper-test test_wrapper.c)
 target_include_directories(movie-wrapper-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")

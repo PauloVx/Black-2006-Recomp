@@ -20,6 +20,12 @@ show the new keys and button art at once. Bindings live in
 `local/controls.ini`, shared with the launcher. Unedited `menus.ini` files
 upgrade to the new pages automatically.
 
+**Photo mode** (Pause > PHOTO MODE): a free camera over the paused mission with field of view,
+roll, speed and range, controlled by keyboard and mouse or controller from a panel in the game's
+menu style. Photos are saved as PNG to `Pictures\BLACK` without the HUD, menus or weapon. Game blur
+effects are off while it is open; scripted cameras cannot be entered. Unedited `menus.ini` files
+gain the new pause item automatically.
+
 ## 0.1.0-alpha.2 — 2026-10-14
 
 **Build BLACK.sh** now generates and compiles the game entirely on x86_64 Linux

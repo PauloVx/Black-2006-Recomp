@@ -16,6 +16,7 @@ static unsigned checks, failures;
  * services inactive, so they cannot initialize or write a profile. */
 PcDevice pc_input_prompt_device(void) { return PC_DEVICE_KEYBOARD_MOUSE; }
 void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { (void)slot; (void)filter; }
+void pc_input_set_capture_query(int (*query)(void)) { (void)query; }
 void pc_video_menu_hide_hint(int hide) { (void)hide; }
 void pc_video_menu_set_native_opener(void (*request)(void)) { (void)request; }
 const char *pc_video_menu_row_help(int row) { (void)row; return ""; }

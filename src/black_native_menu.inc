@@ -60,6 +60,7 @@ static const char black_menu_definition[] =
 ";           toggle = TEXT | VALUE | FUNCTION              ON / OFF, sends FUNCTION(1 or 0)\r\n"
 ";           slider = TEXT | VALUE | FUNCTION | MIN MAX STEP\r\n"
 ";           keybind / padbind = TEXT | ACTION, padlayout = TEXT   the Controls pages (see [page Controls])\r\n"
+";           photo = TEXT | fov/roll/weapon/speed/range   a photo mode setting (see [page PhotoMode])\r\n"
 ";           VALUE is a number the game publishes to its menus (FEInvertLookFlag ...).\r\n"
 "; Actions:  gamecode NAME [ARG ...]   one of the game's menu functions, as the original page calls it\r\n"
 ";           page NAME                  go to another page\r\n"
@@ -108,6 +109,7 @@ static const char black_menu_definition[] =
 "item = $FE_OBJECTIVESSTATUS | page PauseMenuObjectives\r\n"
 "item = $FE_RESTARTMISSION | set FEConfirmYesGameCode RestartLevel; set FEConfirmNoPage PauseMenu; page ConfirmWarning; gamecode SetupConfirmWarning RestartConfirm\r\n"
 "item = $FE_OPTIONS | page PauseMenuOptionXbox\r\n"
+"item = \"PHOTO MODE\" | open PhotoMode\r\n"
 "item = $FE_QUIT | set FEConfirmYesGameCode QuitLevel; set FEConfirmNoPage PauseMenu; page ConfirmWarning; gamecode SetupConfirmWarning QuitConfirm\r\n"
 "\r\n"
 "[page PauseMenuOptionXbox]\r\n"
@@ -321,6 +323,33 @@ static const char black_menu_definition[] =
 "padbind = \"OBJECTIVES\" | BACK\r\n"
 "item = \"BACK\" | close\r\n"
 "\r\n"
+"; Photo mode: photomode = on draws the page as a panel (panel = X Y W H) over the paused game, and photo mode is on\r\n"
+"; while it is shown. photo = TEXT | fov/roll/weapon/speed/range is a photo setting; photo_shot takes a photo, photo_reset\r\n"
+"; puts the camera back, photo_hide puts the panel away (H / X bring it back). &PHOTO_HELP shows the controls or the\r\n"
+"; last photo. Pictures go to Pictures\\BLACK (RECOMP_PHOTO_DIR moves them).\r\n"
+"[page PhotoMode]\r\n"
+"photomode = on\r\n"
+"panel = 18 24 258 400\r\n"
+"title = \"PHOTO MODE\"\r\n"
+"title_at = 38 58\r\n"
+"list = 40 104 21\r\n"
+"values = 254\r\n"
+"item_size = 13\r\n"
+"selector = 228\r\n"
+"arrows = 4\r\n"
+"start = back\r\n"
+"text = 40 294 &PHOTO_HELP | wrap 214 | size 11\r\n"
+"prompts_at = 66 366 18\r\n"
+"back = close\r\n"
+"photo = \"FIELD OF VIEW\" | fov\r\n"
+"photo = \"ROLL\" | roll\r\n"
+"photo = \"WEAPON\" | weapon\r\n"
+"photo = \"CAMERA SPEED\" | speed\r\n"
+"photo = \"CAMERA RANGE\" | range\r\n"
+"item = \"TAKE PHOTO\" | photo_shot\r\n"
+"item = \"RESET CAMERA\" | photo_reset\r\n"
+"item = \"HIDE PANEL\" | photo_hide\r\n"
+"item = \"EXIT PHOTO MODE\" | close\r\n"
 "\r\n"
 "; PC video pages use the same fonts, rails, focus and input as the game's menus.\r\n"
 "; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/aspect/fov/scale/filter/vsync/fps/blur\r\n"
@@ -491,7 +520,7 @@ static const char black_menu_definition[] =
 /* The built-in definitions of earlier builds (FNV-1a 64 of the whole file): a local\menus.ini that is still exactly
  * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05). */
 static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
-                                                0xFF74A7E07CF4C7F0ull };
+                                                0xFF74A7E07CF4C7F0ull, 0x33977C1E8AC020F3ull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 

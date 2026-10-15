@@ -168,6 +168,13 @@ Start stay with the layout. The change goes into the game's own action map, so
 kept in `local/controls.ini`, which the launcher's key bindings also read and
 write. See the [Controls tests](tests/controls/README.md).
 
+**Pause > PHOTO MODE** freezes the mission and gives a free camera with a small panel in the
+game's menu style: move with WASD or the left stick, look with the mouse or right stick, zoom, roll,
+and take photos with F12 or Y. Photos are PNG files in `Pictures\BLACK` at the internal resolution,
+without the HUD, menus or (unless shown) the weapon. The camera stays within a chosen range of where
+photo mode started, so it cannot leave the built level. See [Photo mode](docs/photo-mode.md) and the
+[photo tests](tests/photo/README.md).
+
 The launcher's **Game > Menu language** setting chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
