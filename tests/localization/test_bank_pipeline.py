@@ -99,11 +99,10 @@ class BankPipelineTests(unittest.TestCase):
             self.assertEqual(installed.stat().st_mtime_ns, timestamp)
             self.assertEqual(list(root.rglob("*.launcher-tmp-*")), [])
 
-    def test_launcher_build_regenerates_existing_locale_banks_after_update(self):
+    def test_bank_build_regenerates_existing_locale_banks_after_update(self):
         powershell = shutil.which("powershell") or shutil.which("pwsh")
-        compiler = Path(os.environ.get("WINDIR", "")) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
-        if not powershell or not compiler.is_file():
-            self.skipTest("PowerShell and the .NET Framework compiler are required")
+        if not powershell:
+            self.skipTest("PowerShell is required")
 
         rows = [json.loads(line) for line in
                 (ROOT / "localization" / "game" / "es.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -148,7 +147,7 @@ class BankPipelineTests(unittest.TestCase):
 
             result = subprocess.run(
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                 str(root / "scripts" / "build-launcher.ps1")],
+                 str(root / "scripts" / "localization" / "build-language-banks.ps1"), "-Python", sys.executable],
                 capture_output=True, text=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for locale, (bank, legacy, values) in existing.items():
@@ -194,18 +193,6 @@ class BankPipelineTests(unittest.TestCase):
         bank = MainUSBank.parse(source)
         values = {record.record_id: record.text for record in bank.records}
         self.assertEqual(bank.rebuild(values), source)
-
-    def test_unchanged_launcher_resource_keeps_build_timestamp(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "catalog.json"
-            command = [sys.executable, str(SCRIPTS / "build_launcher_catalog.py"),
-                       str(ROOT / "localization" / "launcher" / "en-pt-BR.jsonl"),
-                       str(ROOT / "localization" / "launcher"), str(output)]
-            subprocess.run(command, check=True, capture_output=True)
-            os.utime(output, (1000000000, 1000000000))
-            timestamp = output.stat().st_mtime_ns
-            subprocess.run(command, check=True, capture_output=True)
-            self.assertEqual(output.stat().st_mtime_ns, timestamp)
 
 
 if __name__ == "__main__":

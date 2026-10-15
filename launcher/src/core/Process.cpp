@@ -117,4 +117,17 @@ Result<bool> openFolder(const std::filesystem::path& folder) {
 #endif
 }
 
+Result<bool> openUrl(const std::string& url) {
+#ifdef _WIN32
+    const auto result = reinterpret_cast<INT_PTR>(  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): Win32 API
+        ShellExecuteW(nullptr, L"open", pathFromUtf8(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        return Error{"Could not open the web browser"};
+    }
+    return true;
+#else
+    return startDetached("xdg-open", {url}, {});
+#endif
+}
+
 }  // namespace black::core

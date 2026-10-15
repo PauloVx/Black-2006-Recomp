@@ -2,6 +2,7 @@
 
 #include "app/NativeDialogs.h"
 #include "app/Theme.h"
+#include "app/Translations.h"
 #include "core/Format.h"
 #include "core/Text.h"
 
@@ -108,7 +109,7 @@ void DiscFlow::poll(double time) {
             m_problemIsCancel = false;
             m_step = Step::Stopped;
         } else if (!result->value()) {
-            m_problem = "Copying stopped. What was copied is kept: copying again carries on from there.";
+            m_problem = tr("Copying stopped. What was copied is kept: copying again carries on from there.");
             m_problemIsCancel = true;
             m_step = Step::Stopped;
         } else {
@@ -149,63 +150,65 @@ Page DiscFlow::page(double time) {
     switch (m_step) {
         case Step::Choose:
             page.id = "disc-choose";
-            page.title = "YOUR DISC";
+            page.title = tr("YOUR DISC");
             page.body = [this](ImDrawList& list, ImVec2 at, float width) { return drawChoose(list, at, width); };
-            row(Action::ChooseImage, {"CHOOSE A DISC IMAGE", "ISO",
-                                      "An ISO made from your own original Xbox disc: a full "
-                                      "Redump dump or an XISO."});
+            row(Action::ChooseImage, {tr("CHOOSE A DISC IMAGE"), tr("ISO"),
+                                      tr("An ISO made from your own original Xbox disc: a full "
+                                         "Redump dump or an XISO.")});
             row(Action::ChooseFolder,
-                {"CHOOSE A FOLDER", "", "A folder with the files of your disc, already extracted."});
-            row(Action::Back, {"BACK", "", "Back to the main menu."});
+                {tr("CHOOSE A FOLDER"), "", tr("A folder with the files of your disc, already extracted.")});
+            row(Action::Back, {tr("BACK"), "", tr("Back to the main menu.")});
             break;
         case Step::Inspecting:
             page.id = "disc-reading";
-            page.title = "YOUR DISC";
+            page.title = tr("YOUR DISC");
             page.body = [this, time](ImDrawList& list, ImVec2 at, float width) {
                 return drawInspecting(list, at, width, time);
             };
             break;
         case Step::Review: {
             page.id = "disc-review";
-            page.title = "YOUR DISC";
+            page.title = tr("YOUR DISC");
             page.body = [this](ImDrawList& list, ImVec2 at, float width) { return drawReview(list, at, width); };
             const bool supported = m_source->release.state == core::GameFilesState::Supported;
-            MenuRow copy{"COPY INTO THE GAME FOLDER", core::formatBytes(m_needed), "", canCopy()};
-            copy.help = !supported   ? "This is not the supported release, so it cannot be used."
-                        : !canCopy() ? "Free up space on this drive first."
-                                     : "Copies the game's files into the game folder. Saves already there are kept.";
+            MenuRow copy{tr("COPY INTO THE GAME FOLDER"), core::formatBytes(m_needed), "", canCopy()};
+            copy.help = !supported ? tr("This is not the supported release, so it cannot be used.")
+                        : !canCopy()
+                            ? tr("Free up space on this drive first.")
+                            : tr("Copies the game's files into the game folder. Saves already there are kept.");
             row(Action::Copy, copy);
-            row(Action::ChooseAnother, {"CHOOSE ANOTHER DISC", "", "Pick a different ISO or folder."});
-            row(Action::Back, {"BACK", "", "Back to the main menu."});
+            row(Action::ChooseAnother, {tr("CHOOSE ANOTHER DISC"), "", tr("Pick a different ISO or folder.")});
+            row(Action::Back, {tr("BACK"), "", tr("Back to the main menu.")});
             page.initialRow = canCopy() ? 0 : 1;
             break;
         }
         case Step::Copying:
             page.id = "disc-copying";
-            page.title = "COPYING YOUR DISC";
+            page.title = tr("COPYING YOUR DISC");
             page.body = [this, time](ImDrawList& list, ImVec2 at, float width) {
                 return drawCopying(list, at, width, time);
             };
-            row(Action::Cancel, {m_copy.cancelling() ? "STOPPING..." : "STOP", "",
-                                 "Stops copying. What was copied is kept, and copying again carries on from there.",
+            row(Action::Cancel, {m_copy.cancelling() ? tr("STOPPING...") : tr("STOP"), "",
+                                 tr("Stops copying. What was copied is kept, and copying again carries on from there."),
                                  !m_copy.cancelling()});
             break;
         case Step::Finished:
             page.id = "disc-done";
-            page.title = "YOUR DISC IS IN PLACE";
+            page.title = tr("YOUR DISC IS IN PLACE");
             page.body = [this](ImDrawList& list, ImVec2 at, float width) { return drawFinished(list, at, width); };
-            row(Action::Continue, {"CONTINUE", "", "Back to the main menu, where the next step is building the game."});
+            row(Action::Continue,
+                {tr("CONTINUE"), "", tr("Back to the main menu, where the next step is building the game.")});
             break;
         case Step::Stopped:
             page.id = m_problemIsCancel ? "disc-stopped" : "disc-problem";
-            page.title = "YOUR DISC";
+            page.title = tr("YOUR DISC");
             page.notice = m_problem;
             page.noticeIsProblem = !m_problemIsCancel;
             if (!m_location.empty()) {
-                row(Action::TryAgain, {m_problemIsCancel ? "CARRY ON COPYING" : "TRY AGAIN", "", ""});
+                row(Action::TryAgain, {m_problemIsCancel ? tr("CARRY ON COPYING") : tr("TRY AGAIN"), "", ""});
             }
-            row(Action::ChooseAnother, {"CHOOSE ANOTHER DISC", "", ""});
-            row(Action::Back, {"BACK", "", ""});
+            row(Action::ChooseAnother, {tr("CHOOSE ANOTHER DISC"), "", ""});
+            row(Action::Back, {tr("BACK"), "", ""});
             break;
     }
     return page;
@@ -252,10 +255,11 @@ DiscFlow::Outcome DiscFlow::back() {
 
 float DiscFlow::drawChoose(ImDrawList& list, ImVec2 at, float width) const {
     float y = at.y;
-    y += drawWrapped(list, *m_rowFont, ImVec2(at.x, y),
-                     "Use your own original Xbox copy of BLACK: an ISO made from the disc, or its files in a folder. "
-                     "The launcher checks it is the supported release before copying anything.",
-                     kText, width, toU32(colors::kRow));
+    y +=
+        drawWrapped(list, *m_rowFont, ImVec2(at.x, y),
+                    tr("Use your own original Xbox copy of BLACK: an ISO made from the disc, or its files in a folder. "
+                       "The launcher checks it is the supported release before copying anything."),
+                    kText, width, toU32(colors::kRow));
     y += 10.0f;
     const ImVec2 boxMin(at.x, y);
     const ImVec2 boxMax(at.x + width, y + 40.0f);
@@ -263,14 +267,14 @@ float DiscFlow::drawChoose(ImDrawList& list, ImVec2 at, float width) const {
         list.AddLine(ImVec2(x, boxMin.y), ImVec2(std::min(x + 6.0f, boxMax.x), boxMin.y), toU32(colors::kRail, 0.4f));
         list.AddLine(ImVec2(x, boxMax.y), ImVec2(std::min(x + 6.0f, boxMax.x), boxMax.y), toU32(colors::kRail, 0.4f));
     }
-    const std::string_view hint = "OR DROP AN ISO OR FOLDER ONTO THIS WINDOW";
+    const std::string hint = tr("OR DROP AN ISO OR FOLDER ONTO THIS WINDOW");
     m_rowFont->draw(list, ImVec2(at.x + (width - m_rowFont->width(hint, kText)) * 0.5f, y + 14.0f), hint, kText,
                     toU32(colors::kMuted));
     return boxMax.y - at.y + 18.0f;
 }
 
 float DiscFlow::drawInspecting(ImDrawList& list, ImVec2 at, float width, double time) const {
-    m_rowFont->draw(list, at, "READING YOUR DISC AND CHECKING ITS RELEASE...", kText, toU32(colors::kText));
+    m_rowFont->draw(list, at, tr("READING YOUR DISC AND CHECKING ITS RELEASE..."), kText, toU32(colors::kText));
     drawProgressBar(list, ImVec2(at.x, at.y + 26.0f), width, std::nullopt, time);
     m_rowFont->draw(list, ImVec2(at.x, at.y + 62.0f), core::toUtf8(m_location.filename()), kText,
                     toU32(colors::kMuted));
@@ -282,21 +286,21 @@ float DiscFlow::drawReview(ImDrawList& list, ImVec2 at, float width) const {
     const bool supported = source.release.state == core::GameFilesState::Supported;
     const bool fits = m_available >= m_needed;
     float y = at.y;
-    const std::string kind = source.kind == core::DiscSource::Kind::Image ? "DISC IMAGE" : "FOLDER";
+    const std::string kind = source.kind == core::DiscSource::Kind::Image ? tr("DISC IMAGE") : tr("FOLDER");
     const std::string name = core::toUtf8(source.location.filename());
     drawWrapped(list, *m_rowFont, ImVec2(at.x, y), kind + ": " + name, kText, width, toU32(colors::kMuted));
     y += kLine + 6.0f;
     statusLine(list, *m_rowFont, ImVec2(at.x, y),
-               supported ? "THE SUPPORTED XBOX RETAIL RELEASE OF BLACK" : "A DIFFERENT RELEASE: NOT SUPPORTED",
+               supported ? tr("THE SUPPORTED XBOX RETAIL RELEASE OF BLACK") : tr("A DIFFERENT RELEASE: NOT SUPPORTED"),
                supported ? colors::kGood : colors::kBad);
     y += kLine;
     statusLine(list, *m_rowFont, ImVec2(at.x, y),
-               core::formatBytes(source.totalBytes) + " IN " + withThousands(source.fileCount) + " FILES",
+               trf("{0} IN {1} FILES", {core::formatBytes(source.totalBytes), withThousands(source.fileCount)}),
                colors::kRail);
     y += kLine;
     const std::string space =
-        m_needed == 0 ? "ALREADY COPIED: NOTHING LEFT TO COPY"
-                      : "FREE SPACE " + core::formatBytes(m_available) + ", NEEDS " + core::formatBytes(m_needed);
+        m_needed == 0 ? tr("ALREADY COPIED: NOTHING LEFT TO COPY")
+                      : trf("FREE SPACE {0}, NEEDS {1}", {core::formatBytes(m_available), core::formatBytes(m_needed)});
     statusLine(list, *m_rowFont, ImVec2(at.x, y), space, fits ? colors::kGood : colors::kBad);
     return y + kLine + 8.0f - at.y;
 }
@@ -309,13 +313,13 @@ float DiscFlow::drawCopying(ImDrawList& list, ImVec2 at, float width, double tim
     std::string stage;
     switch (progress.stage) {
         case core::ImportProgress::Stage::Reading:
-        case core::ImportProgress::Stage::Checking: stage = "CHECKING FREE SPACE..."; break;
-        case core::ImportProgress::Stage::Copying: stage = "COPYING THE GAME'S FILES"; break;
-        case core::ImportProgress::Stage::Finishing: stage = "CHECKING THE COPY..."; break;
-        case core::ImportProgress::Stage::Done: stage = "DONE"; break;
+        case core::ImportProgress::Stage::Checking: stage = tr("CHECKING FREE SPACE..."); break;
+        case core::ImportProgress::Stage::Copying: stage = tr("COPYING THE GAME'S FILES"); break;
+        case core::ImportProgress::Stage::Finishing: stage = tr("CHECKING THE COPY..."); break;
+        case core::ImportProgress::Stage::Done: stage = tr("DONE"); break;
     }
     if (m_copy.cancelling()) {
-        stage = "STOPPING...";
+        stage = tr("STOPPING...");
     }
 
     const std::string percent = percentText(fraction);
@@ -327,7 +331,8 @@ float DiscFlow::drawCopying(ImDrawList& list, ImVec2 at, float width, double tim
     drawProgressBar(list, ImVec2(at.x, at.y + 40.0f), width,
                     exact ? std::optional<float>(static_cast<float>(fraction)) : std::nullopt, time);
 
-    std::string line = core::formatBytes(progress.doneBytes) + " OF " + core::formatBytes(progress.totalBytes);
+    std::string line =
+        trf("{0} OF {1}", {core::formatBytes(progress.doneBytes), core::formatBytes(progress.totalBytes)});
     if (m_samples.size() >= 2) {
         const auto& [firstTime, firstBytes] = m_samples.front();
         const auto& [lastTime, lastBytes] = m_samples.back();
@@ -339,8 +344,10 @@ float DiscFlow::drawCopying(ImDrawList& list, ImVec2 at, float width, double tim
         }
     }
     m_rowFont->draw(list, ImVec2(at.x, at.y + 76.0f), line, kText, toU32(colors::kRow));
-    const std::string file = "FILE " + withThousands(std::min(progress.doneFiles + 1, progress.totalFiles)) + " OF " +
-                             withThousands(progress.totalFiles) + (progress.item.empty() ? "" : ":  " + progress.item);
+    const std::string file =
+        trf("FILE {0} OF {1}", {withThousands(std::min(progress.doneFiles + 1, progress.totalFiles)),
+                                withThousands(progress.totalFiles)}) +
+        (progress.item.empty() ? "" : ":  " + progress.item);
     const std::vector<std::string> fileLines = wrapText(*m_rowFont, file, kText, width);
     m_rowFont->draw(list, ImVec2(at.x, at.y + 76.0f + kLine), fileLines.empty() ? "" : fileLines.front(), kText,
                     toU32(colors::kMuted));
@@ -348,14 +355,15 @@ float DiscFlow::drawCopying(ImDrawList& list, ImVec2 at, float width, double tim
 }
 
 float DiscFlow::drawFinished(ImDrawList& list, ImVec2 at, float width) const {
-    statusLine(list, *m_rowFont, at, "THE GAME'S FILES ARE IN THE GAME FOLDER", colors::kGood);
+    statusLine(list, *m_rowFont, at, tr("THE GAME'S FILES ARE IN THE GAME FOLDER"), colors::kGood);
     if (m_source) {
-        statusLine(list, *m_rowFont, ImVec2(at.x, at.y + kLine),
-                   core::formatBytes(m_source->totalBytes) + " IN " + withThousands(m_source->fileCount) + " FILES",
-                   colors::kGood);
+        statusLine(
+            list, *m_rowFont, ImVec2(at.x, at.y + kLine),
+            trf("{0} IN {1} FILES", {core::formatBytes(m_source->totalBytes), withThousands(m_source->fileCount)}),
+            colors::kGood);
     }
     drawWrapped(list, *m_rowFont, ImVec2(at.x, at.y + kLine * 2.0f + 8.0f),
-                "Next, build the game: the launcher turns your disc into the PC game.", kText, width,
+                tr("Next, build the game: the launcher turns your disc into the PC game."), kText, width,
                 toU32(colors::kRow));
     return kLine * 3.0f + 16.0f;
 }

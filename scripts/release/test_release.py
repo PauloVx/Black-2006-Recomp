@@ -20,6 +20,10 @@ provenance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(provenance)
 
 
+
+def marker_platforms(files):
+    return json.loads(files['black-release.json'])['platforms']
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp_path = Path(tempfile.mkdtemp(prefix='black-release-test-'))
@@ -33,10 +37,18 @@ class ReleaseTests(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'# host source\n')
+        for module in release.SUBMODULES:  # their own repositories, as in a checkout
+            path = self.root / module
+            path.mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(path)], check=True)
+            (path / 'CMakeLists.txt').write_bytes(b'# submodule source\n')
+            subprocess.run(['git', '-C', str(path), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(path), '-c', 'user.name=Release Test',
+                            '-c', 'user.email=release-test@example.invalid', 'commit', '-qm', 'fixture'], check=True)
         self.launchers = self.temp_path / 'launchers'
         self.launchers.mkdir()
-        for name in release.LAUNCHERS:
-            (self.launchers / name).write_bytes(b'MZ synthetic authored launcher')
+        for name, (magic, _) in release.LAUNCHERS.items():
+            (self.launchers / name).write_bytes(magic + b' synthetic authored launcher')
         self.stage()
         subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Release Test',
                         '-c', 'user.email=release-test@example.invalid', 'commit', '-qm', 'fixture'], check=True)
@@ -64,7 +76,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn('src/recomp/gen/recomp_0.c', files)
             self.assertNotIn('local/xbox-launcher.json', files)
             self.assertIn('localization/game/es.jsonl', files)
-            self.assertEqual(set(name for name in files if name.endswith('.exe')), set(release.LAUNCHERS))
+            self.assertEqual({name for name in files if name.startswith('BLACK Launcher')}, set(release.LAUNCHERS))
+            self.assertEqual(marker_platforms(files), ['windows-x86_64', 'linux-x86_64-wine'])
+            self.assertEqual(archive.getinfo('BLACK-0.1.0-alpha.1/BLACK Launcher').external_attr >> 16 & 0o777, 0o755)
             for line in files['SHA256SUMS'].decode().splitlines():
                 expected, name = line.split('  ', 1)
                 self.assertEqual(expected, hashlib.sha256(files[name]).hexdigest())
@@ -86,6 +100,16 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(all(member.isfile() for member in archive))
             self.assertEqual(archive.getmember('BLACK-0.1.0-alpha.1/Play BLACK.sh').mode, 0o755)
             self.assertEqual({m.name.split('/', 1)[1]: archive.extractfile(m).read() for m in archive}, files)
+
+    def test_one_host_launcher_is_enough_but_none_is_not(self):
+        (self.launchers / 'BLACK Launcher').unlink()
+        artifacts = release.build(self.root, self.launchers, self.root / 'one', '0.1.0-alpha.1', True)
+        with zipfile.ZipFile(artifacts[0]) as archive:
+            files = {name.split('/', 1)[1]: archive.read(name) for name in archive.namelist()}
+            self.assertEqual(marker_platforms(files), ['windows-x86_64'])
+        (self.launchers / 'BLACK Launcher.exe').unlink()
+        with self.assertRaisesRegex(ValueError, 'No launcher'):
+            release.build(self.root, self.launchers, self.root / 'none', '0.1.0-alpha.1', True)
 
     def test_tracked_generated_source_rejected(self):
         path = self.root / 'src/recomp/gen/recomp_0.c'

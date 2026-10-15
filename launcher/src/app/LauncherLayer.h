@@ -1,9 +1,11 @@
 #pragma once
 
 #include "app/DiscFlow.h"
+#include "app/MenuFlow.h"
 #include "app/MenuFont.h"
 #include "app/Widgets.h"
 #include "core/GameFiles.h"
+#include "core/GameSession.h"
 #include "core/ProjectLayout.h"
 
 #include "Walnut/Layer.h"
@@ -29,11 +31,12 @@ public:
     LauncherLayer(std::filesystem::path start, std::optional<std::filesystem::path> disc);
 
     void OnAttach() override;
+    void OnDetach() override;
     void OnUIRender() override;
 
 private:
-    enum class Screen { Main, Disc };
-    enum class Action { Play, Settings, Disc, Build, OpenFolder, Quit };
+    enum class Screen { Main, Disc, Flow };
+    enum class Action { Play, Settings, Saves, Disc, Build, OpenFolder, Quit };
 
     void refresh();
     void loadArt();
@@ -43,6 +46,10 @@ private:
     [[nodiscard]] Page mainPage();
     void run(Action action);
     void openDiscPages();
+    void openFlow(std::unique_ptr<MenuFlow> flow);
+    void startGame();
+    void checkGame();
+    [[nodiscard]] bool playing() const noexcept { return m_session != nullptr; }
 
     void drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page);
     void drawStatus(ImDrawList& list, ImVec2 topLeft, float width) const;
@@ -61,10 +68,17 @@ private:
 
     Screen m_screen = Screen::Main;
     std::unique_ptr<DiscFlow> m_disc;
+    std::unique_ptr<MenuFlow> m_flow;  // settings or saves
     MenuList m_menu;
     std::string m_pageId;
     std::vector<Action> m_mainActions;
     std::string m_notice;
+
+    std::unique_ptr<core::GameSession> m_session;
+    enum class LastRun { None, Running, Stopped, Closed, Failed };
+    LastRun m_lastRun = LastRun::None;
+    int m_lastExitCode = 0;
+    std::filesystem::path m_lastLogs;
 };
 
 }  // namespace black::app

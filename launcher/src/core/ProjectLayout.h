@@ -26,10 +26,6 @@ public:
     [[nodiscard]] std::vector<std::filesystem::path> gameExecutableCandidates() const;
     [[nodiscard]] std::optional<std::filesystem::path> gameExecutable() const;
 
-    /// The C# launcher's entry points, used for Play and Settings until this launcher takes them over.
-    [[nodiscard]] std::filesystem::path legacyPlay() const;
-    [[nodiscard]] std::filesystem::path legacySettings() const;
-
 private:
     std::filesystem::path m_root;
 };

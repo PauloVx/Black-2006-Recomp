@@ -7,8 +7,6 @@ set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
     CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
 set(BLACK_MANUAL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../src/recomp_manual.c"
     CACHE FILEPATH "Production authored camera hook source")
-set(BLACK_LAUNCHER_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/launcher.cs"
-    CACHE FILEPATH "Production launcher source")
 set(runtime_video "${XBOXRECOMP_DIR}/src/video")
 set(runtime_input "${XBOXRECOMP_DIR}/src/input")
 set(runtime_post "${XBOXRECOMP_DIR}/src/nv2a/kelvin/kelvin_gpu_post.inc")
@@ -85,11 +83,5 @@ add_test(NAME ao-focus-gap COMMAND ao-focus-gap-test)
 set_tests_properties(ao-video ao-menu ao-warp ao-post-order PROPERTIES TIMEOUT 120)
 # Retail files are optional for local visual checks. CI exercises the source-only page model.
 set_tests_properties(ao-menu PROPERTIES ENVIRONMENT "BLACK_GAME_DIR=")
-find_program(AO_POWERSHELL NAMES pwsh powershell REQUIRED)
-add_test(NAME ao-launcher COMMAND "${AO_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-    -File "${CMAKE_CURRENT_SOURCE_DIR}/test-launcher.ps1"
-    -LauncherSource "${BLACK_LAUNCHER_SOURCE}"
-    -BuildDirectory "${CMAKE_CURRENT_BINARY_DIR}/launcher-$<CONFIG>")
-set_tests_properties(ao-launcher PROPERTIES TIMEOUT 60)
 
 add_subdirectory(camera)

@@ -25,3 +25,10 @@
 [submodule "launcher/vendor/spdlog"]
 	path = launcher/vendor/spdlog
 	url = https://github.com/gabime/spdlog.git
+[submodule "launcher/vendor/json"]
+	path = launcher/vendor/json
+	url = https://github.com/nlohmann/json.git
+[submodule "launcher/vendor/vulkan-headers"]
+	path = launcher/vendor/vulkan-headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+	shallow = true

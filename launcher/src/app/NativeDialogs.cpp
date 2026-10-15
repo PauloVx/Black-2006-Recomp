@@ -1,5 +1,6 @@
 #include "app/NativeDialogs.h"
 
+#include "core/Process.h"
 #include "core/Text.h"
 
 #include <GLFW/glfw3.h>
@@ -15,6 +16,8 @@
 #include <array>
 #include <cstdio>
 #endif
+
+#include <utility>
 
 namespace black::app {
 namespace {
@@ -130,6 +133,18 @@ std::optional<std::filesystem::path> chooseFolder(GLFWwindow* owner) {
 #else
     (void)owner;
     return showOpenDialog(true);
+#endif
+}
+
+void showError(const std::string& title, const std::string& message) {
+#ifdef _WIN32
+    MessageBoxW(nullptr, core::pathFromUtf8(message).c_str(), core::pathFromUtf8(title).c_str(), MB_OK | MB_ICONERROR);
+#else
+    std::fprintf(stderr, "%s: %s
+", title.c_str(), message.c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
+    const core::Result<bool> shown =
+        core::startDetached("zenity", {"--error", "--title=" + title, "--text=" + message}, {});
+    (void)shown;
 #endif
 }
 

@@ -1,0 +1,119 @@
+#include "TempFolder.h"
+#include "core/Files.h"
+#include "core/Settings.h"
+
+#include <doctest/doctest.h>
+
+using namespace black::core;
+
+namespace {
+
+std::string fileText(const std::filesystem::path& path) {
+    const auto bytes = readFile(path);
+    REQUIRE(bytes.ok());
+    return {reinterpret_cast<const char*>(bytes.value().data()), bytes.value().size()};  // NOLINT
+}
+
+}  // namespace
+
+TEST_CASE("Render size follows the camera aspect, and SSAA doubles it") {
+    Settings settings;
+    settings.internalHeight = 720;
+    CHECK(renderSize(settings) == std::array{960, 720});
+    settings.cameraAspect = "16:9";
+    CHECK(renderSize(settings) == std::array{1280, 720});
+    settings.cameraAspect = "21:9";
+    CHECK(renderSize(settings) == std::array{1680, 720});
+    settings.antiAliasing = "ssaa";
+    CHECK(rasterSize(settings) == std::array{3360, 1440});
+    settings.internalHeight = 2160;
+    settings.cameraAspect = "32:9";
+    CHECK(rasterSize(settings) == renderSize(settings));
+}
+
+TEST_CASE("Trace frame ranges are normalized or rejected") {
+    CHECK(normalizeTraceFrames(" 120 ") == "120");
+    CHECK(normalizeTraceFrames("120-180") == "120-180");
+    CHECK(normalizeTraceFrames("0120-0240/030") == "120-240/30");
+    CHECK_FALSE(normalizeTraceFrames("120/30"));
+    CHECK_FALSE(normalizeTraceFrames("240-120"));
+    CHECK_FALSE(normalizeTraceFrames("0"));
+    CHECK_FALSE(normalizeTraceFrames("a-b"));
+    CHECK(normalizeDrawLogFrames("500") == "500");
+    CHECK(normalizeDrawLogFrames("500,120") == "500,120");
+    CHECK_FALSE(normalizeDrawLogFrames("500,121"));
+    CHECK_FALSE(normalizeDrawLogFrames(""));
+}
+
+TEST_CASE("Diagnostics need the matching renderer") {
+    Settings settings;
+    CHECK_FALSE(settingsProblem(settings));
+    settings.visualTraceEnabled = true;
+    CHECK(settingsProblem(settings));
+    settings.gpuRenderer = false;
+    CHECK_FALSE(settingsProblem(settings));
+    settings.kgpuDrawLogFrames = "100";
+    CHECK(settingsProblem(settings));
+}
+
+TEST_CASE("video.ini round-trips and skips what the game would skip") {
+    Settings settings;
+    settings.internalHeight = 1440;
+    settings.verticalFov = 87.5;
+    settings.reflections = "ultra";
+    settings.vsync = false;
+    Settings read;
+    CHECK(applyVideoIni(read, videoIni(settings)) == 18);
+    CHECK(videoIni(read) == videoIni(settings));
+
+    Settings legacy;
+    CHECK(applyVideoIni(legacy, "[video]\r\nSSAO = Medium\r\ninternal_height=999\r\nfov=20\r\nnonsense=1\r\n") == 1);
+    CHECK(legacy.aoMethod == "ssao");
+    CHECK(legacy.aoQuality == "medium");
+    CHECK(legacy.internalHeight == 720);
+    CHECK(legacy.verticalFov == 0);
+}
+
+TEST_CASE("Settings JSON round-trips, and bad fields keep their defaults") {
+    Settings settings = defaultSettings();
+    settings.gpuRenderer = false;
+    settings.menuLanguage = "pt-BR";
+    settings.mouseSensitivity = 2.5;
+    settings.bindings = {{"FIRE", "Mouse2"}};
+    const Settings read = settingsFromJson(settingsJson(settings));
+    CHECK(settingsJson(read) == settingsJson(settings));
+
+    const Settings repaired = settingsFromJson(
+        R"({"Threads":"eight","FpsLimit":75,"MenuLanguage":"xx","VerticalFov":90,"SilverWeapons":true,
+            "Bindings":{"FIRE":"Banana","AIM":"Mouse3"}})");
+    CHECK(repaired.threads == defaultThreads());
+    CHECK(repaired.fpsLimit == 0);
+    CHECK(repaired.menuLanguage == "en-US");
+    CHECK(repaired.verticalFov == 90);
+    CHECK(repaired.silverWeaponMode == "force-on");
+    CHECK(repaired.bindings == bindings::Overrides{{"AIM", "Mouse3"}});
+
+    CHECK(settingsJson(settingsFromJson("not json")) == settingsJson(defaultSettings()));
+}
+
+TEST_CASE("Saving writes all three files, and video.ini and controls.ini win when loading") {
+    const black::tests::TempFolder folder;
+    folder.write("CMakeLists.txt", "\n");
+    folder.write("scripts/generate.py", "\n");
+    folder.write("local/controls.ini", "[controller]\nlayout=2\n");
+    const auto project = ProjectLayout::locate(folder.path());
+    REQUIRE(project.has_value());
+
+    Settings settings = defaultSettings();
+    settings.anisotropy = 4;
+    settings.bindings = {{"RELOAD", "T"}};
+    REQUIRE(saveSettings(*project, settings).ok());
+    CHECK(fileText(folder.path() / "local/controls.ini").find("[controller]\nlayout=2") != std::string::npos);
+    CHECK(loadSettings(*project).anisotropy == 4);
+
+    folder.write("local/video.ini", "[video]\naf=2\n");
+    folder.write("local/controls.ini", "[keyboard]\nRELOAD=Y\n");
+    const Settings loaded = loadSettings(*project);
+    CHECK(loaded.anisotropy == 2);
+    CHECK(loaded.bindings == bindings::Overrides{{"RELOAD", "Y"}});
+}
