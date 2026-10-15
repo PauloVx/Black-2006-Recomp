@@ -21,11 +21,10 @@ class Image;
 namespace black::app {
 
 /// The launcher's screen: a banner, then a menu page in the style of BLACK's own (Video Settings and friends),
-/// drawn with the game's fonts and logo once the player's disc files are in place.
+/// drawn with the game's own menu fonts once the player's disc files are in place.
 class LauncherLayer final : public Walnut::Layer {
 public:
     /// Fonts Main.cpp adds to the atlas (Walnut::Application::GetFont).
-    static constexpr const char* kStencilFont = "Stencil";
     static constexpr const char* kCondensedFont = "Condensed";
     static constexpr const char* kCondensedBoldFont = "CondensedBold";
 
@@ -39,7 +38,8 @@ private:
 
     /// Reads the project's state from disk again (after a step changes it, or on request).
     void refresh();
-    /// Uses the disc's fonts and logo when they can be read, else the bundled stand-ins.
+    /// Uses the disc's menu fonts when they can be read, else the bundled stand-ins; the logo is built in
+    /// (local/logo.png replaces it).
     void loadArt();
     void setIcons();
 
@@ -55,7 +55,6 @@ private:
     core::GameFilesStatus m_gameFiles;
     std::optional<std::filesystem::path> m_gameExecutable;
 
-    MenuFont m_stencil;
     MenuFont m_rowFont;
     MenuFont m_titleFont;
     MenuFont m_captionFont;

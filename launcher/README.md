@@ -30,21 +30,21 @@ itself, so it runs from the build folder too.
 
 ```
 launcher/
-  src/core/   the logic, with no UI: project layout, disc check (SHA-256), the game's fonts and logo (DXT,
-              "4.1v" fonts, APT bundles), processes. Unit-tested.
+  src/core/   the logic, with no UI: project layout, disc check (SHA-256), the game's menu fonts (DXT,
+              "4.1v" fonts), files, processes. Unit-tested.
   src/app/    the Walnut application: the screen, the game-style widgets, the theme
   tests/      doctest unit tests for src/core; no game files, GPU or window needed
-  assets/     fonts built into the executable (SIL Open Font License)
+  assets/     the logo and stand-in fonts (SIL Open Font License), built into the executable
   vendor/     submodules: walnut, imgui, glfw, glm, spdlog, doctest
 ```
 
 ## The look
 
 The launcher is drawn like the game's own menu pages: the colours are sampled from them, rows are green-grey with
-the selected one bright and its selector line, the rails run down the left, and prompts sit along the bottom. Once
-the player's disc files are in place it uses the game's own assets, read from those files at run time and never
-shipped: the logo from `export/FrontEnd/Core.bin` and the `Small`/`Big` menu fonts from `language/fonts`. Until then
-it uses Black Ops One (a stencil close to the logo) and Saira Condensed.
+the selected one bright and its selector line, the rails run down the left, and prompts sit along the bottom. The
+banner shows BLACK's logo (`assets/images/black-logo.png`, built in; a `local/logo.png` replaces it). Once the
+player's disc files are in place, text uses the game's own `Small`/`Big` menu fonts, read from `language/fonts` at
+run time and never shipped. Until then Saira Condensed stands in.
 
 ## Walnut
 

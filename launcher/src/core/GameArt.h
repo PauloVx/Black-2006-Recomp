@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <string_view>
 #include <vector>
 
 namespace black::core {
@@ -54,24 +53,15 @@ struct BitmapFont {
 /// ({u, v, w, h, x, y, advance} as fractions of the atlas, code at +0x1C), the texture header, then DXT pixels.
 [[nodiscard]] Result<BitmapFont> parseBitmapFont(std::span<const std::uint8_t> data);
 
-/// Images from an APT bundle (export/FrontEnd/*.bin): the named movie's texture page, cut by its image map.
-struct BundleImage {
-    std::uint32_t id = 0;
-    RgbaImage image;
-};
-[[nodiscard]] Result<std::vector<BundleImage>> parseBundleImages(std::span<const std::uint8_t> data,
-                                                                 std::string_view movie);
-
 /// Art from the player's own disc files, used to make the launcher look like the game. Absent pieces stay empty.
 struct GameArt {
     std::optional<BitmapFont> smallFont;  ///< menu rows and help text
     std::optional<BitmapFont> bigFont;    ///< page titles
-    std::optional<RgbaImage> logo;        ///< BLACK_Logo.tif, 128 x 16
 
-    [[nodiscard]] bool complete() const noexcept { return smallFont && bigFont && logo; }
+    [[nodiscard]] bool complete() const noexcept { return smallFont && bigFont; }
 };
 
-/// Loads what it can from game/language/fonts and game/export/FrontEnd/Core.bin.
+/// Loads what it can from game/language/fonts.
 [[nodiscard]] GameArt loadGameArt(const ProjectLayout& project);
 
 }  // namespace black::core

@@ -1,5 +1,6 @@
 # The launcher's logic, with no UI or graphics dependencies, so it can be unit-tested on its own.
 add_library(black_launcher_core STATIC
+    Files.cpp
     GameArt.cpp
     GameFiles.cpp
     Process.cpp

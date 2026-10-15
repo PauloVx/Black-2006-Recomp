@@ -60,35 +60,6 @@ std::vector<std::uint8_t> tinyFont() {
     return data;
 }
 
-/// An APT bundle with one movie, "core", whose 4 x 4 page is mapped as image 4.
-std::vector<std::uint8_t> tinyBundle() {
-    std::vector<std::uint8_t> data(0x300, 0);
-    put32(data, 8, 1);        // one movie
-    put32(data, 12, 0x10);    // its table
-    put32(data, 0x10, 0x20);  // -> entry
-    put32(data, 0x20, 0x30);  // name
-    put32(data, 0x24, 0x40);  // block
-    std::memcpy(data.data() + 0x30, "core", 5);
-    constexpr std::size_t kBlock = 0x40;
-    put32(data, kBlock + 8, 0x40);      // texture pages at block + 0x40
-    put32(data, kBlock + 0x14, 0x180);  // image map at block + 0x180
-    constexpr std::size_t kPages = kBlock + 0x40;
-    put32(data, kPages + 0x40 + 0x34, 0x0F);
-    put32(data, kPages + 0x40 + 0x38, 4);
-    put32(data, kPages + 0x40 + 0x3C, 4);
-    putBlock(data, kPages + 0xC0);
-    constexpr std::size_t kMap = kBlock + 0x180;
-    put32(data, kMap + 8, 1);        // one image
-    put32(data, kMap + 12, 0x20);    // entries at map + 0x20
-    put32(data, kMap + 0x20, 4);     // id 4
-    put32(data, kMap + 0x28, 0x40);  // its rect at map + 0x40
-    putFloat(data, kMap + 0x40 + 0, 0.0f);
-    putFloat(data, kMap + 0x40 + 4, 0.0f);
-    putFloat(data, kMap + 0x40 + 8, 0.5f);
-    putFloat(data, kMap + 0x40 + 12, 1.0f);
-    return data;
-}
-
 }  // namespace
 
 TEST_CASE("DXT5 decodes colours and interpolated alpha") {
@@ -142,17 +113,6 @@ TEST_CASE("Font parsing rejects other files") {
     CHECK_FALSE(parseBitmapFont(badTexture).ok());
 }
 
-TEST_CASE("Bundle images are cut from the movie's texture page") {
-    const auto images = parseBundleImages(tinyBundle(), "core");
-    REQUIRE(images.ok());
-    REQUIRE(images.value().size() == 1);
-    CHECK(images.value()[0].id == 4);
-    CHECK(images.value()[0].image.width == 2);
-    CHECK(images.value()[0].image.height == 4);
-    CHECK_FALSE(parseBundleImages(tinyBundle(), "cor").ok());  // names match exactly
-    CHECK_FALSE(parseBundleImages(tinyBundle(), "other").ok());
-}
-
 TEST_CASE("loadGameArt takes what the disc provides") {
     const black::tests::TempFolder folder;
     folder.write("CMakeLists.txt", "\n");
@@ -161,14 +121,10 @@ TEST_CASE("loadGameArt takes what the disc provides") {
     CHECK_FALSE(loadGameArt(project).complete());
 
     const std::vector<std::uint8_t> font = tinyFont();
-    const std::vector<std::uint8_t> bundle = tinyBundle();
     folder.write("game/language/fonts/Small.bin",
                  std::string_view(reinterpret_cast<const char*>(font.data()), font.size()));
     folder.write("game/language/fonts/Big.bin",
                  std::string_view(reinterpret_cast<const char*>(font.data()), font.size()));
-    folder.write("game/export/FrontEnd/Core.bin",
-                 std::string_view(reinterpret_cast<const char*>(bundle.data()), bundle.size()));
     const GameArt art = loadGameArt(project);
     CHECK(art.complete());
-    CHECK(art.logo->width == 2);
 }

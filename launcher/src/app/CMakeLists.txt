@@ -1,7 +1,8 @@
 include(LauncherEmbed)
-set(BLACK_FONTS "${PROJECT_SOURCE_DIR}/assets/fonts")
+set(BLACK_ASSETS "${PROJECT_SOURCE_DIR}/assets")
+set(BLACK_FONTS "${BLACK_ASSETS}/fonts")
 black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
-    "stencilFont=${BLACK_FONTS}/BlackOpsOne-Regular.ttf"
+    "logoImage=${BLACK_ASSETS}/images/black-logo.png"
     "condensedFont=${BLACK_FONTS}/SairaCondensed-Regular.ttf"
     "condensedBoldFont=${BLACK_FONTS}/SairaCondensed-Bold.ttf")
 

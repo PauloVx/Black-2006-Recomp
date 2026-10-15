@@ -22,6 +22,9 @@ public:
     [[nodiscard]] std::filesystem::path defaultXbe() const { return gameDirectory() / "default.xbe"; }
     /// Player settings shared with the game (video.ini, controls.ini, menus.ini).
     [[nodiscard]] std::filesystem::path localDirectory() const { return m_root / "local"; }
+    /// An optional logo image the player supplies (PNG/JPEG with alpha), used in place of the disc's small one.
+    /// It lives in local/, which Git ignores: logo artwork is not part of the project.
+    [[nodiscard]] std::filesystem::path customLogo() const { return localDirectory() / "logo.png"; }
 
     /// Where a build leaves the game, most preferred first: a portable release's bin/, then the Windows build tree.
     [[nodiscard]] std::vector<std::filesystem::path> gameExecutableCandidates() const;

@@ -1,13 +1,11 @@
 #include "core/GameArt.h"
 
-#include "core/Text.h"
+#include "core/Files.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <string>
 
 namespace black::core {
@@ -70,23 +68,6 @@ std::array<std::uint8_t, 16> blockAlpha(const std::uint8_t* block, bool dxt3) no
         alpha[i] = static_cast<std::uint8_t>(palette[(bits >> (3 * i)) & 7U]);
     }
     return alpha;
-}
-
-Result<std::vector<std::uint8_t>> readFile(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return Error{"Could not open " + toUtf8(path)};
-    }
-    std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-    if (file.bad()) {
-        return Error{"Could not read " + toUtf8(path)};
-    }
-    return bytes;
-}
-
-std::uint32_t toTexels(float fraction, std::uint32_t side) noexcept {
-    const float texels = std::round(fraction * static_cast<float>(side));
-    return texels <= 0.0f ? 0U : static_cast<std::uint32_t>(texels);
 }
 
 }  // namespace
@@ -207,61 +188,6 @@ Result<BitmapFont> parseBitmapFont(std::span<const std::uint8_t> data) {
     return font;
 }
 
-Result<std::vector<BundleImage>> parseBundleImages(std::span<const std::uint8_t> data, std::string_view movie) {
-    constexpr std::uint32_t kMaxMovies = 64;
-    constexpr std::uint32_t kMaxImages = 256;
-    const std::uint32_t count = read32(data, 8);
-    const std::uint32_t table = read32(data, 12);
-    std::uint32_t block = 0;
-    for (std::uint32_t i = 0; i < count && i < kMaxMovies && block == 0; ++i) {
-        const std::uint32_t entry = read32(data, table + std::size_t{i} * 4);
-        const std::uint32_t name = read32(data, entry);
-        if (name < data.size() && data.size() - name > movie.size() &&
-            std::memcmp(data.data() + name, movie.data(), movie.size()) == 0 && data[name + movie.size()] == 0) {
-            block = read32(data, entry + 4);
-        }
-    }
-    if (block == 0 || block >= data.size()) {
-        return Error{"The bundle has no movie named " + std::string(movie)};
-    }
-    const std::size_t pages = std::size_t{block} + read32(data, block + 8);
-    const std::size_t map = std::size_t{block} + read32(data, block + 0x14);
-    if (pages == block || map == block || pages > data.size() || data.size() - pages < 0xC0) {
-        return Error{"The movie has no texture page"};
-    }
-    const std::uint32_t format = read32(data, pages + 0x40 + 0x34);
-    const std::uint32_t width = read32(data, pages + 0x40 + 0x38);
-    const std::uint32_t height = read32(data, pages + 0x40 + 0x3C);
-    Result<RgbaImage> page = decodeDxt(data.subspan(pages + 0xC0), width, height, format);
-    if (!page) {
-        return page.error();
-    }
-
-    std::vector<BundleImage> images;
-    const std::uint32_t mapped = read32(data, map + 8);
-    const std::size_t entries = map + read32(data, map + 12);
-    for (std::uint32_t i = 0; i < mapped && i < kMaxImages; ++i) {
-        const std::size_t entry = entries + std::size_t{i} * 16;
-        const std::size_t rect = map + read32(data, entry + 8);
-        const std::uint32_t x0 = toTexels(readFloat(data, rect), width);
-        const std::uint32_t y0 = toTexels(readFloat(data, rect + 4), height);
-        const std::uint32_t w = toTexels(readFloat(data, rect + 8), width);
-        const std::uint32_t h = toTexels(readFloat(data, rect + 12), height);
-        if (w == 0 || h == 0 || x0 + w > width || y0 + h > height) {
-            continue;
-        }
-        BundleImage cut{read32(data, entry), RgbaImage{w, h, std::vector<std::uint8_t>(std::size_t{w} * h * 4)}};
-        for (std::uint32_t y = 0; y < h; ++y) {
-            const auto from =
-                page.value().pixels.begin() + static_cast<std::ptrdiff_t>((std::size_t{y0 + y} * width + x0) * 4);
-            std::copy_n(from, std::size_t{w} * 4,
-                        cut.image.pixels.begin() + static_cast<std::ptrdiff_t>(std::size_t{y} * w * 4));
-        }
-        images.push_back(std::move(cut));
-    }
-    return images;
-}
-
 GameArt loadGameArt(const ProjectLayout& project) {
     GameArt art;
     const std::filesystem::path fonts = project.gameDirectory() / "language" / "fonts";
@@ -273,17 +199,6 @@ GameArt loadGameArt(const ProjectLayout& project) {
     if (auto bytes = readFile(fonts / "Big.bin")) {
         if (auto font = parseBitmapFont(bytes.value())) {
             art.bigFont = std::move(font).value();
-        }
-    }
-    // Core.bin's "core" movie: image 4 is BLACK_Logo.tif (as the in-game menus use it)
-    constexpr std::uint32_t kLogoImage = 4;
-    if (auto bytes = readFile(project.gameDirectory() / "export" / "FrontEnd" / "Core.bin")) {
-        if (auto images = parseBundleImages(bytes.value(), "core")) {
-            for (BundleImage& image : std::move(images).value()) {
-                if (image.id == kLogoImage) {
-                    art.logo = std::move(image.image);
-                }
-            }
         }
     }
     return art;

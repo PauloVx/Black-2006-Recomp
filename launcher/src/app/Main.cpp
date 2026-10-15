@@ -50,9 +50,8 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
     specification.TitlebarColor = black::app::toU32(black::app::colors::kTitlebar);
     specification.UseDockspace = true;  // hosts the custom titlebar; the launcher draws one window below it
     specification.UseViewports = false;
-    // Atlas sizes: the stencil is drawn large in the banner, the condensed faces stand in for the game's fonts.
+    // The condensed faces stand in for the game's menu fonts until the disc is in place.
     specification.Fonts = {
-        embeddedFont(LauncherLayer::kStencilFont, black::assets::stencilFont(), 96.0f),
         embeddedFont(LauncherLayer::kCondensedFont, black::assets::condensedFont(), 26.0f),
         embeddedFont(LauncherLayer::kCondensedBoldFont, black::assets::condensedBoldFont(), 44.0f),
     };

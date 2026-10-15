@@ -124,7 +124,7 @@ void drawBanner(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const BannerArt& 
         list.AddLine(ImVec2(x, topLeft.y), ImVec2(x - size.y, bottomRight.y), hatch);
     }
 
-    // A rangefinder reticle, faint, to the right of the wordmark
+    // A rangefinder reticle, faint, to the right of the logo
     const ImVec2 centre(topLeft.x + size.x * 0.80f, topLeft.y + size.y * 0.52f);
     const float radius = size.y * 0.78f;
     const ImU32 reticle = toU32(colors::kRail, 0.10f);
@@ -139,30 +139,22 @@ void drawBanner(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const BannerArt& 
                      ImVec2(centre.x + std::cos(angle) * radius, centre.y + std::sin(angle) * radius), reticle);
     }
 
-    // The logo with a shadow: the game's own image, or the stencil wordmark in its tan, its upper part lighter
-    const float capSize = std::round(size.y * 0.40f);
-    const ImVec2 at(topLeft.x + 64.0f, topLeft.y + (size.y - capSize) * 0.5f - 12.0f);
-    float logoBottom = at.y + capSize;
+    // The logo, with a soft shadow beneath it
+    const float logoHeight = std::round(size.y * 0.44f);
+    const ImVec2 at(topLeft.x + 60.0f, topLeft.y + (size.y - logoHeight) * 0.5f - 14.0f);
+    float logoBottom = at.y + logoHeight;
     if (art.logo != nullptr) {
-        const float scale = capSize * 0.95f / static_cast<float>(art.logo->GetHeight());
-        const ImVec2 logoSize(static_cast<float>(art.logo->GetWidth()) * scale,
-                              static_cast<float>(art.logo->GetHeight()) * scale);
-        const ImVec2 logoAt(at.x - 4.0f, at.y - capSize * 0.08f);
+        const float scale = logoHeight / static_cast<float>(art.logo->GetHeight());
+        const ImVec2 logoSize(static_cast<float>(art.logo->GetWidth()) * scale, logoHeight);
         const ImTextureID texture = art.logo->GetDescriptorSet();
-        list.AddImage(texture, ImVec2(logoAt.x + 4.0f, logoAt.y + 5.0f),
-                      ImVec2(logoAt.x + 4.0f + logoSize.x, logoAt.y + 5.0f + logoSize.y), ImVec2(0, 0), ImVec2(1, 1),
-                      toU32(ImVec4(0, 0, 0, 0.6f)));
-        list.AddImage(texture, logoAt, ImVec2(logoAt.x + logoSize.x, logoAt.y + logoSize.y));
-        logoBottom = logoAt.y + logoSize.y;
-    } else if (art.wordmark != nullptr && art.wordmark->usable()) {
-        art.wordmark->draw(list, ImVec2(at.x + 4.0f, at.y + 5.0f), "BLACK", capSize, toU32(ImVec4(0, 0, 0, 0.65f)));
-        art.wordmark->draw(list, at, "BLACK", capSize, toU32(colors::kLogo));
-        list.PushClipRect(ImVec2(at.x - 8.0f, at.y - 8.0f), ImVec2(bottomRight.x, at.y + capSize * 0.42f), true);
-        art.wordmark->draw(list, at, "BLACK", capSize, toU32(ImVec4(0.902f, 0.859f, 0.749f, 1.0f)));
-        list.PopClipRect();
+        list.AddImage(texture, ImVec2(at.x + 4.0f, at.y + 5.0f),
+                      ImVec2(at.x + 4.0f + logoSize.x, at.y + 5.0f + logoSize.y), ImVec2(0, 0), ImVec2(1, 1),
+                      toU32(ImVec4(0, 0, 0, 0.55f)));
+        list.AddImage(texture, at, ImVec2(at.x + logoSize.x, at.y + logoSize.y));
+        logoBottom = at.y + logoSize.y;
     }
     if (art.caption != nullptr && art.caption->usable()) {
-        drawSpaced(list, *art.caption, ImVec2(at.x + 3.0f, logoBottom + 22.0f), "XBOX 2006  /  RECOMPILED FOR PC",
+        drawSpaced(list, *art.caption, ImVec2(at.x + 6.0f, logoBottom + 18.0f), "XBOX 2006  /  RECOMPILED FOR PC",
                    11.0f, 3.2f, toU32(colors::kRow));
     }
 

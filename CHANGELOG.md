@@ -3,8 +3,8 @@
 ## Unreleased
 
 **A new launcher in C++ (preview).** `launcher/` is a Walnut (Vulkan + Dear ImGui) application
-drawn like the game's own menu pages: BLACK's colours, rails and selection, and, once your disc files
-are in place, the game's own logo and menu fonts read from them. It shows whether the disc and build
+drawn like the game's own menu pages: BLACK's logo, colours, rails and selection, and, once your
+disc files are in place, the game's own menu fonts read from them. It shows whether the disc and build
 are in place and offers Play, Settings, Open game folder and Quit; Play and Settings still hand over to
 the current launcher. Build it with `cmake --preset windows-release` in `launcher/` (see
 `launcher/README.md`); unit tests and a Windows/Linux CI workflow come with it.

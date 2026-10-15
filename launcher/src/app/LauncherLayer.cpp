@@ -1,6 +1,8 @@
 #include "app/LauncherLayer.h"
 
+#include "app/EmbeddedAssets.h"
 #include "app/Theme.h"
+#include "core/Files.h"
 #include "core/Process.h"
 #include "core/Text.h"
 
@@ -12,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <system_error>
 #include <utility>
 
@@ -55,6 +58,27 @@ bool isFile(const std::filesystem::path& path) {
     return std::filesystem::is_regular_file(path, error);
 }
 
+/// An encoded image (any format stb_image reads) decoded for the GPU, or nothing when it cannot be read.
+std::shared_ptr<Walnut::Image> decodeImage(std::span<const unsigned char> encoded) {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    const std::unique_ptr<void, decltype(&std::free)> pixels(
+        Walnut::Image::Decode(encoded.data(), encoded.size(), width, height), &std::free);
+    if (!pixels || width == 0 || height == 0) {
+        return nullptr;
+    }
+    return std::make_shared<Walnut::Image>(width, height, Walnut::ImageFormat::RGBA, pixels.get());
+}
+
+/// An image file decoded for the GPU, or nothing when it is absent or unreadable.
+std::shared_ptr<Walnut::Image> loadImage(const std::filesystem::path& path) {
+    if (!isFile(path)) {
+        return nullptr;
+    }
+    const core::Result<std::vector<std::uint8_t>> bytes = core::readFile(path);
+    return bytes ? decodeImage(bytes.value()) : nullptr;
+}
+
 }  // namespace
 
 LauncherLayer::LauncherLayer(std::filesystem::path start) : m_start(std::move(start)) {}
@@ -75,25 +99,27 @@ void LauncherLayer::refresh() {
 }
 
 void LauncherLayer::loadArt() {
-    m_stencil = MenuFont(Walnut::Application::GetFont(kStencilFont));
     m_captionFont = MenuFont(Walnut::Application::GetFont(kCondensedFont));
-    if (m_artFromGame || !m_project || m_gameFiles.state != core::GameFilesState::Supported) {
-        if (!m_artFromGame) {
-            m_rowFont = MenuFont(Walnut::Application::GetFont(kCondensedFont));
-            m_titleFont = MenuFont(Walnut::Application::GetFont(kCondensedBoldFont));
+    if (!m_artFromGame) {
+        m_rowFont = MenuFont(Walnut::Application::GetFont(kCondensedFont));
+        m_titleFont = MenuFont(Walnut::Application::GetFont(kCondensedBoldFont));
+    }
+    if (!m_artFromGame && m_project && m_gameFiles.state == core::GameFilesState::Supported) {
+        core::GameArt art = core::loadGameArt(*m_project);
+        if (art.smallFont) {
+            m_rowFont = MenuFont(std::move(*art.smallFont));
         }
-        return;
+        if (art.bigFont) {
+            m_titleFont = MenuFont(std::move(*art.bigFont));
+        }
+        m_artFromGame = m_rowFont.fromGame();
     }
-    core::GameArt art = core::loadGameArt(*m_project);
-    m_rowFont =
-        art.smallFont ? MenuFont(std::move(*art.smallFont)) : MenuFont(Walnut::Application::GetFont(kCondensedFont));
-    m_titleFont =
-        art.bigFont ? MenuFont(std::move(*art.bigFont)) : MenuFont(Walnut::Application::GetFont(kCondensedBoldFont));
-    if (art.logo) {
-        m_logo = std::make_shared<Walnut::Image>(art.logo->width, art.logo->height, Walnut::ImageFormat::RGBA,
-                                                 art.logo->pixels.data());
+    if (m_project) {
+        m_logo = loadImage(m_project->customLogo());
     }
-    m_artFromGame = m_rowFont.fromGame();
+    if (!m_logo) {
+        m_logo = decodeImage(assets::logoImage());
+    }
 }
 
 void LauncherLayer::setIcons() {
@@ -193,7 +219,7 @@ void LauncherLayer::OnUIRender() {
     ImDrawList& list = *ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    drawBanner(list, origin, ImVec2(size.x, kBannerHeight), {m_logo.get(), &m_stencil, &m_captionFont});
+    drawBanner(list, origin, ImVec2(size.x, kBannerHeight), {m_logo.get(), &m_captionFont});
     drawPage(list, ImVec2(origin.x, origin.y + kBannerHeight), ImVec2(size.x, size.y - kBannerHeight));
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
@@ -267,7 +293,7 @@ void LauncherLayer::drawStatus(ImDrawList& list, ImVec2 topLeft, float width) co
          discReady ? colors::kGood : colors::kBad);
     line(topLeft.y + 92.0f, "GAME", m_gameExecutable ? "BUILT" : "NOT BUILT",
          m_gameExecutable ? colors::kGood : colors::kBad);
-    line(topLeft.y + 148.0f, "LOOK", m_artFromGame ? "FONTS AND LOGO FROM YOUR DISC" : "STAND-IN FONTS",
+    line(topLeft.y + 148.0f, "LOOK", m_artFromGame ? "MENU FONTS FROM YOUR DISC" : "STAND-IN FONTS",
          m_artFromGame ? colors::kGood : colors::kMuted);
 }
 

@@ -49,11 +49,9 @@ private:
 /// The ruler-like rails down the left of the game's menu pages.
 void drawRails(ImDrawList& list, float x, float top, float bottom);
 
-/// The header of the window: BLACK's logo over a dark, reticle-marked backdrop. The game's own logo when the disc
-/// is in place, else the wordmark set in the stencil font.
+/// The header of the window: BLACK's logo over a dark, reticle-marked backdrop.
 struct BannerArt {
     const Walnut::Image* logo = nullptr;
-    const MenuFont* wordmark = nullptr;
     const MenuFont* caption = nullptr;
 };
 void drawBanner(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const BannerArt& art);
@@ -67,7 +65,7 @@ void drawSpaced(ImDrawList& list, const MenuFont& font, ImVec2 capTop, std::stri
 float drawPrompt(ImDrawList& list, const MenuFont& font, ImVec2 capTop, std::string_view key, std::string_view action,
                  float size);
 
-/// A square icon cut from a font's glyph ('B' of the stencil), tan on transparent or on the titlebar colour.
+/// A square icon cut from a font's glyph, tan on transparent or on the titlebar colour.
 struct IconPixels {
     int size = 0;
     std::vector<unsigned char> rgba;
