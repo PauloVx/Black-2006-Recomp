@@ -49,12 +49,4 @@ std::optional<fs::path> ProjectLayout::gameExecutable() const {
     return std::nullopt;
 }
 
-fs::path ProjectLayout::legacySettings() const {
-#ifdef _WIN32
-    return m_root / "BLACK PC Settings.exe";
-#else
-    return m_root / "BLACK Settings.sh";
-#endif
-}
-
 }  // namespace black::core

@@ -9,10 +9,12 @@ black_embed("${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp" black::assets
 add_executable(black_launcher
     "${CMAKE_CURRENT_BINARY_DIR}/EmbeddedAssets.cpp"
     DiscFlow.cpp
+    KeyCapture.cpp
     LauncherLayer.cpp
     Main.cpp
     MenuFont.cpp
     NativeDialogs.cpp
+    SettingsFlow.cpp
     Theme.cpp
     Widgets.cpp)
 target_include_directories(black_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")

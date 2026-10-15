@@ -51,6 +51,10 @@ TEST_CASE("controls.ini keeps the game's other sections") {
     CHECK(bindings::fromControlsIni(written) == bindings::Overrides{{"AIM", "Mouse1"}});
 
     CHECK_FALSE(bindings::fromControlsIni("[controller]\nlayout=2\n"));
+
+    const std::string again = bindings::toControlsIni(written, {{"AIM", "Mouse1"}});
+    CHECK(again == written);
+    CHECK(bindings::toControlsIni(again + "\n\n", {{"AIM", "Mouse1"}}) == written);
 }
 
 TEST_CASE("sharedKeys reports a key used twice") {

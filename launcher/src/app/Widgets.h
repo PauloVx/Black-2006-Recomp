@@ -21,6 +21,9 @@ struct MenuRow {
     std::string value;
     std::string help;  // shown under the list while the row is selected
     bool enabled = true;
+    bool adjustable = false;  // a setting: left/right (and the arrows beside its value) change it
+    std::vector<std::string> cells;  // instead of a value: aligned columns at the right (key bindings)
+    int markedCell = -1;
 };
 
 struct Page {
@@ -29,8 +32,15 @@ struct Page {
     std::function<float(ImDrawList&, ImVec2 topLeft, float width)> body;  // returns its height
     std::vector<MenuRow> rows;
     std::size_t initialRow = 0;
+    float listWidth = 0;  // 0: the page's width
     std::string notice;
     bool noticeIsProblem = false;
+};
+
+/// A row chosen (step 0) or a setting changed one way or the other (step -1 or +1).
+struct MenuEvent {
+    std::size_t row = 0;
+    int step = 0;
 };
 
 class MenuList {
@@ -41,15 +51,24 @@ public:
         float rowHeight = 34;
         float textSize = 15;  // cap height in pixels
         float selectorEnd = 0;
+        std::size_t visibleRows = 0;  // 0: all; fewer scroll with the selection
+        float cellWidth = 120;
     };
 
-    [[nodiscard]] std::optional<std::size_t> draw(const std::vector<MenuRow>& rows, const MenuFont& font,
-                                                  const Layout& layout, bool acceptKeys);
+    [[nodiscard]] std::optional<MenuEvent> draw(const std::vector<MenuRow>& rows, const MenuFont& font,
+                                                const Layout& layout, bool acceptInput);
     [[nodiscard]] std::size_t selected() const noexcept { return m_selected; }
-    void select(std::size_t row) noexcept { m_selected = row; }
+    void select(std::size_t row) noexcept {
+        m_selected = row;
+        m_first = 0;
+    }
+    /// How many rows were drawn the last time (fewer than the rows while it scrolls).
+    [[nodiscard]] std::size_t shownRows() const noexcept { return m_shown; }
 
 private:
     std::size_t m_selected = 0;
+    std::size_t m_first = 0;
+    std::size_t m_shown = 0;
 };
 
 void drawRails(ImDrawList& list, float x, float top, float bottom);

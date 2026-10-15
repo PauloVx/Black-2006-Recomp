@@ -2,6 +2,7 @@
 
 #include "app/DiscFlow.h"
 #include "app/MenuFont.h"
+#include "app/SettingsFlow.h"
 #include "app/Widgets.h"
 #include "core/GameFiles.h"
 #include "core/GameSession.h"
@@ -34,7 +35,7 @@ public:
     void OnUIRender() override;
 
 private:
-    enum class Screen { Main, Disc };
+    enum class Screen { Main, Disc, Settings };
     enum class Action { Play, Settings, Disc, Build, OpenFolder, Quit };
 
     void refresh();
@@ -45,6 +46,7 @@ private:
     [[nodiscard]] Page mainPage();
     void run(Action action);
     void openDiscPages();
+    void openSettings();
     void startGame();
     void checkGame();
     [[nodiscard]] bool playing() const noexcept { return m_session != nullptr; }
@@ -66,6 +68,7 @@ private:
 
     Screen m_screen = Screen::Main;
     std::unique_ptr<DiscFlow> m_disc;
+    std::unique_ptr<SettingsFlow> m_settings;
     MenuList m_menu;
     std::string m_pageId;
     std::vector<Action> m_mainActions;

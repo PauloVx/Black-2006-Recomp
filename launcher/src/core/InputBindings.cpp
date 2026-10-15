@@ -245,6 +245,9 @@ std::string toControlsIni(std::string_view existing, const Overrides& overrides)
         any = true;
         kept.append(line).push_back('\n');
     }
+    while (kept.ends_with("\n\n")) {
+        kept.pop_back();  // or each save adds a blank line at the end
+    }
     std::string text = "; BLACK controls. Edited by the in-game Controls pages and by the launcher.\n[keyboard]\n";
     for (const Action& action : kActions) {
         text.append(action.name).append("=").append(effective(overrides, action)).push_back('\n');

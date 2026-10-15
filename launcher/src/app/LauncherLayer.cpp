@@ -1,6 +1,7 @@
 #include "app/LauncherLayer.h"
 
 #include "app/EmbeddedAssets.h"
+#include "app/KeyCapture.h"
 #include "app/NativeDialogs.h"
 #include "app/Theme.h"
 #include "core/Files.h"
@@ -22,6 +23,7 @@ namespace black::app {
 namespace {
 
 constexpr float kBannerHeight = 176.0f;
+constexpr float kCompactBannerHeight = 120.0f;  // pages with long lists
 constexpr float kPageMargin = 64.0f;
 constexpr float kMenuWidth = 470.0f;
 constexpr float kRowText = 14.0f;
@@ -60,6 +62,7 @@ void LauncherLayer::OnAttach() {
     ImGui::GetIO().IniFilename = nullptr;  // no imgui.ini next to the game
     applyTheme();
     acceptDroppedFiles(Walnut::Application::Get().GetWindowHandle());
+    installKeyCapture(Walnut::Application::Get().GetWindowHandle());
     refresh();
     setWindowIcon();
     if (m_initialDisc && m_disc) {
@@ -139,7 +142,7 @@ Page LauncherLayer::mainPage() {
         page.rows.push_back(std::move(row));
         m_mainActions.push_back(action);
     };
-    const bool canConfigure = m_project && !playing() && isFile(m_project->legacySettings());
+    const bool canConfigure = m_project.has_value() && !playing();
 
     MenuRow disc{"YOUR DISC", "", "", m_disc != nullptr && !playing()};
     switch (m_gameFiles.state) {
@@ -195,6 +198,12 @@ void LauncherLayer::openDiscPages() {
     }
 }
 
+void LauncherLayer::openSettings() {
+    m_settings = std::make_unique<SettingsFlow>(*m_project);
+    m_screen = Screen::Settings;
+    m_notice.clear();
+}
+
 void LauncherLayer::run(Action action) {
     if (!m_project) {
         return;
@@ -208,7 +217,7 @@ void LauncherLayer::run(Action action) {
                 startGame();
             }
             return;
-        case Action::Settings: result = core::startDetached(m_project->legacySettings(), {}, m_project->root()); break;
+        case Action::Settings: openSettings(); break;
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
         case Action::Disc: openDiscPages(); break;
@@ -260,16 +269,35 @@ void LauncherLayer::OnUIRender() {
     }
 
     const double time = ImGui::GetTime();
-    const Page page = m_screen == Screen::Disc && m_disc ? m_disc->page(time) : mainPage();
+    if (m_screen == Screen::Settings && !m_settings) {
+        m_screen = Screen::Main;
+    }
+    Page page;
+    if (m_screen == Screen::Disc && m_disc) {
+        page = m_disc->page(time);
+    } else if (m_screen == Screen::Settings) {
+        m_settings->update(time, m_menu.selected());
+        page = m_settings->page();
+    } else {
+        page = mainPage();
+    }
     ImDrawList& list = *ImGui::GetWindowDrawList();
     const ImVec2 origin = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    drawBanner(list, origin, ImVec2(size.x, kBannerHeight), {m_logo.get(), &m_captionFont});
-    drawPage(list, ImVec2(origin.x, origin.y + kBannerHeight), ImVec2(size.x, size.y - kBannerHeight), page);
+    const float banner = m_screen == Screen::Main ? kBannerHeight : kCompactBannerHeight;
+    drawBanner(list, origin, ImVec2(size.x, banner), {m_logo.get(), &m_captionFont});
+    drawPage(list, ImVec2(origin.x, origin.y + banner), ImVec2(size.x, size.y - banner), page);
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        if (m_screen == Screen::Main && !playing()) {
-            Walnut::Application::Get().Close();
+        if (m_screen == Screen::Main) {
+            if (!playing()) {
+                Walnut::Application::Get().Close();
+            }
+        } else if (m_screen == Screen::Settings) {
+            if (m_settings->back() == SettingsFlow::Outcome::Back) {
+                m_screen = Screen::Main;
+                m_settings.reset();
+            }
         } else if (m_disc && m_disc->back() == DiscFlow::Outcome::Back) {
             m_screen = Screen::Main;
         }
@@ -283,7 +311,9 @@ void LauncherLayer::OnUIRender() {
 void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page) {
     drawRails(list, topLeft.x + 30.0f, topLeft.y + 18.0f, topLeft.y + size.y - 18.0f);
     const bool main = m_screen == Screen::Main;
+    const bool settings = m_screen == Screen::Settings;
     const float contentWidth = main ? kMenuWidth : size.x - kPageMargin * 2.0f;
+    const float promptY = topLeft.y + size.y - 34.0f;
 
     float y = topLeft.y + 30.0f;
     m_titleFont.draw(list, ImVec2(topLeft.x + kPageMargin, y), page.title, 22.0f, toU32(colors::kText));
@@ -298,15 +328,22 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     }
     MenuList::Layout layout;
     layout.origin = ImVec2(topLeft.x + kPageMargin, y);
-    layout.width = main ? kMenuWidth : contentWidth;
-    layout.rowHeight = 31.0f;
+    layout.width = main ? kMenuWidth : page.listWidth > 0.0f ? page.listWidth : contentWidth;
+    layout.rowHeight = settings ? 28.0f : 31.0f;
     layout.textSize = kRowText;
     layout.selectorEnd = main ? topLeft.x + kPageMargin + kMenuWidth + 32.0f : 0.0f;
-    if (const auto activated = m_menu.draw(page.rows, m_rowFont, layout, true)) {
-        if (main) {
-            run(m_mainActions[*activated]);
-        } else if (m_disc) {
-            const DiscFlow::Outcome outcome = m_disc->activate(*activated);
+    constexpr float kHelpSpace = 58.0f;
+    layout.visibleRows = static_cast<std::size_t>(std::max(1.0f, (promptY - kHelpSpace - y) / layout.rowHeight));
+    const bool acceptInput = !(settings && m_settings->capturing());
+    if (const auto event = m_menu.draw(page.rows, m_rowFont, layout, acceptInput)) {
+        if (settings) {
+            if (m_settings->handle(*event) == SettingsFlow::Outcome::Back) {
+                m_screen = Screen::Main;
+            }
+        } else if (main && event->step == 0) {
+            run(m_mainActions[event->row]);
+        } else if (m_disc && event->step == 0) {
+            const DiscFlow::Outcome outcome = m_disc->activate(event->row);
             if (outcome != DiscFlow::Outcome::Stay) {
                 m_screen = Screen::Main;
             }
@@ -315,7 +352,7 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
             }
         }
     }
-    y += layout.rowHeight * static_cast<float>(page.rows.size()) + 16.0f;
+    y += layout.rowHeight * static_cast<float>(m_menu.shownRows()) + 16.0f;
 
     const bool showNotice = !page.notice.empty();
     const std::string help = showNotice          ? page.notice
@@ -329,9 +366,11 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
                    size.x - (kPageMargin + kMenuWidth + 64.0f) - 40.0f);
     }
 
-    const float promptY = topLeft.y + size.y - 34.0f;
     float x = topLeft.x + kPageMargin;
     x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "UP/DOWN", "CHOOSE", 11.0f) + 26.0f;
+    if (settings) {
+        x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "LEFT/RIGHT", "CHANGE", 11.0f) + 26.0f;
+    }
     x += drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ENTER", "SELECT", 11.0f) + 26.0f;
     drawPrompt(list, m_rowFont, ImVec2(x, promptY), "ESC", main ? "QUIT" : "BACK", 11.0f);
 

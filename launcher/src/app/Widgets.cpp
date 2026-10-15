@@ -11,15 +11,16 @@
 
 namespace black::app {
 
-std::optional<std::size_t> MenuList::draw(const std::vector<MenuRow>& rows, const MenuFont& font, const Layout& layout,
-                                          bool acceptKeys) {
+std::optional<MenuEvent> MenuList::draw(const std::vector<MenuRow>& rows, const MenuFont& font, const Layout& layout,
+                                        bool acceptInput) {
+    m_shown = 0;
     if (rows.empty()) {
         return std::nullopt;
     }
     m_selected = std::min(m_selected, rows.size() - 1);
-    std::optional<std::size_t> activated;
+    std::optional<MenuEvent> event;
 
-    if (acceptKeys) {
+    if (acceptInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
             m_selected = (m_selected + 1) % rows.size();
         }
@@ -28,32 +29,70 @@ std::optional<std::size_t> MenuList::draw(const std::vector<MenuRow>& rows, cons
         }
         const bool confirm = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter) ||
                              ImGui::IsKeyPressed(ImGuiKey_Space);
-        if (confirm && rows[m_selected].enabled) {
-            activated = m_selected;
+        const MenuRow& current = rows[m_selected];
+        if (confirm && current.enabled) {
+            event = MenuEvent{m_selected, 0};
+        } else if (current.enabled && current.adjustable && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
+            event = MenuEvent{m_selected, -1};
+        } else if (current.enabled && current.adjustable && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
+            event = MenuEvent{m_selected, 1};
         }
     }
 
-    ImDrawList& list = *ImGui::GetWindowDrawList();
+    const std::size_t visible = layout.visibleRows == 0 ? rows.size() : std::min(layout.visibleRows, rows.size());
     const float barPadding = 12.0f;
-    for (std::size_t i = 0; i < rows.size(); ++i) {
+    const ImVec2 listMin(layout.origin.x - barPadding, layout.origin.y);
+    const ImVec2 listMax(layout.origin.x + layout.width + barPadding,
+                         layout.origin.y + static_cast<float>(visible) * layout.rowHeight);
+    if (acceptInput && visible < rows.size() && ImGui::IsMouseHoveringRect(listMin, listMax)) {
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel > 0.0f && m_first > 0) {
+            --m_first;
+        } else if (wheel < 0.0f && m_first + visible < rows.size()) {
+            ++m_first;
+        }
+        m_selected = std::clamp(m_selected, m_first, m_first + visible - 1);
+    }
+    if (m_selected < m_first) {
+        m_first = m_selected;
+    } else if (m_selected >= m_first + visible) {
+        m_first = m_selected + 1 - visible;
+    }
+    m_first = std::min(m_first, rows.size() - visible);
+    m_shown = visible;
+
+    ImDrawList& list = *ImGui::GetWindowDrawList();
+    const float arrow = layout.textSize * 0.42f;
+    for (std::size_t slot = 0; slot < visible; ++slot) {
+        const std::size_t i = m_first + slot;
         const MenuRow& row = rows[i];
-        const ImVec2 rowMin(layout.origin.x - barPadding, layout.origin.y + static_cast<float>(i) * layout.rowHeight);
-        const ImVec2 rowMax(layout.origin.x + layout.width + barPadding, rowMin.y + layout.rowHeight);
+        const ImVec2 rowMin(listMin.x, layout.origin.y + static_cast<float>(slot) * layout.rowHeight);
+        const ImVec2 rowMax(listMax.x, rowMin.y + layout.rowHeight);
+        const bool selected = i == m_selected;
+        const bool arrows = row.adjustable && row.enabled && selected;
+        const float valueWidth = row.value.empty() ? 0.0f : font.width(row.value, layout.textSize);
+        const float valueRight = layout.origin.x + layout.width - (arrows ? arrow * 2.0f + 10.0f : 0.0f);
+        const float valueLeft = valueRight - valueWidth;
 
         ImGui::SetCursorScreenPos(rowMin);
         ImGui::PushID(static_cast<int>(i));
-        ImGui::InvisibleButton("row", ImVec2(rowMax.x - rowMin.x, layout.rowHeight));
+        ImGui::InvisibleButton("row", ImVec2(rowMax.x - rowMin.x, layout.rowHeight),
+                               ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         ImGui::PopID();
         const ImVec2 mouseMove = ImGui::GetIO().MouseDelta;
-        if (ImGui::IsItemHovered() && (mouseMove.x != 0.0f || mouseMove.y != 0.0f)) {
+        if (acceptInput && ImGui::IsItemHovered() && (mouseMove.x != 0.0f || mouseMove.y != 0.0f)) {
             m_selected = i;
         }
-        if (ImGui::IsItemClicked() && row.enabled) {
+        if (acceptInput && row.enabled && ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             m_selected = i;
-            activated = i;
+            const float x = ImGui::GetIO().MousePos.x;
+            const bool onLeftArrow = row.adjustable && x < valueLeft - 2.0f && x > valueLeft - arrow * 2.0f - 24.0f;
+            event = MenuEvent{i, onLeftArrow ? -1 : (row.adjustable ? 1 : 0)};
+        } else if (acceptInput && row.enabled && row.adjustable && ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            m_selected = i;
+            event = MenuEvent{i, -1};
         }
 
-        const bool selected = i == m_selected;
         const float textTop = rowMin.y + (layout.rowHeight - layout.textSize) * 0.5f;
         if (selected) {
             list.AddRectFilled(rowMin, rowMax, toU32(colors::kText, 0.055f));
@@ -68,12 +107,42 @@ std::optional<std::size_t> MenuList::draw(const std::vector<MenuRow>& rows, cons
                                          : toU32(colors::kRow);
         font.draw(list, ImVec2(layout.origin.x, textTop), row.label, layout.textSize, color);
         if (!row.value.empty()) {
-            const float valueWidth = font.width(row.value, layout.textSize);
-            font.draw(list, ImVec2(layout.origin.x + layout.width - valueWidth, textTop), row.value, layout.textSize,
-                      color);
+            font.draw(list, ImVec2(valueLeft, textTop), row.value, layout.textSize,
+                      row.adjustable && !selected && row.enabled ? toU32(colors::kLogo) : color);
+        }
+        for (std::size_t cell = 0; cell < row.cells.size(); ++cell) {
+            const float right = layout.origin.x + layout.width -
+                                layout.cellWidth * static_cast<float>(row.cells.size() - 1 - cell);
+            const float left = right - layout.cellWidth + 12.0f;
+            const std::string& text = row.cells[cell];
+            const float x = (left + right - font.width(text, layout.textSize)) * 0.5f;
+            if (static_cast<int>(cell) == row.markedCell) {
+                list.AddRect(ImVec2(left, rowMin.y + 4.0f), ImVec2(right, rowMax.y - 4.0f), toU32(colors::kLogo), 2.0f);
+            }
+            font.draw(list, ImVec2(x, textTop), text, layout.textSize,
+                      static_cast<int>(cell) == row.markedCell ? toU32(colors::kLogo) : color);
+        }
+        if (arrows) {
+            const float midY = textTop + layout.textSize * 0.5f;
+            const float leftTip = valueLeft - 10.0f - arrow * 2.0f;
+            const float rightTip = valueRight + 10.0f + arrow * 2.0f;
+            list.AddTriangleFilled(ImVec2(leftTip, midY), ImVec2(leftTip + arrow * 2.0f, midY + arrow),
+                                   ImVec2(leftTip + arrow * 2.0f, midY - arrow), toU32(colors::kLogo));
+            list.AddTriangleFilled(ImVec2(rightTip, midY), ImVec2(rightTip - arrow * 2.0f, midY - arrow),
+                                   ImVec2(rightTip - arrow * 2.0f, midY + arrow), toU32(colors::kLogo));
         }
     }
-    return activated;
+
+    if (visible < rows.size()) {  // a scroll track beside long lists
+        const float x = listMax.x + 10.0f;
+        const float height = listMax.y - listMin.y;
+        list.AddLine(ImVec2(x, listMin.y), ImVec2(x, listMax.y), toU32(colors::kRail, 0.22f));
+        const float thumbTop = listMin.y + height * static_cast<float>(m_first) / static_cast<float>(rows.size());
+        const float thumbHeight = height * static_cast<float>(visible) / static_cast<float>(rows.size());
+        list.AddRectFilled(ImVec2(x - 1.5f, thumbTop), ImVec2(x + 1.5f, thumbTop + thumbHeight),
+                           toU32(colors::kRail, 0.8f));
+    }
+    return event;
 }
 
 void drawRails(ImDrawList& list, float x, float top, float bottom) {

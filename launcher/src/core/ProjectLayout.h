@@ -26,9 +26,6 @@ public:
     [[nodiscard]] std::vector<std::filesystem::path> gameExecutableCandidates() const;
     [[nodiscard]] std::optional<std::filesystem::path> gameExecutable() const;
 
-    /// The C# settings program, used until this launcher's own settings pages replace it.
-    [[nodiscard]] std::filesystem::path legacySettings() const;
-
 private:
     std::filesystem::path m_root;
 };
