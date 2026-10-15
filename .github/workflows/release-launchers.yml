@@ -8,7 +8,8 @@ on:
       - '.gitattributes'
       - 'scripts/**'
       - 'cmake/**'
-      - 'patches/xboxrecomp-clang.patch'
+      - 'third_party/**'
+      - '.gitmodules'
       - 'tests/linux_build/**'
       - 'tests/launcher_language/**'
       - '.github/workflows/release-launchers.yml'
@@ -22,6 +23,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -46,6 +49,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -58,6 +63,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Install native Linux dependencies
         run: |
           sudo apt-get update

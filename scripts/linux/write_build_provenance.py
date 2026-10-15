@@ -30,7 +30,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     build = root / 'build-linux-wine'
     sources = []
-    for directory in ('src', 'cmake', 'scripts', 'patches', 'third_party/xboxrecomp/src', 'third_party/xboxrecomp/templates'):
+    for directory in ('src', 'cmake', 'scripts', 'third_party/xboxrecomp/src', 'third_party/xboxrecomp/templates'):
         for path in sorted((root / directory).rglob('*')):
             if path.is_file() and '__pycache__' not in path.parts:
                 sources.append(path)

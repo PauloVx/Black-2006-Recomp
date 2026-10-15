@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(apu_physical_memory_test C)
 set(CMAKE_C_STANDARD 11)
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
-    CACHE PATH "Pinned runtime with patches/xboxrecomp.patch applied")
+    CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(MEMORY_LAYOUT_SOURCE "${XBOXRECOMP_DIR}/src/kernel/xbox_memory_layout.c"
     CACHE FILEPATH "Optional physical-memory source for a negative control")

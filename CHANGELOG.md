@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**XboxRecomp is now a submodule.** `third_party/xboxrecomp` is PauloVx/xboxrecomp on its
+`black` branch, where the runtime changes are ordinary commits; `patches/xboxrecomp.patch` and
+`patches/xboxrecomp-clang.patch` are gone. The DSP56300 core moved from `.work/err009-dsp56300` to
+the `third_party/dsp56300` submodule. Clone with `--recursive`; setup fetches missing submodules,
+and release archives include both sources.
+
 Vertex shader compiles no longer cause hitches when a level first appears. The
 shader cache is keyed by the generated HLSL alone, so one program is compiled once
 instead of again for each copy left in program memory (113 cached files were 18

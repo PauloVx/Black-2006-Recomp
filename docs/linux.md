@@ -36,7 +36,7 @@ for WSL, use its Linux home directory rather than `/mnt/c` or another Windows dr
 Linux Python translates your own XBE, Linux clang-cl/LLD compile/link the game
 and Rust audio core, and Linux Mono compiles both .NET host launchers. Wine is
 not used during generation or compilation. All tools/dependencies stay in
-`.work/linux-toolchain/`, `third_party/`, and `.venv/`; the script does not alter
+`.work/linux-toolchain/` and `.venv/`, and the runtime sources are the `third_party/` submodules; the script does not alter
 your shell profile or install system packages. It writes
 `bin/black_xbox_recomp.exe` and both launchers into the release folder. Languages
 are built locally from your original English bank. No game code or bank binaries

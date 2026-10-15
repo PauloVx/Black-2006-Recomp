@@ -1,7 +1,8 @@
 # Ambient occlusion regressions
 
-These tests use the authored production launcher and the pinned XboxRecomp source after
-`patches/xboxrecomp.patch` has been applied. They require Windows, Visual Studio 2022's C/C++
+These tests use the authored production launcher and the XboxRecomp source from the
+`third_party/xboxrecomp` and `third_party/dsp56300` submodules
+(`git submodule update --init --recursive`). They require Windows, Visual Studio 2022's C/C++
 tools, Python and the .NET Framework compiler. Retail BLACK files are not needed.
 
 ```powershell

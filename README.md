@@ -139,17 +139,25 @@ Keep the extracted disc layout intact, including `GlobData.bin`, `levels/`,
 `sound/`, and `videos/`. Other releases and the PlayStation 2 version are not
 supported by this build.
 
-From PowerShell in this repository:
+Clone with submodules, then build from PowerShell in this repository:
 
 ```powershell
+git clone --recursive https://github.com/PauloVx/Black-2006-Recomp.git
 .\scripts\setup.ps1
 .\'BLACK PC Launcher.exe'
 ```
 
-Setup fetches pinned XboxRecomp and DSP56300 revisions, applies the included
-runtime patch, creates a local Python environment, generates code from your XBE,
-and builds the game and launcher. These dependencies and outputs stay outside Git.
-Building the generated C code can take several minutes.
+The runtime is a submodule: `third_party/xboxrecomp` is
+[PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) on its `black` branch,
+a fork of XboxRecomp that carries this project's runtime changes as ordinary commits.
+`third_party/dsp56300` is the pinned DSP56300 audio core. In an existing clone, run
+`git submodule update --init --recursive` (setup does this when they are missing).
+Setup then creates a local Python environment, generates code from your XBE, and builds
+the game and launcher. Generated code and build outputs stay outside Git. Building the
+generated C code can take several minutes.
+
+To change the runtime, work inside `third_party/xboxrecomp` on the `black` branch,
+commit and push there, then commit the new submodule commit in this repository.
 
 **BLACK PC Launcher.exe** starts the game directly using your saved preferences.
 Open **BLACK PC Settings.exe** to configure controls and video settings separately,

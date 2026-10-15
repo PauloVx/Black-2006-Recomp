@@ -1,0 +1,7 @@
+[submodule "third_party/xboxrecomp"]
+	path = third_party/xboxrecomp
+	url = https://github.com/PauloVx/xboxrecomp.git
+	branch = black
+[submodule "third_party/dsp56300"]
+	path = third_party/dsp56300
+	url = https://github.com/mborgerson/dsp56300.git

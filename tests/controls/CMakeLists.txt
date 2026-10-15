@@ -4,7 +4,7 @@ if(NOT WIN32)
     message(FATAL_ERROR "The Controls page regressions require Windows.")
 endif()
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
-    CACHE PATH "Pinned XboxRecomp checkout with patches/xboxrecomp.patch applied")
+    CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
 set(runtime_video "${XBOXRECOMP_DIR}/src/video")
 set(runtime_input "${XBOXRECOMP_DIR}/src/input")
 set(menu_source "${CMAKE_CURRENT_SOURCE_DIR}/../../src/black_native_menu.inc")

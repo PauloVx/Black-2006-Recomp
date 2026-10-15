@@ -4,11 +4,8 @@ param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $toolkit = Join-Path $projectRoot 'third_party\xboxrecomp'
-$patch = Join-Path $projectRoot 'patches\xboxrecomp.patch'
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
-$dsp56300 = Join-Path $projectRoot '.work\err009-dsp56300'
-$upstreamCommit = '766ecefcd7fb2a9b344de8ec891f6fe9ea14261b'
-$dsp56300Commit = 'aab3649fc452daf03da8b5e36fdc0c308d874101'
+$dsp56300 = Join-Path $projectRoot 'third_party\dsp56300'
 $xbe = Join-Path $projectRoot 'game\default.xbe'
 $expectedXbe = 'DF2739C372D254A90AEECCF5971D12097F22D89FBB90DB021FDA96DD4DEB68F6'
 
@@ -33,41 +30,17 @@ if ((Get-FileHash -LiteralPath $xbe -Algorithm SHA256).Hash -ne $expectedXbe) {
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Git must be installed and available on PATH.' }
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { throw 'CMake 3.20 or later must be installed and available on PATH.' }
 
-if (-not (Test-Path -LiteralPath $toolkit)) {
-    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $toolkit) -Force
-    Invoke-Checked git @('clone', 'https://github.com/sp00nznet/xboxrecomp.git', $toolkit)
-    Invoke-Checked git @('-C', $toolkit, 'checkout', '--detach', $upstreamCommit)
+# XboxRecomp (PauloVx's fork, branch black) and the DSP56300 core are submodules at the commits this
+# checkout records. Only missing ones are fetched, so a checked-out runtime branch with new commits is left alone.
+# A release archive without .git ships them already in place.
+$required = @((Join-Path $toolkit 'CMakeLists.txt'), (Join-Path $dsp56300 'crates\emu-ffi\Cargo.toml'))
+if (($required | Where-Object { -not (Test-Path -LiteralPath $_) }) -and (Test-Path -LiteralPath (Join-Path $projectRoot '.git'))) {
+    Invoke-Checked git @('-C', $projectRoot, 'submodule', 'update', '--init', '--recursive')
 }
-$actualCommit = (& git -C $toolkit rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $upstreamCommit) {
-    throw 'third_party\xboxrecomp must be at the pinned upstream commit. Preserve another checkout separately before retrying.'
-}
-function Test-Patch([switch]$Reverse) {
-    # Windows PowerShell 5 treats native stderr as an error record even when
-    # redirected. A failed check is expected for an already-applied patch.
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        if ($Reverse) { & git -C $toolkit apply --reverse --check $patch 2>$null }
-        else { & git -C $toolkit apply --check $patch 2>$null }
-        return $LASTEXITCODE -eq 0
-    } finally {
-        $ErrorActionPreference = $previousPreference
+foreach ($file in $required) {
+    if (-not (Test-Path -LiteralPath $file)) {
+        throw "$file is missing. Clone with --recursive, or run: git submodule update --init --recursive"
     }
-}
-if (Test-Patch) {
-    Invoke-Checked git @('-C', $toolkit, 'apply', $patch)
-} else {
-    if (-not (Test-Patch -Reverse)) { throw 'Runtime patch conflicts with this dependency checkout; preserve local edits before retrying.' }
-}
-
-if (-not (Test-Path -LiteralPath $dsp56300)) {
-    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $dsp56300) -Force
-    Invoke-Checked git @('clone', '--depth', '1', '--branch', 'v1.0.0', 'https://github.com/mborgerson/dsp56300.git', $dsp56300)
-}
-$actualDspCommit = (& git -C $dsp56300 rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $actualDspCommit -ne $dsp56300Commit) {
-    throw 'The DSP56300 dependency must be at the pinned v1.0.0 commit. Preserve another checkout separately before retrying.'
 }
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue) -or
     -not (Get-Command rustup -ErrorAction SilentlyContinue)) {

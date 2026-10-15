@@ -1,7 +1,6 @@
 /game/
 /src/recomp/
 /src/black_xmv_idct.inc
-/third_party/
 /.venv/
 /.work/
 /build*/

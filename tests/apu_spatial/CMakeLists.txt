@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(apu_spatial_test C)
 set(CMAKE_C_STANDARD 11)
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
-    CACHE PATH "Pinned runtime with patches/xboxrecomp.patch applied")
+    CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
 set(APU_DSP_TEST_SOURCE "" CACHE FILEPATH "Alternate apu_dsp.c retaining the current public API for a negative control")
 add_subdirectory("${XBOXRECOMP_DIR}" runtime)
 add_executable(apu-spatial-test test_main.c)
