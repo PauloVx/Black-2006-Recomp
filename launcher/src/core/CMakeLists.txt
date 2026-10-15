@@ -2,6 +2,7 @@
 add_library(black_launcher_core STATIC
     ChildProcess.cpp
     DiscImport.cpp
+    ErrorReport.cpp
     Files.cpp
     Format.cpp
     GameArt.cpp

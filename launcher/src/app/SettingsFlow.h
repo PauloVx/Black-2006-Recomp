@@ -1,10 +1,13 @@
 #pragma once
 
 #include "app/Widgets.h"
+#include "core/ErrorReport.h"
 #include "core/ProjectLayout.h"
 #include "core/Settings.h"
 
+#include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,10 +28,11 @@ public:
     [[nodiscard]] Page page();
     Outcome handle(MenuEvent event);
     Outcome back();
-    [[nodiscard]] bool capturing() const noexcept { return m_capture.active; }
+    /// Reading a key or typed text: the menu keys are not the menu's meanwhile.
+    [[nodiscard]] bool busy() const noexcept { return m_capture.active || m_edit.active || m_inputUsed; }
 
 private:
-    enum class Section { Hub, Display, Graphics, Controls, Bindings, Game };
+    enum class Section { Hub, Display, Graphics, Controls, Bindings, Game, Diagnostics, Report };
 
     struct Option {
         std::string label;
@@ -37,6 +41,9 @@ private:
         std::function<void(int step)> change;  // step -1, +1, or 0 for Enter (usually as +1)
         std::function<bool()> enabled;
         bool adjustable = true;
+        /// For typed values: checks and stores the text, or says why it cannot be used.
+        std::function<std::optional<std::string>(const std::string& text)> commit;
+        std::string allowed;  // the characters that can be typed
     };
 
     struct Capture {
@@ -45,11 +52,22 @@ private:
         double since = 0;
     };
 
+    struct Edit {
+        bool active = false;
+        std::size_t row = 0;
+        std::string text;
+    };
+
     [[nodiscard]] std::vector<Option> options(Section section);
     [[nodiscard]] std::vector<Option> displayOptions();
     [[nodiscard]] std::vector<Option> graphicsOptions();
     [[nodiscard]] std::vector<Option> controlsOptions();
     [[nodiscard]] std::vector<Option> gameOptions();
+    [[nodiscard]] std::vector<Option> diagnosticsOptions();
+    [[nodiscard]] Page reportPage() const;
+    void prepareReport();
+    void updateEdit();
+    void updateCapture(double time);
     [[nodiscard]] Page bindingsPage() const;
     [[nodiscard]] std::vector<std::string> slotsOf(std::size_t action) const;
     void setSlot(std::size_t action, std::size_t slot, const std::string& token);
@@ -63,6 +81,11 @@ private:
     std::size_t m_slot = 0;
     std::size_t m_selectedRow = 0;
     Capture m_capture;
+    Edit m_edit;
+    bool m_inputUsed = false;  // the key or click that ended a capture or edit is not also a menu choice
+    double m_time = 0;
+    std::optional<std::filesystem::path> m_session;
+    std::optional<core::SessionSummary> m_summary;
     std::string m_notice;
     bool m_noticeIsProblem = false;
 };

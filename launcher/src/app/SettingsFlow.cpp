@@ -2,6 +2,8 @@
 
 #include "app/KeyCapture.h"
 #include "core/InputBindings.h"
+#include "core/Process.h"
+#include "core/Text.h"
 
 #include "imgui.h"
 
@@ -91,6 +93,13 @@ void SettingsFlow::open(Section section) {
     m_section = section;
     m_slot = 0;
     m_notice.clear();
+    if (section == Section::Report) {
+        m_session = core::latestSession(m_project);
+        m_summary.reset();
+        if (m_session) {
+            m_summary = core::summarizeSession(m_project, *m_session, core::userHome());
+        }
+    }
 }
 
 std::vector<SettingsFlow::Option> SettingsFlow::options(Section section) {
@@ -99,6 +108,8 @@ std::vector<SettingsFlow::Option> SettingsFlow::options(Section section) {
         case Section::Graphics: return graphicsOptions();
         case Section::Controls: return controlsOptions();
         case Section::Game: return gameOptions();
+        case Section::Diagnostics: return diagnosticsOptions();
+        case Section::Report:
         case Section::Hub:
         case Section::Bindings: break;
     }
@@ -321,6 +332,125 @@ std::vector<SettingsFlow::Option> SettingsFlow::gameOptions() {
     return rows;
 }
 
+std::vector<SettingsFlow::Option> SettingsFlow::diagnosticsOptions() {
+    core::Settings& s = m_settings;
+    const auto toggle = [](std::string label, std::string help, bool& field) {
+        return Option{std::move(label), std::move(help), [&field] { return std::string(field ? "ON" : "OFF"); },
+                      [&field](int) { field = !field; }, {}};
+    };
+    std::vector<Option> rows;
+    rows.push_back(toggle("VISUAL TRACE",
+                          "Records what the CPU renderer draws to visual-trace.log (1 MB at most). Needs the CPU "
+                          "renderer, and slows the frames it records.",
+                          s.visualTraceEnabled));
+    Option frames{"TRACE FRAMES", "Which frames to trace: one (120), a range (120-180) or every Nth of a range (120-240/30).",
+                  [&s] { return s.visualTraceFrames; }, {}, [&s] { return s.visualTraceEnabled; }, false};
+    frames.allowed = "0123456789-/";
+    frames.commit = [&s](const std::string& text) -> std::optional<std::string> {
+        const auto normalized = core::normalizeTraceFrames(text);
+        if (!normalized) {
+            return "Enter a frame (120), a range (120-180) or a stepped range (120-240/30).";
+        }
+        s.visualTraceFrames = *normalized;
+        return std::nullopt;
+    };
+    rows.push_back(std::move(frames));
+    rows.push_back(toggle("AUDIO DSP TRACE",
+                          "Samples the audio processor's state about once a second to audio-dsp-trace.log (1 MB at "
+                          "most). No sound is recorded.",
+                          s.dspTraceEnabled));
+    Option drawLog{"GPU DRAW LOG",
+                   "Logs every draw of some frames to kgpu-draw-trace.log: a frame, or frame,count (up to 120). Empty "
+                   "turns it off. Needs the GPU renderer.",
+                   [&s] { return s.kgpuDrawLogFrames.empty() ? std::string("OFF") : s.kgpuDrawLogFrames; }, {}, {},
+                   false};
+    drawLog.allowed = "0123456789,";
+    drawLog.commit = [&s](const std::string& text) -> std::optional<std::string> {
+        if (text.empty()) {
+            s.kgpuDrawLogFrames.clear();
+            return std::nullopt;
+        }
+        const auto normalized = core::normalizeDrawLogFrames(text);
+        if (!normalized) {
+            return "Enter a frame (2400) or frame,count (2400,2), up to 120 frames.";
+        }
+        s.kgpuDrawLogFrames = *normalized;
+        return std::nullopt;
+    };
+    rows.push_back(std::move(drawLog));
+    rows.push_back({"OPEN LOGS FOLDER", "Each game run keeps its logs in reports/launcher-<date and time>.",
+                    [] { return std::string(); },
+                    [this](int) {
+                        const std::filesystem::path reports = m_project.root() / "reports";
+                        std::error_code error;
+                        std::filesystem::create_directories(reports, error);
+                        if (auto opened = core::openFolder(reports); !opened) {
+                            m_notice = opened.error().message;
+                            m_noticeIsProblem = true;
+                        }
+                    },
+                    {}, false});
+    rows.push_back({"REPORT A PROBLEM", "Prepares a GitHub issue about the last game run, for you to check and send.",
+                    [] { return std::string(); }, [this](int) { open(Section::Report); }, {}, false});
+    return rows;
+}
+
+void SettingsFlow::prepareReport() {
+    if (!m_summary) {
+        return;
+    }
+    const std::string body = core::reportBody(m_summary->text);
+    const auto draft = core::saveReportDraft(m_project, body);
+    ImGui::SetClipboardText(body.c_str());
+    if (auto opened = core::openUrl(core::issueUrl("Automatic report", body)); !opened) {
+        m_notice = opened.error().message + ". The report is copied: paste it into a new issue at " +
+                   std::string(core::kIssuesUrl) + ".";
+        m_noticeIsProblem = true;
+        return;
+    }
+    m_notice = "The report is open on GitHub and copied" +
+               (draft ? " (also saved in reports/issue-drafts)" : std::string()) +
+               ". Attach the session's logs there, then submit it.";
+    m_noticeIsProblem = false;
+}
+
+Page SettingsFlow::reportPage() const {
+    Page page;
+    page.id = "settings-report";
+    page.title = "REPORT A PROBLEM";
+    page.listWidth = 640.0f;
+    page.notice = m_notice;
+    page.noticeIsProblem = m_noticeIsProblem;
+    if (!m_summary) {
+        page.rows = {{"NO GAME RUN YET", "", "Play once, then come back here if something goes wrong.", false},
+                     {"BACK", "", "", true}};
+        return page;
+    }
+    const std::string& name = m_summary->folderName;  // launcher-YYYYMMDDTHHMMSSmmmZ-id
+    const std::string when = name.size() >= 22 ? name.substr(9, 4) + "-" + name.substr(13, 2) + "-" +
+                                                     name.substr(15, 2) + "  " + name.substr(18, 2) + ":" +
+                                                     name.substr(20, 2) + " UTC"
+                                               : name;
+    const std::string ended = !m_summary->exitCode      ? std::string("STILL RUNNING OR UNKNOWN")
+                              : *m_summary->exitCode == 0 ? std::string("NORMALLY")
+                                                          : "WITH ERROR " + std::to_string(*m_summary->exitCode);
+    page.rows = {
+        {"LAST GAME RUN", when, "The game run this report is about.", false},
+        {"ENDED", ended, "How the game ended.", false},
+        {"ERROR LINES IN ITS LOGS", std::to_string(m_summary->errorLines.size()),
+         "Lines with error, failed, exception or crash in session.log and kernel.log. The report lists the latest.",
+         false},
+        {"PREPARE THE REPORT", "",
+         "Opens a new GitHub issue filled in with this run's details, without your folder names. Nothing is sent "
+         "until you submit it there.",
+         true},
+        {"OPEN THIS RUN'S LOGS", "", "Attach session.log and kernel.log from here to the issue.", true},
+        {"BACK", "", "", true},
+    };
+    page.initialRow = 3;
+    return page;
+}
+
 std::vector<std::string> SettingsFlow::slotsOf(std::size_t action) const {
     return bindings::tokens(bindings::effective(m_settings.bindings, bindings::actions()[action]));
 }
@@ -345,8 +475,49 @@ void SettingsFlow::setSlot(std::size_t action, std::size_t slot, const std::stri
     save();
 }
 
+void SettingsFlow::updateEdit() {
+    const std::vector<Option> rows = options(m_section);
+    if (m_edit.row >= rows.size() || !rows[m_edit.row].commit) {
+        m_edit.active = false;
+        return;
+    }
+    const Option& option = rows[m_edit.row];
+    ImGuiIO& io = ImGui::GetIO();
+    for (const ImWchar c : io.InputQueueCharacters) {
+        if (c < 128 && option.allowed.find(static_cast<char>(c)) != std::string::npos && m_edit.text.size() < 24) {
+            m_edit.text.push_back(static_cast<char>(c));
+        }
+    }
+    io.InputQueueCharacters.resize(0);
+    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && !m_edit.text.empty()) {
+        m_edit.text.pop_back();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+        if (const auto problem = option.commit(m_edit.text)) {
+            m_notice = *problem;
+            m_noticeIsProblem = true;
+            return;
+        }
+        m_edit.active = false;
+        m_notice.clear();
+        save();
+    }
+}
+
 void SettingsFlow::update(double time, std::size_t selectedRow) {
     m_selectedRow = selectedRow;
+    m_time = time;
+    const bool wasBusy = m_capture.active || m_edit.active;
+    m_inputUsed = false;
+    if (m_edit.active) {
+        updateEdit();
+    } else {
+        updateCapture(time);
+    }
+    m_inputUsed = wasBusy && !m_capture.active && !m_edit.active;
+}
+
+void SettingsFlow::updateCapture(double time) {
     if (m_capture.active) {
         std::optional<std::string> token;
         if (const auto key = takeCapturedKey()) {
@@ -387,7 +558,7 @@ void SettingsFlow::update(double time, std::size_t selectedRow) {
         }
         return;
     }
-    if (m_section != Section::Bindings || selectedRow >= bindings::actions().size()) {
+    if (m_section != Section::Bindings || m_selectedRow >= bindings::actions().size()) {
         return;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
@@ -395,7 +566,7 @@ void SettingsFlow::update(double time, std::size_t selectedRow) {
     } else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
         m_slot = (m_slot + 1) % kSlots;
     } else if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-        setSlot(selectedRow, m_slot, {});
+        setSlot(m_selectedRow, m_slot, {});
     }
 }
 
@@ -444,6 +615,9 @@ Page SettingsFlow::page() {
     if (m_section == Section::Bindings) {
         return bindingsPage();
     }
+    if (m_section == Section::Report) {
+        return reportPage();
+    }
     Page page;
     page.listWidth = 640.0f;
     page.notice = m_notice;
@@ -456,27 +630,43 @@ Page SettingsFlow::page() {
             {"GRAPHICS", "", "Anti-aliasing, ambient occlusion, reflections and other effects.", true},
             {"CONTROLS", "", "Key bindings, mouse and controller.", true},
             {"GAME", "", "Renderer, game clock, menu language and cheats.", true},
+            {"DIAGNOSTICS", "", "Logs for finding problems, and reporting one.", true},
             {"BACK", "", "", true},
         };
         page.initialRow = m_lastSection == Section::Graphics   ? 1
                           : m_lastSection == Section::Controls ? 2
                           : m_lastSection == Section::Bindings ? 2
                           : m_lastSection == Section::Game     ? 3
+                          : m_lastSection == Section::Diagnostics || m_lastSection == Section::Report ? 4
                                                                : 0;
         return page;
     }
-    const std::array<const char*, 6> titles = {"SETTINGS", "DISPLAY", "GRAPHICS", "CONTROLS", "KEY BINDINGS", "GAME"};
+    const std::array<const char*, 7> titles = {"SETTINGS",     "DISPLAY", "GRAPHICS",   "CONTROLS",
+                                               "KEY BINDINGS", "GAME",    "DIAGNOSTICS"};
     page.title = titles.at(static_cast<std::size_t>(m_section));
     page.id = "settings-" + page.title;
-    for (const Option& option : options(m_section)) {
+    const std::vector<Option> rows = options(m_section);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const Option& option = rows[i];
         const bool enabled = !option.enabled || option.enabled();
         std::string help = option.help;
         if (m_section == Section::Graphics && !m_settings.gpuRenderer) {
             help += " Needs the GPU renderer (Settings > Game).";
         }
-        page.rows.push_back({option.label, option.value(), help, enabled, option.adjustable});
+        std::string value = option.value();
+        if (m_edit.active && m_edit.row == i) {
+            value = m_edit.text + (std::fmod(m_time, 1.0) < 0.5 ? "_" : " ");
+            help = "Type the value, then Enter. Escape keeps the old one.";
+        }
+        page.rows.push_back({option.label, value, help, enabled, option.adjustable});
     }
     page.rows.push_back({"BACK", "", "", true});
+    if (m_section == Section::Diagnostics && page.notice.empty()) {
+        if (const auto problem = core::settingsProblem(m_settings)) {
+            page.notice = "Play will not start: " + *problem;
+            page.noticeIsProblem = true;
+        }
+    }
     return page;
 }
 
@@ -484,8 +674,12 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
     if (m_capture.active) {
         return Outcome::Stay;
     }
+    if (m_edit.active) {
+        return Outcome::Stay;
+    }
     if (m_section == Section::Hub) {
-        constexpr std::array kSections = {Section::Display, Section::Graphics, Section::Controls, Section::Game};
+        constexpr std::array kSections = {Section::Display, Section::Graphics, Section::Controls, Section::Game,
+                                          Section::Diagnostics};
         if (event.row < kSections.size()) {
             open(kSections.at(event.row));
             return Outcome::Stay;
@@ -506,12 +700,32 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
         }
         return Outcome::Stay;
     }
+    if (m_section == Section::Report) {
+        const std::size_t rowCount = m_summary ? 6 : 2;
+        if (event.row + 1 == rowCount) {
+            return back();
+        }
+        if (event.row == 3) {
+            prepareReport();
+        } else if (event.row == 4 && m_session) {
+            if (auto opened = core::openFolder(*m_session); !opened) {
+                m_notice = opened.error().message;
+                m_noticeIsProblem = true;
+            }
+        }
+        return Outcome::Stay;
+    }
     std::vector<Option> rows = options(m_section);
     if (event.row >= rows.size()) {
         return back();
     }
     Option& option = rows[event.row];
     if (option.enabled && !option.enabled()) {
+        return Outcome::Stay;
+    }
+    if (option.commit) {
+        m_edit = Edit{true, event.row, option.value() == "OFF" ? std::string() : option.value()};
+        m_notice.clear();
         return Outcome::Stay;
     }
     option.change(event.step);
@@ -522,6 +736,11 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
 }
 
 SettingsFlow::Outcome SettingsFlow::back() {
+    if (m_edit.active) {
+        m_edit.active = false;
+        m_notice.clear();
+        return Outcome::Stay;
+    }
     if (m_capture.active) {
         m_capture.active = false;
         endKeyCapture();
@@ -532,6 +751,10 @@ SettingsFlow::Outcome SettingsFlow::back() {
         case Section::Hub: return Outcome::Back;
         case Section::Bindings:
             m_section = Section::Controls;
+            m_notice.clear();
+            return Outcome::Stay;
+        case Section::Report:
+            m_section = Section::Diagnostics;
             m_notice.clear();
             return Outcome::Stay;
         default: open(Section::Hub); return Outcome::Stay;

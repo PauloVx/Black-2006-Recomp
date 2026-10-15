@@ -2,6 +2,7 @@
 add_executable(black_launcher_tests
     ChildProcessTests.cpp
     DiscTests.cpp
+    ErrorReportTests.cpp
     FormatTests.cpp
     GameArtTests.cpp
     GameFilesTests.cpp

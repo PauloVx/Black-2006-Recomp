@@ -334,7 +334,7 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     layout.selectorEnd = main ? topLeft.x + kPageMargin + kMenuWidth + 32.0f : 0.0f;
     constexpr float kHelpSpace = 58.0f;
     layout.visibleRows = static_cast<std::size_t>(std::max(1.0f, (promptY - kHelpSpace - y) / layout.rowHeight));
-    const bool acceptInput = !(settings && m_settings->capturing());
+    const bool acceptInput = !(settings && m_settings->busy());
     if (const auto event = m_menu.draw(page.rows, m_rowFont, layout, acceptInput)) {
         if (settings) {
             if (m_settings->handle(*event) == SettingsFlow::Outcome::Back) {
