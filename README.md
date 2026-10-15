@@ -46,6 +46,12 @@ vendor SDK. The [AO regression tests](tests/ambient_occlusion/README.md) exercis
 the actual shaders, settings, launcher controls, and native camera hook without
 game files.
 
+**Reflections** replaces BLACK's 128 x 128 environment maps (weapons, windows,
+glass) with screen-space reflections of the scene. Choose Original, Low, Medium,
+High (default) or Ultra on the launcher's **Graphics** tab or the in-game
+**Video Settings > Graphics** page. Original keeps the game's maps. See
+[docs/reflections.md](docs/reflections.md).
+
 AO reconstructs positions at the sampled depth texel and retries when an early
 draw has no usable depth buffer. Autofocus selects a representative surface in
 the central aperture, reducing focus jumps from thin foreground objects.

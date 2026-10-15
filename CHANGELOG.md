@@ -26,6 +26,15 @@ menu style. Photos are saved as PNG to `Pictures\BLACK` without the HUD, menus o
 effects are off while it is open; scripted cameras cannot be entered. Unedited `menus.ini` files
 gain the new pause item automatically.
 
+**Reflections**: with the GPU renderer, screen-space reflections replace the
+game's low-resolution 128 x 128 environment maps on the surfaces that use them,
+mostly the first-person weapons and some windows. Rays that miss use a blurred
+copy of the screen instead of the baked map. Night scenes are brightened to match
+the original's overall level. A new Reflections row (Original, Low, Medium, High,
+Ultra; default High) is on the launcher's Graphics tab and the in-game
+Video Settings > Graphics page. `RECOMP_REFLECTIONS` pins it. See
+[docs/reflections.md](docs/reflections.md).
+
 ## 0.1.0-alpha.2 — 2026-10-14
 
 **Build BLACK.sh** now generates and compiles the game entirely on x86_64 Linux

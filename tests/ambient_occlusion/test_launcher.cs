@@ -62,6 +62,18 @@ namespace BlackXboxLauncher
                 Directory.CreateDirectory(fixture);
                 var defaults = new LaunchOptions();
                 Check(defaults.AoMethod == "off" && defaults.AoQuality == "high", "AO defaults are Off and High.");
+                Check(defaults.Reflections == "high", "Reflections default to High.");
+                foreach (string level in new[] { "original", "low", "medium", "high", "ultra" })
+                {
+                    var chosen = new LaunchOptions { Reflections = level };
+                    chosen.Validate();
+                    var parsed = new LaunchOptions();
+                    Check(parsed.ApplyVideoIni(chosen.VideoIni()) == 18 && parsed.Reflections == level, "Reflections video.ini round trip: " + level);
+                    Check(LaunchOptions.FromSettingsJson(new JavaScriptSerializer().Serialize(chosen)).Reflections == level, "Launcher JSON preserves reflections.");
+                }
+                Check(new LaunchOptions().ApplyVideoIni("reflections=off\n") == 0, "Unknown reflections values are skipped.");
+                Invalid(new LaunchOptions { Reflections = "off" }, "Reflections");
+                Check(LaunchOptions.FromSettingsJson("{\"Reflections\":\"bogus\"}").Reflections == "high", "Malformed reflections are repaired.");
                 Check(!defaults.VisualTraceEnabled && defaults.VisualTraceFrames == "120-240/30", "Visual tracing defaults to Off with a documented frame pattern.");
                 Check(!defaults.DspTraceEnabled, "DSP state tracing defaults to Off.");
                 Check(defaults.KgpuDrawLogFrames == "", "GPU draw tracing defaults to Off.");
@@ -108,7 +120,7 @@ namespace BlackXboxLauncher
                         chosen.Validate();
                         Check(GameSession.CreateStartInfo(fixture, chosen) != null, "Accepted AO " + method + "/" + quality);
                         var parsed = new LaunchOptions();
-                        Check(parsed.ApplyVideoIni(chosen.VideoIni()) == 17 && parsed.AoMethod == method && parsed.AoQuality == quality,
+                        Check(parsed.ApplyVideoIni(chosen.VideoIni()) == 18 && parsed.AoMethod == method && parsed.AoQuality == quality,
                             "Shared video.ini round trip: " + method + "/" + quality);
                         var restored = LaunchOptions.FromSettingsJson(new JavaScriptSerializer().Serialize(chosen));
                         Check(restored.AoMethod == method && restored.AoQuality == quality, "Launcher JSON preserves AO choices.");
@@ -280,6 +292,10 @@ namespace BlackXboxLauncher
                     Check(Options(form).AoMethod == "hbao_plus" && Options(form).AoQuality == "medium" && quality.Enabled, "Reload AO choices saved by the game.");
                     Select(method, "Off");
                     Check(!quality.Enabled && Options(form).AoQuality == "medium", "Turning AO Off preserves quality.");
+                    var reflections = Find(form, "Reflections") as ComboBox;
+                    Check(reflections != null && reflections.Items.Count == 5 && reflections.SelectedItem.ToString() == "High", "Reflections choices are exposed.");
+                    Select(reflections, "Original");
+                    Check(Options(form).Reflections == "original", "Reflections UI reaches the settings model.");
                     var tip = (ToolTip)typeof(LauncherForm).GetField("settingsTip", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
                     Check(tip.GetToolTip(quality).Contains("sampling density and radius") && tip.GetToolTip(quality).Contains("scene resolution"),
                         "Quality help describes actual sampling behavior.");

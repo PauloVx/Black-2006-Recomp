@@ -434,7 +434,7 @@ static int same_settings(const PcVideoSettings *a, const PcVideoSettings *b)
            a->borderless == b->borderless && a->scale == b->scale && a->nearest == b->nearest && a->vsync == b->vsync &&
            a->fps_limit == b->fps_limit && a->aspect == b->aspect && a->fov == b->fov && a->motion_blur_off == b->motion_blur_off &&
            a->aa == b->aa && a->af == b->af && a->dof == b->dof && a->sharpen == b->sharpen &&
-           a->ao_method == b->ao_method && a->ao_quality == b->ao_quality &&
+           a->ao_method == b->ao_method && a->ao_quality == b->ao_quality && a->reflections == b->reflections &&
            a->render_override_w == b->render_override_w && a->render_override_h == b->render_override_h;
 }
 
@@ -444,7 +444,8 @@ static void clear_env(void)
         "RECOMP_WINDOW_WIDTH", "RECOMP_WINDOW_HEIGHT", "RECOMP_WINDOW_MODE", "RECOMP_RENDER_WIDTH", "RECOMP_RENDER_HEIGHT",
         "RECOMP_SCALE_MODE", "RECOMP_PRESENT_FILTER", "RECOMP_VSYNC", "RECOMP_FPS_LIMIT", "RECOMP_BLACK_ASPECT",
         "RECOMP_BLACK_FOV", "RECOMP_BLACK_MOTION_BLUR", "RECOMP_INTERNAL_HEIGHT", "RECOMP_VIDEO_INI",
-        "RECOMP_AA", "RECOMP_AF", "RECOMP_DOF", "RECOMP_SHARPEN", "RECOMP_SSAO", "RECOMP_AO_METHOD", "RECOMP_AO_QUALITY"
+        "RECOMP_AA", "RECOMP_AF", "RECOMP_DOF", "RECOMP_SHARPEN", "RECOMP_SSAO", "RECOMP_AO_METHOD", "RECOMP_AO_QUALITY",
+        "RECOMP_REFLECTIONS"
     };
     unsigned i;
     for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) _putenv_s(names[i], "");
@@ -520,11 +521,12 @@ static void test_model(void)
     pc_video_defaults(&s);
     s.internal_height = 1080; s.window_width = 3440; s.window_height = 1440; s.borderless = 1; s.scale = PCV_SCALE_INTEGER;
     s.nearest = 1; s.vsync = 0; s.fps_limit = 144; s.aspect = PCV_ASPECT_21_9; s.fov = 90; s.motion_blur_off = 1;
-    s.aa = PCV_AA_SSAA; s.af = 4; s.dof = PCV_STEP_MEDIUM; s.sharpen = PCV_STEP_HIGH;
+    s.aa = PCV_AA_SSAA; s.af = 4; s.dof = PCV_STEP_MEDIUM; s.sharpen = PCV_STEP_HIGH; s.reflections = PCV_REFL_LOW;
     CHECK(pc_video_format(&s, text, sizeof(text)) > 0);
     pc_video_defaults(&t);
     CHECK(strstr(text, "aa=ssaa\n") && strstr(text, "af=4\n") && strstr(text, "dof=medium\n") && strstr(text, "sharpen=high\n"));
-    CHECK(pc_video_parse(text, &t) == 17);
+    CHECK(strstr(text, "reflections=low\n"));
+    CHECK(pc_video_parse(text, &t) == 18);
     CHECK(same_settings(&s, &t));
     pc_video_defaults(&t);
     CHECK(pc_video_parse("[video]\r\n; comment\r\ninternal_height=999\r\nwindow_width=1600\r\nbogus=1\r\nfov=500\r\nfov=72.5\r\n"
@@ -551,7 +553,7 @@ static void test_ambient_occlusion(void)
             CHECK(s.ao_method == method && s.ao_quality == quality);
             CHECK(pc_video_format(&s, text, sizeof(text)) < sizeof(text));
             pc_video_defaults(&t);
-            CHECK(pc_video_parse(text, &t) == 17 && same_settings(&s, &t));
+            CHECK(pc_video_parse(text, &t) == 18 && same_settings(&s, &t));
         }
     }
     CHECK(pc_video_parse("ao_method=GTAO\nao_quality=ULTRA\n", &s) == 2);
@@ -620,7 +622,37 @@ static void test_ambient_occlusion(void)
     f = fopen(ini_path, "rb"); CHECK(f != NULL);
     text[fread(text, 1, sizeof(text) - 1, f)] = 0; fclose(f);
     CHECK(strstr(text, "ao_method=gtao\n") && strstr(text, "ao_quality=high\n"));
-    fresh(); hook_calls = 0;
+    fresh(); pc_video_set_resize_hook(hook); hook_calls = 0;
+
+    /* Reflections: every level parses and cycles from the High default; the environment pins it. */
+    pc_video_defaults(&s);
+    CHECK(s.reflections == PCV_REFL_HIGH);
+    {
+        static const char *const levels[] = { "original", "low", "medium", "high", "ultra" };
+        unsigned level;
+        for (level = 0; level < PCV_REFL_COUNT; level++) {
+            snprintf(text, sizeof(text), "reflections=%s\n", levels[level]);
+            CHECK(pc_video_parse(text, &s) == 1 && s.reflections == level);
+        }
+    }
+    CHECK(pc_video_parse("reflections=off\nreflections=2\n", &s) == 0 && s.reflections == PCV_REFL_ULTRA);
+    t = s; t.reflections = PCV_REFL_COUNT; CHECK(!pc_video_set(&t));
+    CHECK(!strcmp(pc_video_menu_row_label(PCV_ROW_REFLECTIONS), "REFLECTIONS"));
+    CHECK(strstr(pc_video_menu_row_help(PCV_ROW_REFLECTIONS), "reflection maps"));
+    for (quality = 1; quality <= PCV_REFL_COUNT; quality++) {
+        CHECK(pc_video_menu_row_change(PCV_ROW_REFLECTIONS, 1)); pc_video_get(&s);
+        CHECK(s.reflections == (PCV_REFL_HIGH + quality) % PCV_REFL_COUNT);
+        CHECK(pc_video_menu_row_value(PCV_ROW_REFLECTIONS, value, sizeof(value)) > 0);
+    }
+    CHECK(pc_video_menu_row_change(PCV_ROW_REFLECTIONS, -1) && pc_video_menu_row_change(PCV_ROW_REFLECTIONS, -1) &&
+          pc_video_menu_row_change(PCV_ROW_REFLECTIONS, -1));
+    CHECK(pc_video_menu_row_value(PCV_ROW_REFLECTIONS, value, sizeof(value)) > 0 && !strcmp(value, "ORIGINAL"));
+    CHECK(hook_calls == 0);
+    _putenv_s("RECOMP_REFLECTIONS", "medium"); pc_video_test_reset(ini_path); pc_video_get(&t);
+    CHECK(t.reflections == PCV_REFL_MEDIUM && (pc_video_locked() & PCV_LOCK_REFLECTIONS) && pc_video_menu_row_locked(PCV_ROW_REFLECTIONS));
+    t.reflections = PCV_REFL_ULTRA; CHECK(pc_video_set(&t)); pc_video_get(&t);
+    CHECK(t.reflections == PCV_REFL_MEDIUM);
+    clear_env(); fresh(); hook_calls = 0;
 }
 
 static void test_environment_and_file(void)
@@ -1080,7 +1112,7 @@ static void test_native_row_services(void)
     _putenv_s("RECOMP_WINDOW_MODE", "borderless"); _putenv_s("RECOMP_INTERNAL_HEIGHT", "1080");
     _putenv_s("RECOMP_AA", "ssaa"); _putenv_s("RECOMP_AF", "8");
     _putenv_s("RECOMP_DOF", "high"); _putenv_s("RECOMP_SHARPEN", "medium");
-    _putenv_s("RECOMP_AO_METHOD", "gtao"); _putenv_s("RECOMP_AO_QUALITY", "ultra");
+    _putenv_s("RECOMP_AO_METHOD", "gtao"); _putenv_s("RECOMP_AO_QUALITY", "ultra"); _putenv_s("RECOMP_REFLECTIONS", "low");
     _putenv_s("RECOMP_BLACK_ASPECT", "16:9"); _putenv_s("RECOMP_BLACK_FOV", "90");
     _putenv_s("RECOMP_SCALE_MODE", "stretch"); _putenv_s("RECOMP_PRESENT_FILTER", "nearest");
     _putenv_s("RECOMP_VSYNC", "0"); _putenv_s("RECOMP_FPS_LIMIT", "60");

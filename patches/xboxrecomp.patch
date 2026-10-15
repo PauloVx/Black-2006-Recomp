@@ -10948,10 +10948,10 @@ index 0000000..bb5c93b
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_gpu.c b/src/nv2a/kelvin/kelvin_gpu.c
 new file mode 100644
-index 0000000..e7ff2df
+index 0000000..5e19c06
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.c
-@@ -0,0 +1,2217 @@
+@@ -0,0 +1,2228 @@
 +/*
 + * Kelvin D3D11 backend. See kelvin_gpu.h.
 + *
@@ -11565,8 +11565,10 @@ index 0000000..e7ff2df
 +    }
 +}
 +
++/* With `mrt` the screen-space reflection targets 1..3 are bound too: 1 and 2 blend like the colour (a transparent
++ * reflective surface adds its share), 3 (depth and normal) is written as is. */
 +static ID3D11BlendState *get_blend(const KPixelState *ps, unsigned int alpha_mode,
-+                                   bool has_alpha)
++                                   bool has_alpha, bool mrt)
 +{
 +    uint64_t key;
 +    ID3D11BlendState *bs;
@@ -11576,7 +11578,7 @@ index 0000000..e7ff2df
 +    if (alpha_mode) mask |= 8;
 +    key = (uint64_t)(ps->blend ? 1 : 0) | ((uint64_t)(ps->blend_sfactor & 15) << 1) |
 +          ((uint64_t)(ps->blend_dfactor & 15) << 5) | ((uint64_t)(ps->blend_eqn & 7) << 9) |
-+          ((uint64_t)mask << 12) | ((uint64_t)alpha_mode << 16);
++          ((uint64_t)mask << 12) | ((uint64_t)alpha_mode << 16) | ((uint64_t)(mrt ? 1 : 0) << 20);
 +    bs = (ID3D11BlendState *)keyed_get(G.blend, &G.nblend, 256, key);
 +    if (bs) return bs;
 +    memset(&d, 0, sizeof(d));
@@ -11615,6 +11617,14 @@ index 0000000..e7ff2df
 +        d.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
 +        d.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
 +        d.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
++    }
++    if (mrt) {
++        d.IndependentBlendEnable = TRUE;
++        d.RenderTarget[1] = d.RenderTarget[0];
++        d.RenderTarget[2] = d.RenderTarget[0];
++        d.RenderTarget[1].RenderTargetWriteMask = d.RenderTarget[2].RenderTargetWriteMask = (UINT8)(mask ? 15 : 0);
++        d.RenderTarget[3].BlendEnable = FALSE;
++        d.RenderTarget[3].RenderTargetWriteMask = (UINT8)(mask & 7 ? 15 : 0);
 +    }
 +    if (FAILED(ID3D11Device_CreateBlendState(G.dev, &d, &bs))) return NULL;
 +    keyed_put(G.blend, &G.nblend, 256, key, bs);
@@ -12402,6 +12412,7 @@ index 0000000..e7ff2df
 +static bool readback(const KGpuSurf *cs, ID3D11Texture2D **stage_out, D3D11_MAPPED_SUBRESOURCE *ms);
 +static void write_bmp(const char *path, const uint8_t *bgra, unsigned int w, unsigned int h, unsigned int pitch);
 +#include "kelvin_gpu_post.inc"
++#include "kelvin_gpu_ssr.inc"
 +#include "kelvin_gpu_draw.inc"
 +
 +/* ---- clears ------------------------------------------------------------------------------------- */
@@ -13898,10 +13909,10 @@ index 0000000..d00641c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_draw.inc b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 new file mode 100644
-index 0000000..43b88c8
+index 0000000..d86e653
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_draw.inc
-@@ -0,0 +1,773 @@
+@@ -0,0 +1,787 @@
 +/* The draw, included by kelvin_gpu.c after feedback_copy.
 + *
 + * kgpu_draw_now draws one batch of triangles. Most of what a draw needs is the same as the draw before it: the
@@ -13913,6 +13924,7 @@ index 0000000..43b88c8
 +
 +typedef struct KgBound {
 +    bool valid;
++    bool mrt;                    /* the screen-space reflection targets are bound beside the colour */
 +    ID3D11RenderTargetView *rtv;
 +    ID3D11DepthStencilView *dsv;
 +    ID3D11BlendState *bs;
@@ -14309,7 +14321,7 @@ index 0000000..43b88c8
 +            dc->psx = ps_lookup(&dc->pc);
 +            dc->psx_pending = dc->psx == NULL;
 +            dc->zmax = ps->zmax > 0.0f ? ps->zmax : 16777215.0f;
-+            dc->bs = get_blend(ps, dc->alpha_mode, dc->has_alpha);
++            dc->bs = get_blend(ps, dc->alpha_mode, dc->has_alpha, false);
 +            dc->dss = get_depth(ps, zs != NULL);
 +            dc->rs = get_raster(d);
 +            dc->bf[0] = ps->blend_color[0]; dc->bf[1] = ps->blend_color[1];
@@ -14558,20 +14570,33 @@ index 0000000..43b88c8
 +        ID3D11RenderTargetView *rtv = dc->cs ? dc->cs->rtv : NULL;
 +        ID3D11DepthStencilView *dsv = dc->zs ? dc->zs->dsv : NULL;
 +        ID3D11PixelShader *psx = dc->psx ? dc->psx : (ps->smooth || !G.ps_flat) ? G.ps : G.ps_flat;
++        ID3D11BlendState *bs = dc->bs, *ssr_bs = NULL;
++        ID3D11PixelShader *ssr_ps = NULL;
++        /* an environment-mapped draw also writes the reflection targets (kelvin_gpu_ssr.inc) */
++        const bool mrt = dc->psx && d->gvs &&
++                         kg_ssr_draw(dc->cs, dc->zs, &dc->pc, dc->alpha_mode, dc->has_alpha, ps,
++                                     vs_lookup(d->gvs->program, d->gvs->hash, d->gvs->start, NULL, 0), &ssr_ps, &ssr_bs);
++        if (mrt) { psx = ssr_ps; bs = ssr_bs; }
 +        if (!b->fixed) {
 +            ID3D11DeviceContext_IASetInputLayout(G.ctx, NULL);
 +            ID3D11DeviceContext_PSSetConstantBuffers(G.ctx, 0, 1, &G.cb_ps);
 +            b->fixed = true;
 +        }
-+        if (b->rtv != rtv || b->dsv != dsv) {
-+            ID3D11DeviceContext_OMSetRenderTargets(G.ctx, rtv ? 1 : 0, rtv ? &rtv : NULL, dsv);
-+            b->rtv = rtv; b->dsv = dsv;
++        if (b->rtv != rtv || b->dsv != dsv || b->mrt != mrt) {
++            if (mrt) {
++                ID3D11RenderTargetView *rtvs[4];
++                rtvs[0] = rtv; rtvs[1] = s_ssr.rtv[0]; rtvs[2] = s_ssr.rtv[1]; rtvs[3] = s_ssr.rtv[2];
++                ID3D11DeviceContext_OMSetRenderTargets(G.ctx, 4, rtvs, dsv);
++            } else {
++                ID3D11DeviceContext_OMSetRenderTargets(G.ctx, rtv ? 1 : 0, rtv ? &rtv : NULL, dsv);
++            }
++            b->rtv = rtv; b->dsv = dsv; b->mrt = mrt;
 +            /* binding a target takes its resource out of every input slot */
 +            for (k = 0; k < 4; k++) b->srv[k] = NULL;
 +        }
-+        if (b->bs != dc->bs || memcmp(b->bf, dc->bf, sizeof(b->bf)) != 0) {
-+            ID3D11DeviceContext_OMSetBlendState(G.ctx, dc->bs, dc->bf, 0xFFFFFFFFu);
-+            b->bs = dc->bs; memcpy(b->bf, dc->bf, sizeof(b->bf));
++        if (b->bs != bs || memcmp(b->bf, dc->bf, sizeof(b->bf)) != 0) {
++            ID3D11DeviceContext_OMSetBlendState(G.ctx, bs, dc->bf, 0xFFFFFFFFu);
++            b->bs = bs; memcpy(b->bf, dc->bf, sizeof(b->bf));
 +        }
 +        if (b->dss != dc->dss || b->sref != dc->sref) {
 +            ID3D11DeviceContext_OMSetDepthStencilState(G.ctx, dc->dss, dc->sref);
@@ -15182,10 +15207,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..d8ff8d9
+index 0000000..8510e8a
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,892 @@
+@@ -0,0 +1,970 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -15465,9 +15490,76 @@ index 0000000..d8ff8d9
 +"    float2 uv = p.xy * p0.xy;\n"
 +"    float4 c = SceneTex.SampleLevel(PtSmp, uv, 0);\n"
 +"    return float4(c.rgb * CocTex.SampleLevel(PtSmp, uv, 0), c.a);\n"
++"}\n"
++"// Screen-space reflections (kelvin_gpu_ssr.inc): p1 = (steps, reach as a multiple of the pixel's depth, thickness as a\n"
++"// fraction of depth, largest gain), p2 = (screen environment share for misses, its blur level, hit blur, smallest mip),\n"
++"// p3.xy = the camera half-frustum; SsrW/SsrE/SsrG are what the env-mapped draws wrote.\n"
++"Texture2D<float4> SsrW : register(t4);\n"
++"Texture2D<float4> SsrE : register(t5);\n"
++"Texture2D<float4> SsrG : register(t6);\n"
++"Texture2D<float4> SsrBlur : register(t7);   // the scene with its mip chain: a soft environment from what is on screen\n"
++"float2 ssr_uv(float3 q) { float2 n = q.xy / (q.z * p3.xy); return float2(n.x * 0.5 + 0.5, 0.5 - n.y * 0.5); }\n"
++"float ssr_scene_z(float2 uv) { return ao_view_z(DepthTex.SampleLevel(PtSmp, uv, 0)); }\n"
++"float4 ssr_ps(float4 pos : SV_Position) : SV_Target {\n"
++"    int3 px = int3(pos.xy, 0);\n"
++"    float4 base = SceneTex.Load(px);\n"
++"    float4 w = SsrW.Load(px);\n"
++"    if (max(w.r, max(w.g, w.b)) < 0.002) return base;\n"
++"    float4 g = SsrG.Load(px);\n"
++"    float z0 = ao_view_z(g.x);\n"
++"    // something nearer was drawn over the reflective surface since: its reflection is not on screen any more\n"
++"    if (ao_view_z(DepthTex.Load(px)) < z0 * 0.995) return base;\n"
++"    float3 e = SsrE.Load(px).rgb;\n"
++"    // The env maps were drawn for a lit average; the screen of a night scene is far darker. Bring the reflected scene\n"
++"    // up towards that average (at most p1.w times), never down.\n"
++"    float avg = dot(SsrBlur.SampleLevel(LinSmp, float2(0.5, 0.5), p2.w).rgb, float3(0.299, 0.587, 0.114));\n"
++"    float gain = clamp(0.3 / max(avg, 0.01), 1.0, p1.w);\n"
++"    float2 uv = pos.xy * p0.xy;\n"
++"    float3 P = float3(float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0) * p3.xy * z0, z0);\n"
++"    float3 N = normalize(g.yzw);\n"
++"    float3 R = reflect(normalize(P), N);\n"
++"    float reach = p1.y * z0, t0 = z0 * 0.01, dt = (reach - t0) / p1.x;\n"
++"    float jitter = ao_hash(pos.xy), prev = t0, hit = -1.0;\n"
++"    [loop] for (float i = 0.0; i < p1.x; i += 1.0) {\n"
++"        float t = t0 + (i + jitter) * dt;\n"
++"        float3 q = P + R * t;\n"
++"        if (q.z <= 0.05) break;\n"
++"        float2 quv = ssr_uv(q);\n"
++"        if (any(quv < 0.0) || any(quv > 1.0)) break;\n"
++"        float dz = q.z - ssr_scene_z(quv);\n"
++"        if (dz > 0.0) { if (dz < p1.z * q.z + dt) hit = t; break; }\n"
++"        prev = t;\n"
++"    }\n"
++"    // a miss: the screen itself as the environment, blurred and looked up by direction like a sphere map, over the\n"
++"    // original map by p2.x\n"
++"    float2 suv = float2(0.5 + R.x * 0.45, 0.5 - R.y * 0.45);\n"
++"    float3 env = SsrBlur.SampleLevel(LinSmp, suv, p2.y).rgb;\n"
++"    float3 missed = base.rgb + p2.x * (gain * w.rgb * env - e);\n"
++"    if (hit < 0.0) return float4(missed, base.a);\n"
++"    float lo = prev, hi = hit;\n"
++"    [unroll] for (int k = 0; k < 6; k++) {\n"
++"        float m = 0.5 * (lo + hi);\n"
++"        float3 q = P + R * m;\n"
++"        if (q.z - ssr_scene_z(ssr_uv(q)) > 0.0) hi = m; else lo = m;\n"
++"    }\n"
++"    float2 huv = ssr_uv(P + R * hi);\n"
++"    // farther hits are softer, as a rough surface would make them\n"
++"    float3 hc = SsrBlur.SampleLevel(LinSmp, huv, saturate(hi / reach) * p2.z).rgb;\n"
++"    // fade out at the screen's edges, at the end of the reach and for rays turning back to the camera\n"
++"    float edge = saturate(min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y)) * 10.0);\n"
++"    float fade = edge * saturate((reach - hi) / (0.25 * reach)) * saturate(R.z * 4.0 + 0.6);\n"
++"    return float4(lerp(missed, base.rgb + gain * w.rgb * hc - e, fade), base.a);\n"
 +"}\n";
 +
 +typedef struct KgPostCb { float p0[4], p1[4], p2[4], p3[4]; } KgPostCb;
++
++/* Screen-space reflections (kelvin_gpu_ssr.inc): the Reflections video setting, PCV_REFL_ORIGINAL (the game's own
++ * environment maps) or low .. ultra. */
++static int s_ssr_setting = 0;
++static float s_ssr_env_mix = 1.0f;     /* RECOMP_KGPU_SSR_ENV: how much a missed ray's screen environment replaces the map */
++static float s_ssr_strength = 4.0f;    /* RECOMP_KGPU_SSR_STRENGTH: the most a dark scene's reflection is brightened */
++static void kg_ssr_pass(KGpuSurf *cs, KGpuSurf *zs);
++static void kg_ssr_after_flip(void);
 +
 +static struct {
 +    bool tried, ok;
@@ -15863,6 +15955,7 @@ index 0000000..d8ff8d9
 +        fprintf(stderr, "[KAO] frame %llu ambient occlusion skipped: no valid queued world camera\n", (unsigned long long)(G.frames + 1));
 +    }
 +    kg_post_ao_scene(cs, zs);
++    kg_ssr_pass(cs, zs);
 +    if (s_post.dof && (!zs || !zs->depth || !zs->real || !zs->srv || zs->hw != cs->hw || zs->hh != cs->hh)) {
 +        if (s_post.post_trace && !s_post.focus_skipped)
 +            fprintf(stderr, "[KPOST] frame %llu autofocus skipped: depth present=%d depth=%d real=%d sampleable=%d size=%ux%u scene=%ux%u\n",
@@ -15953,6 +16046,13 @@ index 0000000..d8ff8d9
 +        s_post.ao_scene_frame = e && *e ? strtoull(e, NULL, 0) : 120;
 +        e = getenv("RECOMP_KGPU_POST_TRACE");
 +        s_post.post_trace = e && *e && atoi(e) != 0;
++        e = getenv("RECOMP_KGPU_SSR_ENV");
++        if (e && *e) s_ssr_env_mix = (float)atof(e);
++        if (!(s_ssr_env_mix >= 0.0f)) s_ssr_env_mix = 0.0f;
++        if (s_ssr_env_mix > 1.0f) s_ssr_env_mix = 1.0f;
++        e = getenv("RECOMP_KGPU_SSR_STRENGTH");
++        if (e && *e) s_ssr_strength = (float)atof(e);
++        if (!(s_ssr_strength >= 1.0f) || s_ssr_strength > 8.0f) s_ssr_strength = 4.0f;
 +    }
 +    if (s_post.cfg && !s_post.dof && v.dof && s_post.focus_rtv[0] && s_post.focus_rtv[1]) {
 +        const FLOAT unset[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
@@ -15962,7 +16062,9 @@ index 0000000..d8ff8d9
 +    s_post.cfg = true;
 +    s_post.aa = (int)v.aa; s_post.dof = (int)v.dof; s_post.sharpen = (int)v.sharpen;
 +    s_post.ao_method = (int)v.ao_method; s_post.ao_quality = (int)v.ao_quality;
-+    s_post.scene_fx = s_post.ao_method != PCV_AO_OFF || s_post.aa == PCV_AA_FXAA || s_post.dof || s_post.sharpen || s_post.depth_stats > 0;
++    s_ssr_setting = v.reflections < PCV_REFL_COUNT ? (int)v.reflections : PCV_REFL_HIGH;
++    s_post.scene_fx = s_post.ao_method != PCV_AO_OFF || s_post.aa == PCV_AA_FXAA || s_post.dof || s_post.sharpen || s_post.depth_stats > 0 ||
++                      s_ssr_setting > 0;
 +    if ((int)v.af != s_af) {
 +        unsigned int i;
 +        s_af = (int)v.af;
@@ -15985,6 +16087,7 @@ index 0000000..d8ff8d9
 +
 +static void kg_post_after_flip(void)
 +{
++    kg_ssr_after_flip();
 +    s_post.world = 0;
 +    s_post.ao_camera = 0;
 +    s_post.ao_done = false;
@@ -16242,10 +16345,10 @@ index 0000000..7c239d5
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_pss.inc b/src/nv2a/kelvin/kelvin_gpu_pss.inc
 new file mode 100644
-index 0000000..18fe4d2
+index 0000000..9f9c9a5
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_pss.inc
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,396 @@
 +/* Specialised pixel shaders, included by kelvin_gpu.c after kelvin_gpu_vsh.inc.
 + *
 + * The ubershader in kelvin_gpu_hlsl.inc interprets the register combiners at run time: dynamic register
@@ -16273,6 +16376,8 @@ index 0000000..18fe4d2
 +} KGpuPs;
 +
 +#define KG_PS_MAX 2048
++/* PSConst.texflags: this stage is an environment map the draw writes screen-space reflection targets for */
++#define PS_TEX_SSR 0x100u
 +static KGpuPs s_ps[KG_PS_MAX];
 +static int s_ps_spec = -1;
 +
@@ -16340,7 +16445,8 @@ index 0000000..18fe4d2
 +/* The shader for one configuration. Returns a malloc'd string (the caller prepends the common declarations). */
 +static char *ps_generate(const PSConst *c)
 +{
-+    StrBuf b = { NULL, 0, 0 };
++    StrBuf b = { NULL, 0, 0 }, mn = { NULL, 0, 0 }, cmb = { NULL, 0, 0 }, tl = { NULL, 0, 0 };
++    uint32_t env = 0;
 +    uint32_t nst = c->gen[0] > 8 ? 8 : c->gen[0], fflags = c->fin_efg[3], func = c->gen[1];
 +    unsigned int i, k;
 +    char ex[96], ey[96], buf[256];
@@ -16349,43 +16455,41 @@ index 0000000..18fe4d2
 +        "Texture2D<float4> Tex0 : register(t0);\nTexture2D<float4> Tex1 : register(t1);\n"
 +        "Texture2D<float4> Tex2 : register(t2);\nTexture2D<float4> Tex3 : register(t3);\n"
 +        "SamplerState Smp0 : register(s0);\nSamplerState Smp1 : register(s1);\n"
-+        "SamplerState Smp2 : register(s2);\nSamplerState Smp3 : register(s3);\n"
-+        "float4 ps_main(VSOut v) : SV_Target {\n"
-+        "    bool killed = false;\n");
++        "SamplerState Smp2 : register(s2);\nSamplerState Smp3 : register(s3);\n");
++    for (i = 0; i < 4; i++) if (c->texflags[i] & PS_TEX_SSR) env |= 1u << i;
 +    /* textures: only the ones in use are sampled; the sample sits outside any branch so its derivatives are defined */
 +    for (i = 0; i < 4; i++) {
 +        uint32_t mode = c->texmode[i], fl = c->texflags[i];
 +        const char *comp = i == 0 ? "x" : i == 1 ? "y" : i == 2 ? "z" : "w";
 +        if (mode == 1u && (fl & 1u)) {
-+            sb_add(&b,
++            sb_add(&mn,
 +                "    float2 uv%u = float2(0.0, 0.0);\n"
 +                "    if (v.t%u.w != 0.0) uv%u = v.t%u.xy / v.t%u.w;\n", i, i, i, i, i);
-+            if (fl & 2u) sb_add(&b, "    uv%u *= texrcp[%u].xy;\n", i, i);
-+            sb_add(&b,
++            if (fl & 2u) sb_add(&mn, "    uv%u *= texrcp[%u].xy;\n", i, i);
++            sb_add(&mn,
 +                "    float4 s%u = Tex%u.Sample(Smp%u, uv%u);\n"
 +                "    float4 t%u = float4(0.0, 0.0, 0.0, 1.0);\n"
 +                "    if (v.t%u.w != 0.0) {\n"
 +                "        t%u = s%u;\n", i, i, i, i, i, i, i, i);
-+            if (fl & 4u) sb_add(&b, "        if (t%u.a == 0.0) killed = true;\n", i);
++            if (fl & 4u) sb_add(&mn, "        if (t%u.a == 0.0) killed = true;\n", i);
 +            if ((fl >> 4) & 3u) {
 +                uint32_t ckm = (fl >> 4) & 3u;
-+                sb_add(&b,
++                sb_add(&mn,
 +                    "        {\n"
 +                    "            uint4 q = (uint4)(saturate(t%u) * 255.0 + 0.5);\n"
 +                    "            uint cc = (q.a << 24) | (q.r << 16) | (q.g << 8) | q.b;\n"
 +                    "            if ((cc & ckeymask.%s) == (ckey.%s & ckeymask.%s)) {\n", i, comp, comp, comp);
-+                if (ckm == 3u) sb_add(&b, "                killed = true;\n");
-+                else if (ckm == 1u) sb_add(&b, "                t%u.a = 0.0;\n", i);
-+                else sb_add(&b, "                t%u = float4(0.0, 0.0, 0.0, 0.0);\n", i);
-+                sb_add(&b, "            }\n        }\n");
++                if (ckm == 3u) sb_add(&mn, "                killed = true;\n");
++                else if (ckm == 1u) sb_add(&mn, "                t%u.a = 0.0;\n", i);
++                else sb_add(&mn, "                t%u = float4(0.0, 0.0, 0.0, 0.0);\n", i);
++                sb_add(&mn, "            }\n        }\n");
 +            }
-+            sb_add(&b, "    }\n");
++            sb_add(&mn, "    }\n");
 +        } else {
-+            sb_add(&b, "    float4 t%u = float4(0.0, 0.0, 0.0, 1.0);\n", i);
++            sb_add(&mn, "    float4 t%u = float4(0.0, 0.0, 0.0, 1.0);\n", i);
 +        }
 +    }
-+    sb_add(&b, "    if (killed) discard;\n");
-+    sb_add(&b,
++    sb_add(&cmb,
 +        "    float4 r0 = float4(0, 0, 0, 0);\n"
 +        "    float4 r1 = stage[0].c0;\n"
 +        "    float4 r2 = stage[0].c1;\n"
@@ -16404,81 +16508,133 @@ index 0000000..18fe4d2
 +        uint32_t ro = c->stage[i].outs[0], ao = c->stage[i].outs[1];
 +        uint32_t rcd = ro & 15u, rab = (ro >> 4) & 15u, rmx = (ro >> 8) & 15u, rfl = ro >> 12, rmap = rfl & 0x38u;
 +        uint32_t acd = ao & 15u, aab = (ao >> 4) & 15u, amx = (ao >> 8) & 15u, afl = ao >> 12, amap = afl & 0x38u;
-+        sb_add(&b, "    {\n");
-+        sb_add(&b, "        r1 = stage[%u].c0;\n", (fflags & 0x20u) ? i : 0u);
-+        sb_add(&b, "        r2 = stage[%u].c1;\n", (fflags & 0x40u) ? i : 0u);
-+        sb_add(&b, "        {\n            float3 a1 = %s;\n            float3 b1 = %s;\n            float3 sm = a1 + b1;\n",
++        sb_add(&cmb, "    {\n");
++        sb_add(&cmb, "        r1 = stage[%u].c0;\n", (fflags & 0x20u) ? i : 0u);
++        sb_add(&cmb, "        r2 = stage[%u].c1;\n", (fflags & 0x40u) ? i : 0u);
++        sb_add(&cmb, "        {\n            float3 a1 = %s;\n            float3 b1 = %s;\n            float3 sm = a1 + b1;\n",
 +               (fflags & 4u) ? "1.0 - r5.rgb" : "r5.rgb", (fflags & 8u) ? "1.0 - r12.rgb" : "r12.rgb");
-+        if (fflags & 2u) sb_add(&b, "            sm = clamp(sm, 0.0, 1.0);\n");
-+        sb_add(&b, "            r14 = float4(sm, 0.0);\n        }\n");
++        if (fflags & 2u) sb_add(&cmb, "            sm = clamp(sm, 0.0, 1.0);\n");
++        sb_add(&cmb, "            r14 = float4(sm, 0.0);\n        }\n");
 +        for (k = 0; k < 4; k++) {
 +            ps_input3(ex, sizeof(ex), c->stage[i].rgb_in[k]);
 +            ps_input1(ey, sizeof(ey), c->stage[i].alpha_in[k]);
-+            sb_add(&b, "        float3 ra%u = %s;\n        float aa%u = %s;\n", k, ex, k, ey);
++            sb_add(&cmb, "        float3 ra%u = %s;\n        float aa%u = %s;\n", k, ex, k, ey);
 +        }
-+        sb_add(&b, "        float3 ab3 = %s;\n", (rfl & 2u) ? "dot(ra0, ra1).xxx" : "ra0 * ra1");
-+        sb_add(&b, "        float3 cd3 = %s;\n", (rfl & 1u) ? "dot(ra2, ra3).xxx" : "ra2 * ra3");
++        sb_add(&cmb, "        float3 ab3 = %s;\n", (rfl & 2u) ? "dot(ra0, ra1).xxx" : "ra0 * ra1");
++        sb_add(&cmb, "        float3 cd3 = %s;\n", (rfl & 1u) ? "dot(ra2, ra3).xxx" : "ra2 * ra3");
 +        if ((rfl & 4u) || (afl & 4u)) {
-+            if (fflags & 0x10u) sb_add(&b, "        bool selr = r12.a >= 0.5;\n");
-+            else sb_add(&b, "        bool selr = ((((uint)(r12.a * 255.0)) & 1u) == 1u);\n");
++            if (fflags & 0x10u) sb_add(&cmb, "        bool selr = r12.a >= 0.5;\n");
++            else sb_add(&cmb, "        bool selr = ((((uint)(r12.a * 255.0)) & 1u) == 1u);\n");
 +        }
-+        sb_add(&b, "        float3 mx3 = %s;\n", (rfl & 4u) ? "(selr ? cd3 : ab3)" : "(ab3 + cd3)");
-+        ps_mapout(ex, sizeof(ex), "ab3", rmap); sb_add(&b, "        float3 rab3 = clamp(%s, -1.0, 1.0);\n", ex);
-+        ps_mapout(ex, sizeof(ex), "cd3", rmap); sb_add(&b, "        float3 rcd3 = clamp(%s, -1.0, 1.0);\n", ex);
-+        ps_mapout(ex, sizeof(ex), "mx3", rmap); sb_add(&b, "        float3 rmx3 = clamp(%s, -1.0, 1.0);\n", ex);
-+        sb_add(&b, "        float ab1 = aa0 * aa1;\n        float cd1 = aa2 * aa3;\n");
-+        sb_add(&b, "        float mx1 = %s;\n", (afl & 4u) ? "(selr ? cd1 : ab1)" : "(ab1 + cd1)");
-+        ps_mapout(ex, sizeof(ex), "ab1", amap); sb_add(&b, "        float rab1 = clamp(%s, -1.0, 1.0);\n", ex);
-+        ps_mapout(ex, sizeof(ex), "cd1", amap); sb_add(&b, "        float rcd1 = clamp(%s, -1.0, 1.0);\n", ex);
-+        ps_mapout(ex, sizeof(ex), "mx1", amap); sb_add(&b, "        float rmx1 = clamp(%s, -1.0, 1.0);\n", ex);
++        sb_add(&cmb, "        float3 mx3 = %s;\n", (rfl & 4u) ? "(selr ? cd3 : ab3)" : "(ab3 + cd3)");
++        ps_mapout(ex, sizeof(ex), "ab3", rmap); sb_add(&cmb, "        float3 rab3 = clamp(%s, -1.0, 1.0);\n", ex);
++        ps_mapout(ex, sizeof(ex), "cd3", rmap); sb_add(&cmb, "        float3 rcd3 = clamp(%s, -1.0, 1.0);\n", ex);
++        ps_mapout(ex, sizeof(ex), "mx3", rmap); sb_add(&cmb, "        float3 rmx3 = clamp(%s, -1.0, 1.0);\n", ex);
++        sb_add(&cmb, "        float ab1 = aa0 * aa1;\n        float cd1 = aa2 * aa3;\n");
++        sb_add(&cmb, "        float mx1 = %s;\n", (afl & 4u) ? "(selr ? cd1 : ab1)" : "(ab1 + cd1)");
++        ps_mapout(ex, sizeof(ex), "ab1", amap); sb_add(&cmb, "        float rab1 = clamp(%s, -1.0, 1.0);\n", ex);
++        ps_mapout(ex, sizeof(ex), "cd1", amap); sb_add(&cmb, "        float rcd1 = clamp(%s, -1.0, 1.0);\n", ex);
++        ps_mapout(ex, sizeof(ex), "mx1", amap); sb_add(&cmb, "        float rmx1 = clamp(%s, -1.0, 1.0);\n", ex);
 +        if (ps_writable(rab)) {
-+            sb_add(&b, "        r%u.rgb = rab3;\n", rab);
-+            if (rfl & 0x80u) sb_add(&b, "        r%u.a = rab3.b;\n", rab);
++            sb_add(&cmb, "        r%u.rgb = rab3;\n", rab);
++            if (rfl & 0x80u) sb_add(&cmb, "        r%u.a = rab3.b;\n", rab);
 +        }
 +        if (ps_writable(rcd)) {
-+            sb_add(&b, "        r%u.rgb = rcd3;\n", rcd);
-+            if (rfl & 0x40u) sb_add(&b, "        r%u.a = rcd3.b;\n", rcd);
++            sb_add(&cmb, "        r%u.rgb = rcd3;\n", rcd);
++            if (rfl & 0x40u) sb_add(&cmb, "        r%u.a = rcd3.b;\n", rcd);
 +        }
-+        if (ps_writable(rmx)) sb_add(&b, "        r%u.rgb = rmx3;\n", rmx);
-+        if (ps_writable(aab)) sb_add(&b, "        r%u.a = rab1;\n", aab);
-+        if (ps_writable(acd)) sb_add(&b, "        r%u.a = rcd1;\n", acd);
-+        if (ps_writable(amx)) sb_add(&b, "        r%u.a = rmx1;\n", amx);
-+        sb_add(&b, "    }\n");
++        if (ps_writable(rmx)) sb_add(&cmb, "        r%u.rgb = rmx3;\n", rmx);
++        if (ps_writable(aab)) sb_add(&cmb, "        r%u.a = rab1;\n", aab);
++        if (ps_writable(acd)) sb_add(&cmb, "        r%u.a = rcd1;\n", acd);
++        if (ps_writable(amx)) sb_add(&cmb, "        r%u.a = rmx1;\n", amx);
++        sb_add(&cmb, "    }\n");
 +        (void)buf;
 +    }
 +
-+    sb_add(&b, "    float4 frag;\n");
++    sb_add(&cmb, "    float4 frag;\n");
 +    if (fflags & 1u) {
 +        uint32_t ine = c->fin_efg[0], inf = c->fin_efg[1], ing = c->fin_efg[2];
-+        sb_add(&b, "    {\n        r1 = final_c0;\n        r2 = final_c1;\n");
-+        sb_add(&b, "        {\n            float3 a1 = %s;\n            float3 b1 = %s;\n            float3 sm = a1 + b1;\n",
++        sb_add(&cmb, "    {\n        r1 = final_c0;\n        r2 = final_c1;\n");
++        sb_add(&cmb, "        {\n            float3 a1 = %s;\n            float3 b1 = %s;\n            float3 sm = a1 + b1;\n",
 +               (fflags & 4u) ? "1.0 - r5.rgb" : "r5.rgb", (fflags & 8u) ? "1.0 - r12.rgb" : "r12.rgb");
-+        if (fflags & 2u) sb_add(&b, "            sm = clamp(sm, 0.0, 1.0);\n");
-+        sb_add(&b, "            r14 = float4(sm, 0.0);\n        }\n");
++        if (fflags & 2u) sb_add(&cmb, "            sm = clamp(sm, 0.0, 1.0);\n");
++        sb_add(&cmb, "            r14 = float4(sm, 0.0);\n        }\n");
 +        ps_input3(ex, sizeof(ex), ine); ps_input3(ey, sizeof(ey), inf);
-+        sb_add(&b, "        float3 e3 = %s;\n        float3 f3 = %s;\n        r15 = float4(e3 * f3, 0.0);\n", ex, ey);
-+        ps_input3(ex, sizeof(ex), c->fin_abcd[0]); sb_add(&b, "        float3 a3 = %s;\n", ex);
-+        ps_input3(ex, sizeof(ex), c->fin_abcd[1]); sb_add(&b, "        float3 b3 = %s;\n", ex);
-+        ps_input3(ex, sizeof(ex), c->fin_abcd[2]); sb_add(&b, "        float3 c3 = %s;\n", ex);
-+        ps_input3(ex, sizeof(ex), c->fin_abcd[3]); sb_add(&b, "        float3 d3 = %s;\n", ex);
-+        ps_input1(ex, sizeof(ex), ing); sb_add(&b, "        float g1 = %s;\n", ex);
-+        sb_add(&b, "        frag = float4(d3 + c3 * (1.0 - a3) + b3 * a3, g1);\n    }\n");
++        sb_add(&cmb, "        float3 e3 = %s;\n        float3 f3 = %s;\n        r15 = float4(e3 * f3, 0.0);\n", ex, ey);
++        ps_input3(ex, sizeof(ex), c->fin_abcd[0]); sb_add(&cmb, "        float3 a3 = %s;\n", ex);
++        ps_input3(ex, sizeof(ex), c->fin_abcd[1]); sb_add(&cmb, "        float3 b3 = %s;\n", ex);
++        ps_input3(ex, sizeof(ex), c->fin_abcd[2]); sb_add(&cmb, "        float3 c3 = %s;\n", ex);
++        ps_input3(ex, sizeof(ex), c->fin_abcd[3]); sb_add(&cmb, "        float3 d3 = %s;\n", ex);
++        ps_input1(ex, sizeof(ex), ing); sb_add(&cmb, "        float g1 = %s;\n", ex);
++        sb_add(&cmb, "        frag = float4(d3 + c3 * (1.0 - a3) + b3 * a3, g1);\n    }\n");
 +    } else {
-+        sb_add(&b, "    frag = r12;\n");
++        sb_add(&cmb, "    frag = r12;\n");
 +    }
 +    if (func != 7u) {
 +        static const char *const cmp[] = { NULL, "fa < ref", "fa == ref", "fa <= ref", "fa > ref", "fa != ref", "fa >= ref" };
 +        if (func == 0u) {
-+            sb_add(&b, "    discard;\n");
++            sb_add(&tl, "    discard;\n");
 +        } else if (func < 7u) {
-+            sb_add(&b, "    {\n        int fa = (int)floor(frag.a * 255.0 + 0.5);\n        int ref = (int)gen.z;\n"
++            sb_add(&tl, "    {\n        int fa = (int)floor(frag.a * 255.0 + 0.5);\n        int ref = (int)gen.z;\n"
 +                       "        if (!(%s)) discard;\n    }\n", cmp[func]);
 +        }
 +    }
-+    sb_add(&b, "    float4 o = saturate(frag);\n");
-+    if (c->ofs[0] == 1u) sb_add(&b, "    o.a = 1.0;\n");
-+    else if (c->ofs[0] == 2u) sb_add(&b, "    o.a = 0.0;\n");
-+    sb_add(&b, "    return o;\n}\n");
++    sb_add(&tl, "    float4 o = saturate(frag);\n");
++    if (c->ofs[0] == 1u) sb_add(&tl, "    o.a = 1.0;\n");
++    else if (c->ofs[0] == 2u) sb_add(&tl, "    o.a = 0.0;\n");
++    /* the combiner as a function, so the SSR variant can run it with the env texel at 0 and at 1 as well */
++    sb_add(&b, "float4 kg_combine(VSOut v, float4 t0, float4 t1, float4 t2, float4 t3) {\n%s    return frag;\n}\n",
++           cmb.p ? cmb.p : "");
++    if (env) {
++        /* Screen-space reflections (kelvin_gpu_post.inc): besides the colour, how much each env map texel adds (the
++         * combiner's change from texel 0 to texel 1), what the sampled one added, and where the pixel is. */
++        sb_add(&b,
++            "cbuffer SSRV : register(b4) { float4 ssr_view; };   // x,y: camera half-frustum; z,w: 1 / target size\n"
++            "struct KgEnvOut { float4 c : SV_Target0; float4 w : SV_Target1; float4 e : SV_Target2; float4 g : SV_Target3; };\n"
++            "KgEnvOut ps_main(VSOut v) {\n");
++    } else {
++        sb_add(&b, "float4 ps_main(VSOut v) : SV_Target {\n");
++    }
++    sb_add(&b, "    bool killed = false;\n%s    if (killed) discard;\n    float4 frag = kg_combine(v, t0, t1, t2, t3);\n%s",
++           mn.p ? mn.p : "", tl.p ? tl.p : "");
++    if (!env) {
++        sb_add(&b, "    return o;\n}\n");
++    } else {
++        sb_add(&b, "    KgEnvOut r;\n    r.c = o;\n    float3 w = float3(0, 0, 0), e = float3(0, 0, 0);\n");
++        for (i = 0; i < 4; i++) {
++            static const char *const tn[4] = { "t0", "t1", "t2", "t3" };
++            char a0[4][16], a1[4][16];
++            if (!(env & (1u << i))) continue;
++            for (k = 0; k < 4; k++) {
++                snprintf(a0[k], sizeof(a0[k]), "%s", k == i ? "tz" : tn[k]);
++                snprintf(a1[k], sizeof(a1[k]), "%s", k == i ? "tn" : tn[k]);
++            }
++            sb_add(&b,
++                "    {\n"
++                "        float4 tz = float4(0.0, 0.0, 0.0, %s.a), tn = float4(1.0, 1.0, 1.0, %s.a);\n"
++                "        float3 f0 = saturate(kg_combine(v, %s, %s, %s, %s)).rgb;\n"
++                "        float3 f1 = saturate(kg_combine(v, %s, %s, %s, %s)).rgb;\n"
++                "        w += f1 - f0;\n"
++                "        e += o.rgb - f0;\n"
++                "    }\n", tn[i], tn[i], a0[0], a0[1], a0[2], a0[3], a1[0], a1[1], a1[2], a1[3]);
++        }
++        sb_add(&b,
++            "    r.w = float4(max(w, 0.0), o.a);\n"
++            "    r.e = float4(e, o.a);\n"
++            "    {\n"
++            "        // view-space position as the post passes reconstruct it (perspective depth 1 - near / z)\n"
++            "        float vz = min(4096.0, 1.0 / max(0.0001, 1.0 - v.pos.z));\n"
++            "        float2 ndc = float2(v.pos.x * ssr_view.z * 2.0 - 1.0, 1.0 - v.pos.y * ssr_view.w * 2.0);\n"
++            "        float3 p = float3(ndc * ssr_view.xy * vz, vz);\n"
++            "        float3 n = cross(ddx(p), ddy(p));\n"
++            "        float n2 = dot(n, n);\n"
++            "        n = n2 > 1e-20 ? n * rsqrt(n2) : float3(0, 0, -1);\n"
++            "        if (dot(n, p) > 0.0) n = -n;\n"
++            "        r.g = float4(v.pos.z, n);\n"
++            "    }\n"
++            "    return r;\n}\n");
++    }
++    free(mn.p); free(cmb.p); free(tl.p);
 +    return b.p;
 +}
 +
@@ -16776,6 +16932,256 @@ index 0000000..5262db0
 +}
 +
 +void kgpu_symbol_name(uint64_t addr, char *out, size_t cap) { slow_name(addr, out, cap, 0); }
+diff --git a/src/nv2a/kelvin/kelvin_gpu_ssr.inc b/src/nv2a/kelvin/kelvin_gpu_ssr.inc
+new file mode 100644
+index 0000000..1c891ce
+--- /dev/null
++++ b/src/nv2a/kelvin/kelvin_gpu_ssr.inc
+@@ -0,0 +1,244 @@
++/* Screen-space reflections, included by kelvin_gpu.c after kelvin_gpu_post.inc (the draw path calls kg_ssr_draw).
++ *
++ * BLACK's reflective materials (wet mud and cobbles, windows, water, weapon metal) add a small environment map --
++ * a 128x128 sphere map -- through the register combiners, at texture coordinates the vertex program derives from
++ * the eye direction reflected about the normal (vsh_env_stages). This replaces that map with what the screen shows:
++ *
++ *   - Each env-mapped draw on the main target uses a variant of its specialised pixel shader (PS_TEX_SSR) that also
++ *     writes three targets: how much a texel of the env map adds to the pixel (the combiner run with that texel at 0
++ *     and at 1), what the sampled texel added, and the pixel's depth with a normal from its screen derivatives.
++ *     The extra targets are blended like the colour for transparent surfaces; depth and normal are written as is.
++ *   - Before the HUD, a full-screen pass marches each such pixel's reflected ray through the depth buffer. Where it
++ *     hits, the pixel's env contribution is taken out and the scene at the hit put in, scaled the same way; where it
++ *     leaves the screen, points back at the camera or finds nothing, the original env map stays.
++ *
++ * The extra targets are cleared after each frame's pass. Draws whose specialised shader is still compiling, CPU
++ * vertex draws and draws on other targets keep the original reflection. */
++
++static struct {
++    bool tried, ok, used;
++    unsigned int w, h;
++    ID3D11Texture2D *tex[3];
++    ID3D11RenderTargetView *rtv[3];
++    ID3D11ShaderResourceView *srv[3];
++    ID3D11Buffer *cb;                   /* SSRV, b4 of the env draws: camera half-frustum, 1 / target size */
++    float cb_vals[4];
++    ID3D11PixelShader *ps;
++    ID3D11Texture2D *blur;              /* the scene with mips: hits blur with distance, misses read it as an environment */
++    ID3D11ShaderResourceView *blur_srv;
++    unsigned int blur_w, blur_h, blur_levels;
++    unsigned long long draws, frames;   /* env draws that wrote the targets, passes run (RECOMP_KGPU_POST_TRACE) */
++    /* RECOMP_KGPU_SSR_DUMP=PREFIX[,N] (diagnostic): the scene before and after the pass, and the reflective pixels'
++     * weight, as PREFIX_before.bmp / _after.bmp / _weight.bmp, at the Nth pass and every 300th after it. */
++    int dump_init;
++    char dump[MAX_PATH];
++    unsigned long long dump_at;
++} s_ssr;
++
++static void ssr_free_targets(void)
++{
++    unsigned int i;
++    for (i = 0; i < 3; i++) { SAFE_RELEASE(s_ssr.srv[i]); SAFE_RELEASE(s_ssr.rtv[i]); SAFE_RELEASE(s_ssr.tex[i]); }
++    SAFE_RELEASE(s_ssr.blur_srv); SAFE_RELEASE(s_ssr.blur);
++    s_ssr.w = s_ssr.h = s_ssr.blur_w = s_ssr.blur_h = 0;
++}
++
++/* The mip chain of the scene copy (GenerateMips needs a render-target texture). */
++static bool ssr_blur(unsigned int w, unsigned int h)
++{
++    D3D11_TEXTURE2D_DESC td;
++    if (s_ssr.blur && s_ssr.blur_w == w && s_ssr.blur_h == h) return true;
++    SAFE_RELEASE(s_ssr.blur_srv); SAFE_RELEASE(s_ssr.blur);
++    memset(&td, 0, sizeof(td));
++    td.Width = w; td.Height = h; td.MipLevels = 0; td.ArraySize = 1; td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
++    td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT;
++    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET; td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
++    if (FAILED(ID3D11Device_CreateTexture2D(G.dev, &td, NULL, &s_ssr.blur)) ||
++        FAILED(ID3D11Device_CreateShaderResourceView(G.dev, (ID3D11Resource *)s_ssr.blur, NULL, &s_ssr.blur_srv))) {
++        SAFE_RELEASE(s_ssr.blur);
++        return false;
++    }
++    ID3D11Texture2D_GetDesc(s_ssr.blur, &td);
++    s_ssr.blur_w = w; s_ssr.blur_h = h; s_ssr.blur_levels = td.MipLevels;
++    return true;
++}
++
++static bool ssr_init(void)
++{
++    if (s_ssr.tried) return s_ssr.ok;
++    s_ssr.tried = true;
++    s_ssr.ps = post_init() ? post_shader("ssr_ps") : NULL;
++    s_ssr.ok = s_ssr.ps && make_buffer(16, D3D11_BIND_CONSTANT_BUFFER, &s_ssr.cb);
++    if (!s_ssr.ok) fprintf(stderr, "[KGPU] screen-space reflections unavailable: their shader did not compile\n");
++    return s_ssr.ok;
++}
++
++static void ssr_clear(void)
++{
++    static const FLOAT zero[4] = { 0, 0, 0, 0 };
++    unsigned int i;
++    for (i = 0; i < 3; i++) if (s_ssr.rtv[i]) ID3D11DeviceContext_ClearRenderTargetView(G.ctx, s_ssr.rtv[i], zero);
++}
++
++static bool ssr_targets(unsigned int w, unsigned int h)
++{
++    static const DXGI_FORMAT fmt[3] = { DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT };
++    unsigned int i;
++    if (s_ssr.tex[0] && s_ssr.w == w && s_ssr.h == h) return true;
++    ssr_free_targets();
++    for (i = 0; i < 3; i++)
++        if (!post_texture(w, h, fmt[i], &s_ssr.tex[i], &s_ssr.srv[i], &s_ssr.rtv[i])) { ssr_free_targets(); return false; }
++    s_ssr.w = w; s_ssr.h = h;
++    ssr_clear();
++    return true;
++}
++
++/* The draw path asks for every draw on the main target: whether this draw writes the reflection targets, and with
++ * which pixel shader and blend state. */
++static bool kg_ssr_draw(KGpuSurf *cs, KGpuSurf *zs, const PSConst *dpc, unsigned int alpha_mode, bool has_alpha,
++                        const KPixelState *ps, const KGpuVs *ve, ID3D11PixelShader **psx, ID3D11BlendState **bs)
++{
++    PSConst pc;
++    unsigned int i, env = 0;
++    float hx, hy;
++    if (s_ssr_setting <= 0 || !ve || !ve->env || !cs || !zs || !post_main_target(cs)) return false;
++    pc = *dpc;
++    for (i = 0; i < 4; i++)
++        if ((ve->env & (1u << i)) && pc.texmode[i] == 1u && (pc.texflags[i] & 1u)) { pc.texflags[i] |= PS_TEX_SSR; env++; }
++    if (!env || !kg_ao_camera(s_ao_draw_camera, &hx, &hy) || !ssr_init() || !ssr_targets(cs->hw, cs->hh)) return false;
++    *psx = ps_lookup(&pc);
++    if (!*psx) return false;                        /* still compiling: the original reflection this time */
++    *bs = get_blend(ps, alpha_mode, has_alpha, true);
++    if (!*bs) return false;
++    {
++        const float v[4] = { hx, hy, 1.0f / (float)cs->hw, 1.0f / (float)cs->hh };
++        D3D11_MAPPED_SUBRESOURCE ms;
++        if (memcmp(v, s_ssr.cb_vals, sizeof(v)) &&
++            SUCCEEDED(ID3D11DeviceContext_Map(G.ctx, (ID3D11Resource *)s_ssr.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
++            memcpy(ms.pData, v, sizeof(v));
++            ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)s_ssr.cb, 0);
++            memcpy(s_ssr.cb_vals, v, sizeof(v));
++        }
++        ID3D11DeviceContext_PSSetConstantBuffers(G.ctx, 4, 1, &s_ssr.cb);
++    }
++    s_ssr.used = true;
++    s_ssr.draws++;
++    return true;
++}
++
++/* The weight target as an 8-bit picture (diagnostic): where the env maps were and how strongly they add. */
++static void ssr_dump_weight(unsigned int w, unsigned int h)
++{
++    D3D11_TEXTURE2D_DESC td;
++    ID3D11Texture2D *stage = NULL;
++    D3D11_MAPPED_SUBRESOURCE ms;
++    char path[MAX_PATH + 32];
++    uint8_t *px;
++    unsigned int x, y;
++    memset(&td, 0, sizeof(td));
++    td.Width = w; td.Height = h; td.MipLevels = td.ArraySize = 1; td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++    td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_STAGING; td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++    if (FAILED(ID3D11Device_CreateTexture2D(G.dev, &td, NULL, &stage))) return;
++    ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)stage, (ID3D11Resource *)s_ssr.tex[0]);
++    px = (uint8_t *)malloc((size_t)w * h * 4);
++    if (px && SUCCEEDED(ID3D11DeviceContext_Map(G.ctx, (ID3D11Resource *)stage, 0, D3D11_MAP_READ, 0, &ms))) {
++        for (y = 0; y < h; y++) {
++            const uint16_t *row = (const uint16_t *)((const uint8_t *)ms.pData + (size_t)y * ms.RowPitch);
++            for (x = 0; x < w; x++) {
++                unsigned int k;
++                for (k = 0; k < 3; k++) {
++                    /* half to float, enough for 0..1 */
++                    const uint16_t hv = row[x * 4 + k];
++                    const int ex = (hv >> 10) & 31;
++                    const float f = ex ? (float)ldexp(1.0 + (hv & 1023) / 1024.0, ex - 15) : 0.0f;
++                    const float c = f * 255.0f;
++                    px[((size_t)y * w + x) * 4 + (2 - k)] = (uint8_t)(c > 255.0f ? 255 : c < 0.0f || (hv & 0x8000) ? 0 : c);
++                }
++                px[((size_t)y * w + x) * 4 + 3] = 255;
++            }
++        }
++        ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)stage, 0);
++        snprintf(path, sizeof(path), "%s_%llu_weight.bmp", s_ssr.dump, s_ssr.frames + 1);
++        write_bmp(path, px, w, h, w * 4);
++    }
++    free(px);
++    SAFE_RELEASE(stage);
++}
++
++/* Before the HUD (kg_post_scene): the reflections, for the pixels the env draws marked. */
++static void kg_ssr_pass(KGpuSurf *cs, KGpuSurf *zs)
++{
++    static const float steps[4] = { 24, 40, 64, 96 };
++    ID3D11ShaderResourceView *in[8], *none[8] = { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
++    ID3D11SamplerState *smp[2];
++    D3D11_MAPPED_SUBRESOURCE ms;
++    KgPostCb c;
++    int q = s_ssr_setting;
++    bool dumping;
++    if (!s_ssr.used) return;
++    s_ssr.used = false;
++    if (q < 1 || !s_ssr.ok || !zs || !zs->depth || !zs->real || !zs->srv || zs->hw != cs->hw || zs->hh != cs->hh ||
++        s_ssr.w != cs->hw || s_ssr.h != cs->hh || !ssr_blur(cs->hw, cs->hh)) { ssr_clear(); return; }
++    memset(&c, 0, sizeof(c));
++    if (!kg_ao_camera(s_post.ao_camera, &c.p3[0], &c.p3[1])) { ssr_clear(); return; }
++    if (q > 4) q = 4;
++    c.p0[0] = 1.0f / cs->hw; c.p0[1] = 1.0f / cs->hh; c.p0[2] = (float)cs->hw; c.p0[3] = (float)cs->hh;
++    c.p1[0] = steps[q - 1]; c.p1[1] = 1.6f; c.p1[2] = 0.06f; c.p1[3] = s_ssr_strength;
++    /* misses: how much the screen environment replaces the original map, and how blurred (a 128-texel map's detail);
++     * hits: how much they blur at the end of the reach */
++    c.p2[0] = s_ssr_env_mix; c.p2[1] = (float)(s_ssr.blur_levels > 7 ? s_ssr.blur_levels - 4 : 3); c.p2[2] = 2.5f;
++    c.p2[3] = (float)(s_ssr.blur_levels ? s_ssr.blur_levels - 1 : 0);
++    if (FAILED(ID3D11DeviceContext_Map(G.ctx, (ID3D11Resource *)s_post.cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) { ssr_clear(); return; }
++    memcpy(ms.pData, &c, sizeof(c));
++    ID3D11DeviceContext_Unmap(G.ctx, (ID3D11Resource *)s_post.cb, 0);
++    ID3D11DeviceContext_CopyResource(G.ctx, (ID3D11Resource *)s_post.copy, (ID3D11Resource *)cs->tex);
++    ID3D11DeviceContext_CopySubresourceRegion(G.ctx, (ID3D11Resource *)s_ssr.blur, 0, 0, 0, 0, (ID3D11Resource *)cs->tex, 0, NULL);
++    ID3D11DeviceContext_GenerateMips(G.ctx, s_ssr.blur_srv);
++    if (!s_ssr.dump_init) {
++        const char *e = getenv("RECOMP_KGPU_SSR_DUMP"), *comma;
++        s_ssr.dump_init = 1;
++        if (e && *e) {
++            comma = strchr(e, ',');
++            snprintf(s_ssr.dump, sizeof(s_ssr.dump), "%.*s", comma ? (int)(comma - e) : (int)strlen(e), e);
++            s_ssr.dump_at = comma ? strtoull(comma + 1, NULL, 0) : 600;
++        }
++    }
++    dumping = s_ssr.dump[0] && s_ssr.frames + 1 >= s_ssr.dump_at && (s_ssr.frames + 1 - s_ssr.dump_at) % 300 == 0;
++    if (dumping) {
++        char path[MAX_PATH + 32];
++        snprintf(path, sizeof(path), "%s_%llu_before.bmp", s_ssr.dump, s_ssr.frames + 1);
++        free(post_ao_colour_capture(cs->tex, cs->hw, cs->hh, path));
++        ssr_dump_weight(cs->hw, cs->hh);
++    }
++    in[0] = s_post.copy_srv; in[1] = NULL; in[2] = zs->srv; in[3] = NULL;
++    in[4] = s_ssr.srv[0]; in[5] = s_ssr.srv[1]; in[6] = s_ssr.srv[2]; in[7] = s_ssr.blur_srv;
++    smp[0] = s_post.smp_lin; smp[1] = s_post.smp_pt;
++    ID3D11DeviceContext_OMSetRenderTargets(G.ctx, 1, &cs->rtv, NULL);
++    fullscreen_pass_state(cs->hw, cs->hh);
++    ID3D11DeviceContext_OMSetDepthStencilState(G.ctx, G.ds_none, 0);
++    ID3D11DeviceContext_PSSetShader(G.ctx, s_ssr.ps, NULL, 0);
++    ID3D11DeviceContext_PSSetConstantBuffers(G.ctx, 0, 1, &s_post.cb);
++    ID3D11DeviceContext_PSSetSamplers(G.ctx, 0, 2, smp);
++    ID3D11DeviceContext_PSSetShaderResources(G.ctx, 0, 8, in);
++    ID3D11DeviceContext_Draw(G.ctx, 3, 0);
++    ID3D11DeviceContext_PSSetShaderResources(G.ctx, 0, 8, none);
++    if (dumping) {
++        char path[MAX_PATH + 32];
++        snprintf(path, sizeof(path), "%s_%llu_after.bmp", s_ssr.dump, s_ssr.frames + 1);
++        free(post_ao_colour_capture(cs->tex, cs->hw, cs->hh, path));
++        fprintf(stderr, "[KSSR] pass %llu dumped to %s_%llu_*.bmp\n", s_ssr.frames + 1, s_ssr.dump, s_ssr.frames + 1);
++    }
++    ssr_clear();
++    s_ssr.frames++;
++    if (s_post.post_trace && (s_ssr.frames == 1 || s_ssr.frames % 600 == 0))
++        fprintf(stderr, "[KSSR] %llu frames with reflections, %llu env draws\n", s_ssr.frames, s_ssr.draws);
++    kg_cache_invalidate();
++}
++
++/* A frame whose pass did not run (no HUD point reached on the main target) leaves nothing for the next one. */
++static void kg_ssr_after_flip(void)
++{
++    if (!s_ssr.used) return;
++    s_ssr.used = false;
++    ssr_clear();
++}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_time.inc b/src/nv2a/kelvin/kelvin_gpu_time.inc
 new file mode 100644
 index 0000000..2bcd677
@@ -16890,10 +17296,10 @@ index 0000000..2bcd677
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_vsh.inc b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
 new file mode 100644
-index 0000000..61291a2
+index 0000000..bbe15ce
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,852 @@
 +/* The GPU vertex path of the Kelvin D3D11 backend (included by kelvin_gpu.c).
 + *
 + * A transform program (nv2a_vsh_cpu's parsed steps, straight-line code) becomes
@@ -17249,6 +17655,77 @@ index 0000000..61291a2
 +    return b.p;
 +}
 +
++/* ---- environment maps ---------------------------------------------------------------------------- */
++
++/* The texture stages a program feeds with an environment map, bit k = stage k (output o9 + k). BLACK reflects the
++ * eye direction about the vertex normal (input v2), turns it into the env map's frame and writes map coordinates
++ * as r * s + s with the same constant for scale and bias (0.5: sphere map), directly or projectively. An output is
++ * an env coordinate when its value depends on the normal through such a multiply-add. Steps read before they
++ * write, the MAC and ILU halves alike, as the hardware does. */
++#define VENV_NORMAL 1u
++#define VENV_HALF 2u
++static unsigned vsh_op_inputs(const Nv2aVshOperation *op)
++{
++    switch (op->opcode) {
++    case NV2AOP_NOP: return 0;
++    case NV2AOP_MOV: case NV2AOP_ARL: case NV2AOP_RCP: case NV2AOP_RCC: case NV2AOP_RSQ:
++    case NV2AOP_EXP: case NV2AOP_LOG: case NV2AOP_LIT: return 1;
++    case NV2AOP_MAD: return 3;
++    default: return 2;
++    }
++}
++
++static unsigned vsh_op_flags(const Nv2aVshOperation *op, const unsigned temp[13], unsigned a0)
++{
++    const unsigned n = vsh_op_inputs(op);
++    unsigned flags = 0, k;
++    for (k = 0; k < n; k++) {
++        const Nv2aVshInput *in = &op->inputs[k];
++        if (in->type == NV2ART_INPUT && in->index == 2) flags |= VENV_NORMAL;
++        else if (in->type == NV2ART_TEMPORARY && in->index <= 12) flags |= temp[in->index];
++        if (in->is_relative) flags |= a0;
++    }
++    if (op->opcode == NV2AOP_MAD && op->inputs[1].type == NV2ART_CONTEXT && op->inputs[2].type == NV2ART_CONTEXT &&
++        op->inputs[1].index == op->inputs[2].index && !op->inputs[1].is_relative && !op->inputs[2].is_relative &&
++        !memcmp(op->inputs[1].swizzle, op->inputs[2].swizzle, 4) && (flags & VENV_NORMAL))
++        flags |= VENV_HALF;
++    return flags;
++}
++
++static void vsh_op_store(const Nv2aVshOperation *op, unsigned flags, unsigned temp[13], unsigned out[16], unsigned *a0)
++{
++    int k;
++    if (op->opcode == NV2AOP_NOP) return;
++    for (k = 0; k < 2; k++) {
++        const Nv2aVshOutput *o = &op->outputs[k];
++        if (o->type == NV2ART_TEMPORARY && o->index <= 12) {
++            if (o->writemask == NV2AWM_XYZW) temp[o->index] = flags; else temp[o->index] |= flags;
++        } else if (o->type == NV2ART_OUTPUT && o->index < 16) {
++            out[o->index] |= flags;
++        } else if (o->type == NV2ART_ADDRESS) {
++            *a0 = flags;
++        }
++    }
++}
++
++static unsigned vsh_env_stages(const Nv2aVshProgram *prog)
++{
++    unsigned temp[13], out[16], a0 = 0, mask = 0, k;
++    const Nv2aVshStep *st;
++    int step = 0;
++    memset(temp, 0, sizeof(temp));
++    memset(out, 0, sizeof(out));
++    for (st = prog->steps;; st++, step++) {
++        const unsigned fm = vsh_op_flags(&st->mac, temp, a0), fi = vsh_op_flags(&st->ilu, temp, a0);
++        vsh_op_store(&st->mac, fm, temp, out, &a0);
++        vsh_op_store(&st->ilu, fi, temp, out, &a0);
++        if (st->is_final || step > 400) break;
++    }
++    for (k = 0; k < 4; k++)
++        if ((out[9 + k] & (VENV_NORMAL | VENV_HALF)) == (VENV_NORMAL | VENV_HALF)) mask |= 1u << k;
++    return mask;
++}
++
 +/* ---- shader cache with an asynchronous compiler -------------------------------------------- */
 +/*
 + * Compiled programs are cached on disk by their HLSL (vs_<source hash>_<length>.bin), so a program has one file
@@ -17269,6 +17746,7 @@ index 0000000..61291a2
 +    uint32_t sh, len;                  /* source hash and length: the cache key */
 +    uint32_t *words;                   /* microcode up to the final instruction, for the manifest */
 +    uint32_t nwords;
++    unsigned env;                      /* the stages its texture coordinates give environment maps (vsh_env_stages) */
 +} KGpuVs;
 +
 +#define KG_VS_MAX 512
@@ -17646,6 +18124,8 @@ index 0000000..61291a2
 +        s_vs_quick = !(env && *env == '0');
 +    }
 +    e->used = true; e->hash = hash; e->start = start; e->state = 0;
++    e->env = vsh_env_stages((const Nv2aVshProgram *)program);
++    if (e->env) fprintf(stderr, "[KGPU] vertex program %08X/%u gives stages %X environment maps\n", hash, start, e->env);
 +    e->source = vsh_generate((const Nv2aVshProgram *)program);
 +    if (!e->source) {
 +        e->state = 2;
@@ -24135,10 +24615,10 @@ index 0000000..e2153bc
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_render.c b/src/nv2a/kelvin/kelvin_render.c
 new file mode 100644
-index 0000000..dd69e2e
+index 0000000..5a48808
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.c
-@@ -0,0 +1,5319 @@
+@@ -0,0 +1,5364 @@
 +/*
 + * Kelvin renderer: surfaces, clears, blits, fences and the draw path --
 + * vertex fetch, primitive assembly, clipping and rasterization.
@@ -27341,6 +27821,50 @@ index 0000000..dd69e2e
 +
 +static const KVertex *get_vertex(KelvinState *pg, const DrawSource *src,
 +                                 VCache *vc, uint32_t index);
++static void trace_dump_texture(const KTexture *t);
++
++/* RECOMP_KELVIN_TRACE on the GPU renderer: the same draw state, before the draw goes to the GPU (no rasterised
++ * pixels or post-transform vertices to report there), with every combiner stage's inputs. */
++static void trace_draw_gpu(DrawCtx *c, const DrawSource *src, size_t n)
++{
++    static const char *const kinds[] = { "arrays", "inline-array", "inline-buffer" };
++    KelvinState *pg = c->pg;
++    const KPixelState *ps = &c->ps;
++    const uint32_t csv0_d = pgraph_reg_r(pg, NV_PGRAPH_CSV0_D);
++    int k, s, j;
++    fprintf(stderr, "[KTRACE] f%llu d%llu prim %u n %zu %s vsh %s | target 0x%08X %ux%u zeta 0x%08X | gpu\n",
++            (unsigned long long)s_frames + 1, (unsigned long long)s_trace_draw++, pg->primitive_mode, n,
++            kinds[src->kind], GET_MASK(csv0_d, NV_PGRAPH_CSV0_D_MODE) == 2 ? "program" : "fixed",
++            c->t.color_va, c->t.width, c->t.height, c->t.zeta_va);
++    fprintf(stderr, "[KTRACE]   combiners %d%s | blend %d sf 0x%X df 0x%X | alpha test %d | depth %d/%d | cull %d\n",
++            ps->num_stages, ps->final_enabled ? " +final" : "", ps->blend, ps->blend_sfactor, ps->blend_dfactor,
++            ps->alpha_test, ps->depth_test, ps->depth_write, c->cull_enable);
++    for (s = 0; s < ps->num_stages && s < 8; s++) {
++        const KCombinerStage *st = &ps->stage[s];
++        fprintf(stderr, "[KTRACE]   stage %d rgb", s);
++        for (j = 0; j < 4; j++) fprintf(stderr, " %d/%d/%d", st->rgb[j].reg, st->rgb[j].mod, st->rgb[j].chan);
++        fprintf(stderr, " -> ab %d cd %d sum %d ops %d/%d/%d map %d | alpha", st->rgb_out.ab, st->rgb_out.cd, st->rgb_out.muxsum,
++                st->rgb_out.ab_op, st->rgb_out.cd_op, st->rgb_out.muxsum_op, st->rgb_out.mapping);
++        for (j = 0; j < 4; j++) fprintf(stderr, " %d/%d/%d", st->alpha[j].reg, st->alpha[j].mod, st->alpha[j].chan);
++        fprintf(stderr, " | c0 %.2f %.2f %.2f %.2f c1 %.2f %.2f %.2f %.2f\n",
++                (double)st->c0[0], (double)st->c0[1], (double)st->c0[2], (double)st->c0[3],
++                (double)st->c1[0], (double)st->c1[1], (double)st->c1[2], (double)st->c1[3]);
++    }
++    if (ps->final_enabled) {
++        fprintf(stderr, "[KTRACE]   final");
++        for (j = 0; j < 7; j++) fprintf(stderr, " %d/%d/%d", ps->fin[j].reg, ps->fin[j].mod, ps->fin[j].chan);
++        fprintf(stderr, "\n");
++    }
++    kvsh_trace_program();
++    for (k = 0; k < 4; k++) {
++        const KTexture *t = &ps->tex[k];
++        if (!t->valid && !ps->tex_mode[k]) continue;
++        fprintf(stderr, "[KTRACE]   tex%d mode %d %s fmt 0x%02X %ux%u levels %u base 0x%08X addr %u/%u%s\n",
++                k, ps->tex_mode[k], t->valid ? "valid" : "INVALID", t->color_format, t->width, t->height, t->levels,
++                t->base, t->addr[0], t->addr[1], t->linear ? " linear" : " swizzled");
++        if (t->valid) trace_dump_texture(t);
++    }
++}
 +
 +/* Level 0 of a 2D texture as a BMP: colour | alpha, side by side. */
 +static void trace_dump_texture(const KTexture *t)
@@ -29175,6 +29699,7 @@ index 0000000..dd69e2e
 +        s_gb.nrec = s_gb.nidx = 0;
 +    }
 +
++    if (trace_frame()) trace_draw_gpu(&c, &src, (size_t)(pg->inline_elements_length + pg->inline_array_length));
 +    /* counts of why a draw goes through the CPU vertex stage (reported by kgpu_report) */
 +    if (kgpu_vs_enabled() && mode >= PRIM_TYPE_TRIANGLES) {
 +        KVshGpuInfo gi;
@@ -38308,10 +38833,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..cd3b6e2
+index 0000000..e8102ab
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2885 @@
+@@ -0,0 +1,2886 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -38662,8 +39187,8 @@ index 0000000..cd3b6e2
 +
 +static int video_row_named(const char *name)
 +{
-+    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "ao_method", "ao_quality", "aspect",
-+        "fov", "scale", "filter", "vsync", "fps", "blur" };
++    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "ao_method", "ao_quality", "reflections",
++        "aspect", "fov", "scale", "filter", "vsync", "fps", "blur" };
 +    int i;
 +    for (i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) if (!_stricmp(name, names[i])) return i;
 +    return -1;
@@ -39742,6 +40267,7 @@ index 0000000..cd3b6e2
 +        { "SHARPENING", "NITIDEZ", "NITIDEZ", "NETTETÉ", "SCHÄRFEN", "NITIDEZZA" },
 +        { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE", "OCLUSIÓN AMBIENTAL", "OCCLUSION AMBIANTE", "UMGEBUNGSVERDECKUNG", "OCCLUSIONE AMBIENTALE" },
 +        { "AO QUALITY", "QUALIDADE DA OCLUSÃO", "CALIDAD DE OCLUSIÓN", "QUALITÉ DE L’OCCLUSION", "AO-QUALITÄT", "QUALITÀ AO" },
++        { "REFLECTIONS", "REFLEXOS", "REFLEJOS", "RÉFLEXIONS", "SPIEGELUNGEN", "RIFLESSI" },
 +        { "FIELD OF VIEW", "FOV", "CAMPO DE VISIÓN", "CHAMP DE VISION", "SICHTFELD", "CAMPO VISIVO" },
 +        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" },
 +        /* photo mode (Portuguese reviewed; the others machine drafts, like the launcher's) */
@@ -42571,10 +43097,10 @@ index 0000000..2fdeaa4
 +#endif /* XBOXRECOMP_PC_PHOTO_H */
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
-index 0000000..2b84c56
+index 0000000..1588993
 --- /dev/null
 +++ b/src/video/pc_video.c
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,617 @@
 +/* PC video settings: defaults, settings file, environment overrides. See pc_video.h. */
 +#include "pc_video.h"
 +#include <stdio.h>
@@ -42622,6 +43148,7 @@ index 0000000..2b84c56
 +    s->sharpen = PCV_STEP_OFF;
 +    s->ao_method = PCV_AO_OFF;
 +    s->ao_quality = PCV_AOQ_HIGH;
++    s->reflections = PCV_REFL_HIGH;
 +}
 +
 +static int in_list(const unsigned *list, unsigned count, unsigned v)
@@ -42648,6 +43175,7 @@ index 0000000..2b84c56
 +static const char *const k_step_names[PCV_STEP_COUNT] = { "off", "low", "medium", "high" };
 +static const char *const k_ao_names[PCV_AO_COUNT] = { "off", "ssao", "hbao", "hbao_plus", "gtao" };
 +static const char *const k_ao_quality_names[PCV_AOQ_COUNT] = { "low", "medium", "high", "ultra" };
++static const char *const k_refl_names[PCV_REFL_COUNT] = { "original", "low", "medium", "high", "ultra" };
 +static int name_index(const char *const *names, unsigned count, const char *t)
 +{
 +    unsigned i;
@@ -42764,6 +43292,9 @@ index 0000000..2b84c56
 +    } else if (!_stricmp(key, "ao_quality")) {
 +        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, value);
 +        if (a >= 0) { s->ao_quality = (unsigned)a; return 1; }
++    } else if (!_stricmp(key, "reflections")) {
++        int a = name_index(k_refl_names, PCV_REFL_COUNT, value);
++        if (a >= 0) { s->reflections = (unsigned)a; return 1; }
 +    } else if (!_stricmp(key, "ssao")) {
 +        /* The original single SSAO setting combined method and quality. */
 +        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, value);
@@ -42818,7 +43349,8 @@ index 0000000..2b84c56
 +        "dof=%s\n"
 +        "sharpen=%s\n"
 +        "ao_method=%s\n"
-+        "ao_quality=%s\n",
++        "ao_quality=%s\n"
++        "reflections=%s\n",
 +        s->internal_height, s->window_width, s->window_height,
 +        s->borderless ? "borderless" : "windowed",
 +        s->scale == PCV_SCALE_STRETCH ? "stretch" : s->scale == PCV_SCALE_INTEGER ? "integer" : "fit",
@@ -42827,7 +43359,8 @@ index 0000000..2b84c56
 +        k_aa_names[s->aa < PCV_AA_COUNT ? s->aa : 0], s->af, k_step_names[s->dof < PCV_STEP_COUNT ? s->dof : 0],
 +        k_step_names[s->sharpen < PCV_STEP_COUNT ? s->sharpen : 0],
 +        k_ao_names[s->ao_method < PCV_AO_COUNT ? s->ao_method : PCV_AO_OFF],
-+        k_ao_quality_names[s->ao_quality < PCV_AOQ_COUNT ? s->ao_quality : PCV_AOQ_HIGH]);
++        k_ao_quality_names[s->ao_quality < PCV_AOQ_COUNT ? s->ao_quality : PCV_AOQ_HIGH],
++        k_refl_names[s->reflections < PCV_REFL_COUNT ? s->reflections : PCV_REFL_HIGH]);
 +    return n < 0 ? 0 : (size_t)n;
 +}
 +
@@ -42933,6 +43466,10 @@ index 0000000..2b84c56
 +        int a = name_index(k_ao_quality_names, PCV_AOQ_COUNT, t);
 +        lock |= PCV_LOCK_AO_QUALITY; s->ao_quality = a >= 0 ? (unsigned)a : PCV_AOQ_HIGH;
 +    }
++    if ((t = env_text("RECOMP_REFLECTIONS")) != NULL) {
++        int a = name_index(k_refl_names, PCV_REFL_COUNT, t);
++        lock |= PCV_LOCK_REFLECTIONS; s->reflections = a >= 0 ? (unsigned)a : PCV_REFL_ORIGINAL;
++    }
 +    if ((t = env_text("RECOMP_INTERNAL_HEIGHT")) != NULL && parse_uint(t, 1, 100000, &u) &&
 +        in_list(pc_video_internal_heights, pc_video_internal_height_count, u)) {
 +        lock |= PCV_LOCK_INTERNAL; s->internal_height = u;
@@ -42972,13 +43509,13 @@ index 0000000..2b84c56
 +        unsigned rw, rh;
 +        pc_video_render_size_for(&s_cur, &rw, &rh);
 +        fprintf(stderr, "[VIDEO] internal %ux%u (%up), window %ux%u %s, scale %u, filter %s, vsync %u, cap %u, camera %s, fov %g, blur %s%s; "
-+                        "aa %s, af %ux, dof %s, sharpen %s, ao %s (%s); locked 0x%X\n",
++                        "aa %s, af %ux, dof %s, sharpen %s, ao %s (%s), reflections %s; locked 0x%X\n",
 +                rw, rh, s_cur.internal_height, s_cur.window_width, s_cur.window_height,
 +                s_cur.borderless ? "borderless" : "windowed", s_cur.scale, s_cur.nearest ? "nearest" : "linear",
 +                s_cur.vsync, s_cur.fps_limit, pc_video_aspect_name(s_cur.aspect), s_cur.fov,
 +                s_cur.motion_blur_off ? "off" : "original", s_cur.render_override_w ? " (raster size overridden)" : "",
 +                k_aa_names[s_cur.aa], s_cur.af, k_step_names[s_cur.dof], k_step_names[s_cur.sharpen],
-+                k_ao_names[s_cur.ao_method], k_ao_quality_names[s_cur.ao_quality], s_locked);
++                k_ao_names[s_cur.ao_method], k_ao_quality_names[s_cur.ao_quality], k_refl_names[s_cur.reflections], s_locked);
 +    }
 +}
 +
@@ -43065,7 +43602,7 @@ index 0000000..2b84c56
 +           s->scale <= PCV_SCALE_INTEGER && in_list(pc_video_fps_limits, pc_video_fps_limit_count, s->fps_limit) &&
 +           s->aspect < PCV_ASPECT_COUNT && valid_fov(s->fov) && s->aa < PCV_AA_COUNT &&
 +           in_list(pc_video_af_levels, pc_video_af_level_count, s->af) && s->dof < PCV_STEP_COUNT && s->sharpen < PCV_STEP_COUNT &&
-+           s->ao_method < PCV_AO_COUNT && s->ao_quality < PCV_AOQ_COUNT;
++           s->ao_method < PCV_AO_COUNT && s->ao_quality < PCV_AOQ_COUNT && s->reflections < PCV_REFL_COUNT;
 +}
 +
 +/* The new values over the current ones, except where the environment holds a field. */
@@ -43089,6 +43626,7 @@ index 0000000..2b84c56
 +    if (locked & PCV_LOCK_SHARPEN) r.sharpen = base->sharpen;
 +    if (locked & PCV_LOCK_AO_METHOD) r.ao_method = base->ao_method;
 +    if (locked & PCV_LOCK_AO_QUALITY) r.ao_quality = base->ao_quality;
++    if (locked & PCV_LOCK_REFLECTIONS) r.reflections = base->reflections;
 +    return r;
 +}
 +
@@ -43182,10 +43720,10 @@ index 0000000..2b84c56
 +}
 diff --git a/src/video/pc_video.h b/src/video/pc_video.h
 new file mode 100644
-index 0000000..cc3e336
+index 0000000..e32823c
 --- /dev/null
 +++ b/src/video/pc_video.h
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,134 @@
 +/*
 + * pc_video.h -- the PC video settings of the recompiled game: one model for the window, the
 + * internal (render) resolution, the camera and the presenter.
@@ -43228,6 +43766,9 @@ index 0000000..cc3e336
 + * density and radius; the AO mask and its depth-aware blur stay at the scene resolution. */
 +enum { PCV_AO_OFF, PCV_AO_SSAO, PCV_AO_HBAO, PCV_AO_HBAO_PLUS, PCV_AO_GTAO, PCV_AO_COUNT };
 +enum { PCV_AOQ_LOW, PCV_AOQ_MEDIUM, PCV_AOQ_HIGH, PCV_AOQ_ULTRA, PCV_AOQ_COUNT };
++/* Reflections: Original keeps the game's 128 x 128 environment maps; the others replace them on the surfaces that use
++ * them with screen-space reflections, marching more steps at higher quality. */
++enum { PCV_REFL_ORIGINAL, PCV_REFL_LOW, PCV_REFL_MEDIUM, PCV_REFL_HIGH, PCV_REFL_ULTRA, PCV_REFL_COUNT };
 +
 +typedef struct PcVideoSettings {
 +    unsigned internal_height;                 /* 480, 720, 1080, 1440 or 2160 */
@@ -43246,6 +43787,7 @@ index 0000000..cc3e336
 +    unsigned sharpen;                         /* sharpening, PCV_STEP_* */
 +    unsigned ao_method;                       /* ambient occlusion, PCV_AO_* */
 +    unsigned ao_quality;                      /* ambient occlusion sampling, PCV_AOQ_* */
++    unsigned reflections;                     /* PCV_REFL_* */
 +    unsigned render_override_w, render_override_h; /* both non-zero: an explicit raster size (RECOMP_RENDER_*) */
 +} PcVideoSettings;
 +
@@ -43255,7 +43797,7 @@ index 0000000..cc3e336
 +    PCV_LOCK_SCALE = 1u << 3, PCV_LOCK_FILTER = 1u << 4, PCV_LOCK_VSYNC = 1u << 5,
 +    PCV_LOCK_FPS = 1u << 6, PCV_LOCK_ASPECT = 1u << 7, PCV_LOCK_FOV = 1u << 8, PCV_LOCK_BLUR = 1u << 9,
 +    PCV_LOCK_AA = 1u << 10, PCV_LOCK_AF = 1u << 11, PCV_LOCK_DOF = 1u << 12, PCV_LOCK_SHARPEN = 1u << 13,
-+    PCV_LOCK_AO_METHOD = 1u << 14, PCV_LOCK_AO_QUALITY = 1u << 15
++    PCV_LOCK_AO_METHOD = 1u << 14, PCV_LOCK_AO_QUALITY = 1u << 15, PCV_LOCK_REFLECTIONS = 1u << 16
 +};
 +
 +extern const unsigned pc_video_internal_heights[];   /* 480 .. 2160 */
@@ -43318,10 +43860,10 @@ index 0000000..cc3e336
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..9b53ca0
+index 0000000..ddf798c
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,847 @@
 +/* The native Video Settings page. See pc_video_menu.h. */
 +#include "pc_video_menu.h"
 +#include "pc_video.h"
@@ -43342,7 +43884,7 @@ index 0000000..9b53ca0
 +enum {
 +    R_MODE = PCV_ROW_MODE, R_WINDOW = PCV_ROW_WINDOW, R_INTERNAL = PCV_ROW_INTERNAL, R_AA = PCV_ROW_AA, R_AF = PCV_ROW_AF,
 +    R_DOF = PCV_ROW_DOF, R_SHARPEN = PCV_ROW_SHARPEN, R_ASPECT = PCV_ROW_ASPECT, R_FOV = PCV_ROW_FOV, R_SCALE = PCV_ROW_SCALE,
-+    R_AO_METHOD = PCV_ROW_AO_METHOD, R_AO_QUALITY = PCV_ROW_AO_QUALITY,
++    R_AO_METHOD = PCV_ROW_AO_METHOD, R_AO_QUALITY = PCV_ROW_AO_QUALITY, R_REFLECTIONS = PCV_ROW_REFLECTIONS,
 +    R_FILTER = PCV_ROW_FILTER, R_VSYNC = PCV_ROW_VSYNC, R_FPS = PCV_ROW_FPS, R_BLUR = PCV_ROW_BLUR, R_RESET = PCV_ROW_RESET,
 +    R_DONE = PCV_ROW_DONE, R_COUNT = PCV_ROW_COUNT
 +};
@@ -43481,6 +44023,8 @@ index 0000000..9b53ca0
 +        s.ao_method = wrap((int)s.ao_method + dir, PCV_AO_COUNT); break;
 +    case R_AO_QUALITY:
 +        s.ao_quality = wrap((int)s.ao_quality + dir, PCV_AOQ_COUNT); break;
++    case R_REFLECTIONS:
++        s.reflections = wrap((int)s.reflections + dir, PCV_REFL_COUNT); break;
 +    case R_ASPECT:
 +        s.aspect = wrap((int)s.aspect + dir, PCV_ASPECT_COUNT); break;
 +    case R_FOV: {
@@ -43821,13 +44365,13 @@ index 0000000..9b53ca0
 +
 +static const char *const k_row_label[R_COUNT] = {
 +    "WINDOW MODE", "WINDOW SIZE", "INTERNAL RESOLUTION", "ANTI-ALIASING", "ANISOTROPIC FILTERING", "DEPTH OF FIELD",
-+    "SHARPENING", "AO METHOD", "AO QUALITY", "ASPECT RATIO", "FIELD OF VIEW", "SCALING", "SCALING FILTER", "VSYNC", "FRAME RATE LIMIT",
++    "SHARPENING", "AO METHOD", "AO QUALITY", "REFLECTIONS", "ASPECT RATIO", "FIELD OF VIEW", "SCALING", "SCALING FILTER", "VSYNC", "FRAME RATE LIMIT",
 +    "MOTION BLUR", "RESET TO DEFAULTS", "DONE"
 +};
 +
 +static const char *const k_row_label_pt[R_COUNT] = {
 +    "MODO DE JANELA", "RESOLUÇÃO", "RESOLUÇÃO INTERNA", "SUAVIZAÇÃO DE SERRILHADO", "FILTRAGEM ANISOTRÓPICA", "PROFUNDIDADE DE CAMPO",
-+    "NITIDEZ", "MÉTODO DE OCLUSÃO", "QUALIDADE DA OCLUSÃO", "PROPORÇÃO", "FOV", "ESCALA DA IMAGEM", "FILTRO DE ESCALA", "SINCRONIZAÇÃO VERTICAL", "LIMITE DE QUADROS",
++    "NITIDEZ", "MÉTODO DE OCLUSÃO", "QUALIDADE DA OCLUSÃO", "REFLEXOS", "PROPORÇÃO", "FOV", "ESCALA DA IMAGEM", "FILTRO DE ESCALA", "SINCRONIZAÇÃO VERTICAL", "LIMITE DE QUADROS",
 +    "DESFOQUE DE MOVIMENTO", "RESTAURAR PADRÕES", "CONCLUÍDO"
 +};
 +
@@ -43904,6 +44448,10 @@ index 0000000..9b53ca0
 +        strcpy(value, s->ao_quality == PCV_AOQ_LOW ? "LOW" : s->ao_quality == PCV_AOQ_MEDIUM ? "MEDIUM" :
 +                s->ao_quality == PCV_AOQ_ULTRA ? "ULTRA" : "HIGH");
 +        break;
++    case R_REFLECTIONS:
++        strcpy(value, s->reflections == PCV_REFL_ORIGINAL ? "ORIGINAL" : s->reflections == PCV_REFL_LOW ? "LOW" :
++                s->reflections == PCV_REFL_MEDIUM ? "MEDIUM" : s->reflections == PCV_REFL_ULTRA ? "ULTRA" : "HIGH");
++        break;
 +    case R_ASPECT:
 +        strcpy(value, s->aspect == PCV_ASPECT_ORIGINAL ? "ORIGINAL" : s->aspect == PCV_ASPECT_4_3 ? "4:3" :
 +                s->aspect == PCV_ASPECT_16_9 ? "16:9" : s->aspect == PCV_ASPECT_21_9 ? "21:9" : "32:9");
@@ -43959,6 +44507,10 @@ index 0000000..9b53ca0
 +        if (!live) return video_menu_text("Ambient occlusion is available with the GPU renderer only.", "A oclusão de ambiente só está disponível no renderizador GPU.");
 +        if (cur.ao_method == PCV_AO_OFF) return video_menu_text("Quality changes AO sampling density and radius. Choose an AO method to enable the effect.", "A qualidade altera a amostragem e o alcance da oclusão. Escolha um método para ativar o efeito.");
 +        return video_menu_text("Higher quality increases AO sampling density and radius, with more GPU work. All levels use scene resolution and depth-aware blur.", "Qualidades maiores aumentam a amostragem e o alcance da oclusão, exigindo mais da GPU. Todos os níveis usam a resolução da cena e desfoque sensível à profundidade.");
++    case R_REFLECTIONS:
++        if (!live) return video_menu_text("Screen-space reflections are available with the GPU renderer only.", "Os reflexos em espaço de tela só estão disponíveis no renderizador GPU.");
++        return video_menu_text("Replaces the game's low-resolution reflection maps with reflections of the scene on screen. Original keeps the maps. Higher quality traces more steps.",
++                               "Substitui os mapas de reflexo de baixa resolução do jogo por reflexos da cena na tela. Original mantém os mapas. Qualidades maiores traçam mais passos.");
 +    case R_ASPECT: return video_menu_text("The shape of the camera. Original is the game's 4:3 camera.", "Proporção da câmera. Original usa a proporção 4:3 do jogo.");
 +    case R_FOV: return video_menu_text("Vertical field of view during gameplay, in degrees.", "Campo de visão vertical durante o jogo, em graus.");
 +    case R_SCALE: return video_menu_text("Fit keeps the picture's shape. Stretch fills the window. Integer uses whole-number scales.", "Ajustar mantém a proporção da imagem. Esticar preenche a janela. Inteira usa múltiplos sem fração.");
@@ -43992,7 +44544,8 @@ index 0000000..9b53ca0
 +    out[cap - 1] = 0;
 +    if (!live && ((row == R_AA && s->aa) || (row == R_AF && s->af > 1) ||
 +                  (row == R_DOF && s->dof) || (row == R_SHARPEN && s->sharpen) ||
-+                  ((row == R_AO_METHOD || row == R_AO_QUALITY) && s->ao_method != PCV_AO_OFF)))
++                  ((row == R_AO_METHOD || row == R_AO_QUALITY) && s->ao_method != PCV_AO_OFF) ||
++                  (row == R_REFLECTIONS && s->reflections != PCV_REFL_ORIGINAL)))
 +        wcsncat(out, L"  GPU ONLY", cap - wcslen(out) - 1);
 +}
 +
@@ -44002,6 +44555,7 @@ index 0000000..9b53ca0
 +    case R_MODE: return PCV_LOCK_WINDOW_MODE; case R_WINDOW: return PCV_LOCK_WINDOW_SIZE; case R_INTERNAL: return PCV_LOCK_INTERNAL;
 +    case R_AA: return PCV_LOCK_AA; case R_AF: return PCV_LOCK_AF; case R_DOF: return PCV_LOCK_DOF; case R_SHARPEN: return PCV_LOCK_SHARPEN;
 +    case R_AO_METHOD: return PCV_LOCK_AO_METHOD; case R_AO_QUALITY: return PCV_LOCK_AO_QUALITY;
++    case R_REFLECTIONS: return PCV_LOCK_REFLECTIONS;
 +    case R_ASPECT: return PCV_LOCK_ASPECT; case R_FOV: return PCV_LOCK_FOV; case R_SCALE: return PCV_LOCK_SCALE;
 +    case R_FILTER: return PCV_LOCK_FILTER; case R_VSYNC: return PCV_LOCK_VSYNC; case R_FPS: return PCV_LOCK_FPS;
 +    case R_BLUR: return PCV_LOCK_BLUR; default: return 0;
@@ -44159,7 +44713,7 @@ index 0000000..9b53ca0
 +#endif
 diff --git a/src/video/pc_video_menu.h b/src/video/pc_video_menu.h
 new file mode 100644
-index 0000000..3816976
+index 0000000..f92e671
 --- /dev/null
 +++ b/src/video/pc_video_menu.h
 @@ -0,0 +1,79 @@
@@ -44189,7 +44743,7 @@ index 0000000..3816976
 +/* The rows of the page, top to bottom (the last two are actions). */
 +enum {
 +    PCV_ROW_MODE, PCV_ROW_WINDOW, PCV_ROW_INTERNAL, PCV_ROW_AA, PCV_ROW_AF, PCV_ROW_DOF, PCV_ROW_SHARPEN,
-+    PCV_ROW_AO_METHOD, PCV_ROW_AO_QUALITY, PCV_ROW_ASPECT,
++    PCV_ROW_AO_METHOD, PCV_ROW_AO_QUALITY, PCV_ROW_REFLECTIONS, PCV_ROW_ASPECT,
 +    PCV_ROW_FOV, PCV_ROW_SCALE, PCV_ROW_FILTER, PCV_ROW_VSYNC, PCV_ROW_FPS, PCV_ROW_BLUR, PCV_ROW_RESET, PCV_ROW_DONE,
 +    PCV_ROW_COUNT
 +};
