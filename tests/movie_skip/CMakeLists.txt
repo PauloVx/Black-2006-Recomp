@@ -4,7 +4,7 @@ if(NOT WIN32)
     message(FATAL_ERROR "These native movie input and overlay regressions require Windows.")
 endif()
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
-    CACHE PATH "Pinned XboxRecomp checkout with patches/xboxrecomp.patch applied")
+    CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
 set(BLACK_MANUAL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../../src/recomp_manual.c"
     CACHE FILEPATH "Production authored movie wrapper source")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

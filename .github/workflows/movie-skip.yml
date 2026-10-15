@@ -14,6 +14,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -26,28 +28,6 @@ jobs:
         with:
           toolchain: 1.98.1
           target: x86_64-pc-windows-msvc
-      - name: Prepare pinned runtime
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path third_party -Force | Out-Null
-          git clone https://github.com/sp00nznet/xboxrecomp.git third_party/xboxrecomp
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime clone failed' }
-          git -C third_party/xboxrecomp checkout --detach 766ecefcd7fb2a9b344de8ec891f6fe9ea14261b
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned checkout failed' }
-          git -C third_party/xboxrecomp apply --check "$PWD/patches/xboxrecomp.patch"
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime patch preflight failed' }
-          git -C third_party/xboxrecomp apply "$PWD/patches/xboxrecomp.patch"
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime patch failed' }
-      - name: Prepare pinned DSP56300 core
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path .work -Force | Out-Null
-          git clone https://github.com/mborgerson/dsp56300.git .work/err009-dsp56300
-          if ($LASTEXITCODE -ne 0) { throw 'DSP56300 clone failed' }
-          git -C .work/err009-dsp56300 checkout --detach aab3649fc452daf03da8b5e36fdc0c308d874101
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned DSP56300 checkout failed' }
       - name: Build production video and input libraries
         shell: pwsh
         run: |

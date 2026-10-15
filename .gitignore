@@ -1,7 +1,6 @@
 /game/
 /src/recomp/
 /src/black_xmv_idct.inc
-/third_party/
 /.venv/
 /.work/
 /build*/
@@ -22,3 +21,19 @@ __pycache__/
 /releases/
 /.wine/
 /.proton/
+
+# Editors and IDEs
+/.idea/
+/.vs/
+/.vscode/
+/cmake-build-*/
+CMakeUserPresets.json
+*.user
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs written by tools run from the project folder
+/logs/

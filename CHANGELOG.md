@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+**The launcher sets up your disc.** Choose an ISO (XISO or a full Redump-style dump) or a folder, or drop
+it onto the window: the launcher reads the Xbox disc itself, checks it is the supported release before copying, and
+copies it into `game/` with a progress bar, percentage, current file, speed and time left. Copying can be stopped
+and carries on where it left off; saves in the game folder are kept.
+
+**A new launcher in C++ (preview).** `launcher/` is a Walnut (Vulkan + Dear ImGui) application
+drawn like the game's own menu pages: BLACK's logo, colours, rails and selection, and, once your
+disc files are in place, the game's own menu fonts read from them. It shows whether the disc and build
+are in place and offers Play, Settings, Open game folder and Quit; Play and Settings still hand over to
+the current launcher. Build it with `cmake --preset windows-release` in `launcher/` (see
+`launcher/README.md`); unit tests and a Windows/Linux CI workflow come with it.
+
+**XboxRecomp is now a submodule.** `third_party/xboxrecomp` is PauloVx/xboxrecomp on its
+`black` branch, where the runtime changes are ordinary commits; `patches/xboxrecomp.patch` and
+`patches/xboxrecomp-clang.patch` are gone. The DSP56300 core moved from `.work/err009-dsp56300` to
+the `third_party/dsp56300` submodule. Clone with `--recursive`; setup fetches missing submodules,
+and release archives include both sources.
+
 Vertex shader compiles no longer cause hitches when a level first appears. The
 shader cache is keyed by the generated HLSL alone, so one program is compiled once
 instead of again for each copy left in program memory (113 cached files were 18

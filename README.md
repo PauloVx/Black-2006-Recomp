@@ -6,6 +6,20 @@ keyboard and mouse controls, XInput controller support, video settings, a PC
 launcher, and native audio output. Movies are enabled by default. The Windows
 build can also run on x86_64 Linux through Wine/Proton; see [Linux setup](docs/linux.md).
 
+## New launcher (preview)
+
+`launcher/` holds a new launcher, written in C++ on [Walnut](https://github.com/StudioCherno/Walnut). It is drawn like
+the game's own menu pages and is meant to make setup a few clicks. Choose your disc as an ISO or a folder, or drop it
+onto the window. The launcher checks that it is the supported release and copies it into `game/`, showing what it is
+doing as it goes. Building and settings move here next; until then **Play** and **Settings** open the current launcher.
+See [launcher/README.md](launcher/README.md) to build it.
+
+| Main menu | Your disc |
+| --- | --- |
+| ![Main menu](docs/images/launcher-main.png) | ![Choosing a disc](docs/images/launcher-disc.png) |
+| **Checking the disc** | **Copying** |
+| ![Review before copying](docs/images/launcher-disc-review.png) | ![Copying with progress](docs/images/launcher-copying.png) |
+
 ## Release launchers
 
 The starter release includes **BLACK PC Launcher.exe** for one-click play and
@@ -139,17 +153,25 @@ Keep the extracted disc layout intact, including `GlobData.bin`, `levels/`,
 `sound/`, and `videos/`. Other releases and the PlayStation 2 version are not
 supported by this build.
 
-From PowerShell in this repository:
+Clone with submodules, then build from PowerShell in this repository:
 
 ```powershell
+git clone --recursive https://github.com/PauloVx/Black-2006-Recomp.git
 .\scripts\setup.ps1
 .\'BLACK PC Launcher.exe'
 ```
 
-Setup fetches pinned XboxRecomp and DSP56300 revisions, applies the included
-runtime patch, creates a local Python environment, generates code from your XBE,
-and builds the game and launcher. These dependencies and outputs stay outside Git.
-Building the generated C code can take several minutes.
+The runtime is a submodule: `third_party/xboxrecomp` is
+[PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) on its `black` branch,
+a fork of XboxRecomp that carries this project's runtime changes as ordinary commits.
+`third_party/dsp56300` is the pinned DSP56300 audio core. In an existing clone, run
+`git submodule update --init --recursive` (setup does this when they are missing).
+Setup then creates a local Python environment, generates code from your XBE, and builds
+the game and launcher. Generated code and build outputs stay outside Git. Building the
+generated C code can take several minutes.
+
+To change the runtime, work inside `third_party/xboxrecomp` on the `black` branch,
+commit and push there, then commit the new submodule commit in this repository.
 
 **BLACK PC Launcher.exe** starts the game directly using your saved preferences.
 Open **BLACK PC Settings.exe** to configure controls and video settings separately,
@@ -231,6 +253,23 @@ xemu-derived hardware components and nv2a_vsh_cpu. The original Xbox behavior
 was investigated using community hardware documentation, including
 [XboxDevWiki](https://xboxdevwiki.net/) and Cxbx-Reloaded references.
 Development included assistance from Claude Code and OpenAI Codex.
+
+### Forks and submodules
+
+| Submodule | Source | Used for |
+| --- | --- | --- |
+| `third_party/xboxrecomp` | [PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) (branch `black`), a fork of [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nz | The recompilation runtime, with this project's changes as commits |
+| `third_party/dsp56300` | [mborgerson/dsp56300](https://github.com/mborgerson/dsp56300) by Matt Borgerson | The audio DSP core |
+| `launcher/vendor/walnut` | [PauloVx/Walnut](https://github.com/PauloVx/Walnut) (branch `black`), a fork of [StudioCherno/Walnut](https://github.com/StudioCherno/Walnut) by Studio Cherno | The launcher's application framework (Vulkan + Dear ImGui) |
+| `launcher/vendor/imgui` | [TheCherno/imgui](https://github.com/TheCherno/imgui), a fork of [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut | Launcher UI |
+| `launcher/vendor/glfw` | [TheCherno/glfw](https://github.com/TheCherno/glfw), a fork of [GLFW](https://github.com/glfw/glfw) | Launcher window, custom titlebar |
+| `launcher/vendor/glm` | [g-truc/glm](https://github.com/g-truc/glm) | Maths for Walnut |
+| `launcher/vendor/spdlog` | [gabime/spdlog](https://github.com/gabime/spdlog) | Walnut's logging |
+| `launcher/vendor/doctest` | [doctest/doctest](https://github.com/doctest/doctest) | Launcher unit tests |
+
+The launcher's stand-in fonts are [Russo One](https://fonts.google.com/specimen/Russo+One) and
+[Saira Condensed](https://fonts.google.com/specimen/Saira+Condensed) (SIL Open Font License, in `launcher/assets/fonts`).
+The Xbox disc reader follows the format as documented by [extract-xiso](https://github.com/xboxdev/extract-xiso).
 
 Original project code is MIT licensed. Third-party components and their
 modifications retain their respective licenses; see [LICENSE](LICENSE),

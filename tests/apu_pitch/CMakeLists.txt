@@ -4,8 +4,8 @@ if(NOT WIN32)
     message(FATAL_ERROR "This isolated production VP regression requires Windows.")
 endif()
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/xboxrecomp"
-    CACHE PATH "Pinned XboxRecomp checkout with patches/xboxrecomp.patch applied")
-set(DSP56300_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.work/err009-dsp56300"
+    CACHE PATH "XboxRecomp submodule (third_party/xboxrecomp)")
+set(DSP56300_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/dsp56300"
     CACHE PATH "Pinned DSP56300 source checkout")
 set(APU_VP_TEST_SOURCE "${XBOXRECOMP_DIR}/src/apu/apu_vp.c"
     CACHE FILEPATH "Production VP source, or a baseline for a negative control")

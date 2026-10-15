@@ -1,0 +1,27 @@
+[submodule "third_party/xboxrecomp"]
+	path = third_party/xboxrecomp
+	url = https://github.com/PauloVx/xboxrecomp.git
+	branch = black
+[submodule "third_party/dsp56300"]
+	path = third_party/dsp56300
+	url = https://github.com/mborgerson/dsp56300.git
+	ignore = dirty
+[submodule "launcher/vendor/walnut"]
+	path = launcher/vendor/walnut
+	url = https://github.com/PauloVx/Walnut.git
+	branch = black
+[submodule "launcher/vendor/imgui"]
+	path = launcher/vendor/imgui
+	url = https://github.com/TheCherno/imgui.git
+[submodule "launcher/vendor/glm"]
+	path = launcher/vendor/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "launcher/vendor/doctest"]
+	path = launcher/vendor/doctest
+	url = https://github.com/doctest/doctest.git
+[submodule "launcher/vendor/glfw"]
+	path = launcher/vendor/glfw
+	url = https://github.com/TheCherno/glfw.git
+[submodule "launcher/vendor/spdlog"]
+	path = launcher/vendor/spdlog
+	url = https://github.com/gabime/spdlog.git

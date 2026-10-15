@@ -30,24 +30,16 @@ export AR_x86_64_pc_windows_msvc=llvm-lib
 export CC_SHELL_ESCAPED_FLAGS=1
 export CFLAGS_x86_64_pc_windows_msvc="/imsvc\"$BLACK_XWIN_ROOT/crt/include\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/ucrt\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/shared\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/um\""
 toolkit="$project_root/third_party/xboxrecomp"
-dsp="$project_root/.work/err009-dsp56300"
-if [[ ! -e "$toolkit" ]]; then
-    mkdir -p "$project_root/third_party"
-    git clone https://github.com/sp00nznet/xboxrecomp.git "$toolkit"
-    git -C "$toolkit" checkout --detach 766ecefcd7fb2a9b344de8ec891f6fe9ea14261b
+dsp="$project_root/third_party/dsp56300"
+# XboxRecomp (PauloVx's fork, branch black) and the DSP56300 core are submodules at the commits this
+# checkout records. Only missing ones are fetched, so a checked-out runtime branch with new commits is left alone.
+# A release archive without .git ships them already in place.
+if [[ -e "$project_root/.git" && ( ! -f "$toolkit/CMakeLists.txt" || ! -f "$dsp/crates/emu-ffi/Cargo.toml" ) ]]; then
+    git -C "$project_root" submodule update --init --recursive
 fi
-[[ $(git -C "$toolkit" rev-parse HEAD) == 766ecefcd7fb2a9b344de8ec891f6fe9ea14261b ]] || { echo 'Runtime checkout differs from the pinned revision; preserve it separately.' >&2; exit 1; }
-for patch in xboxrecomp.patch xboxrecomp-clang.patch; do
-    if git -C "$toolkit" apply --check "$project_root/patches/$patch" 2>/dev/null; then
-        git -C "$toolkit" apply "$project_root/patches/$patch"
-    else
-        git -C "$toolkit" apply --reverse --check "$project_root/patches/$patch" || { echo "Conflicting $patch; preserve dependency edits before retrying." >&2; exit 1; }
-    fi
+for required in "$toolkit/CMakeLists.txt" "$dsp/crates/emu-ffi/Cargo.toml"; do
+    [[ -f "$required" ]] || { echo "$required is missing. Clone with --recursive, or run: git submodule update --init --recursive" >&2; exit 1; }
 done
-if [[ ! -e "$dsp" ]]; then
-    git clone --depth 1 --branch v1.0.0 https://github.com/mborgerson/dsp56300.git "$dsp"
-fi
-[[ $(git -C "$dsp" rev-parse HEAD) == aab3649fc452daf03da8b5e36fdc0c308d874101 ]] || { echo 'DSP source differs from the pinned revision; preserve it separately.' >&2; exit 1; }
 if [[ ! -x "$project_root/.venv/bin/python" ]]; then python3 -m venv "$project_root/.venv"; fi
 python="$project_root/.venv/bin/python"
 "$python" -m pip install capstone==5.0.7

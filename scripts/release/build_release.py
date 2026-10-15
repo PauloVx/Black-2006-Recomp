@@ -21,9 +21,11 @@ VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?")
 ROOT_FILES = {'.gitattributes', '.gitignore', 'CMakeLists.txt', 'LICENSE', 'NOTICE',
               'README.md', 'CHANGELOG.md', 'Build BLACK.cmd', 'Play BLACK.sh',
               'BLACK Settings.sh', 'Install Linux Shortcuts.sh', 'Build BLACK.sh'}
-SOURCE_DIRS = {'cmake', 'docs', 'LICENSES', 'localization', 'patches', 'scripts', 'src',
+SOURCE_DIRS = {'cmake', 'docs', 'LICENSES', 'localization', 'scripts', 'src',
                'subtitles', 'tests', 'translations'}
-PRIVATE_DIRS = {'game', 'local', 'save', 'reports', 'third_party', '.work', '.venv',
+# Submodules ship in the archive (it has no .git to fetch them): their tracked sources, without test binaries.
+SUBMODULES = ('third_party/xboxrecomp', 'third_party/dsp56300')
+PRIVATE_DIRS = {'game', 'local', 'save', 'reports', '.work', '.venv',
                 '.wine', '.proton', 'releases', 'recomp'}
 BINARY_SUFFIXES = {'.exe', '.dll', '.pdb', '.bin', '.xbe', '.iso', '.xiso', '.zip',
                    '.7z', '.wav', '.xmv', '.ssh', '.bks', '.obj', '.lib', '.a'}
@@ -79,6 +81,20 @@ def collect_sources(root):
         if path.suffix == '.sh' and b'\r' in data:
             raise ValueError(f'Shell script needs LF line endings: {name}')
         entries[name] = data
+    for module in SUBMODULES:
+        for raw in git(root / module, 'ls-files', '-z').split(b'\0'):
+            if not raw:
+                continue
+            name = f"{module}/{raw.decode('utf-8')}"
+            path = PurePosixPath(name)
+            if '..' in path.parts or '\\' in name:
+                raise ValueError(f'Unsafe tracked path: {name}')
+            if path.suffix.lower() in BINARY_SUFFIXES:
+                continue
+            data = safe_file(root / name, root).read_bytes()
+            if SECRET.search(data):
+                raise ValueError(f'Possible secret in {name}; refusing release')
+            entries[name] = data
     missing = ROOT_FILES - entries.keys()
     if missing:
         raise ValueError(f'Required files are not tracked: {sorted(missing)}')
