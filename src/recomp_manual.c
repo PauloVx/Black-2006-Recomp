@@ -915,7 +915,7 @@ static void black_fov_refresh(void)
     const double degrees = pc_video_fov();
     if (degrees == applied) return;
     applied = degrees;
-    if (degrees >= 35.0 && degrees <= 100.0) {
+    if (degrees >= 35.0 && degrees <= 120.0) {
         /* Original C3200/D2F40: float(35 * float(pi/180)), FPTAN, float.
          * This nearest-rounded native70-degree tangent is0x3F3340CD. */
         const double native_tangent = 0.700207531452178955078125;

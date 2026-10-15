@@ -40123,7 +40123,7 @@ new file mode 100644
 +#endif
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
-index 0000000..b7b77eb
+index 0000000..2b84c56
 --- /dev/null
 +++ b/src/video/pc_video.c
 @@ -0,0 +1,605 @@
@@ -40182,7 +40182,7 @@ index 0000000..b7b77eb
 +    for (i = 0; i < count; i++) if (list[i] == v) return 1;
 +    return 0;
 +}
-+static int valid_fov(double f) { return f == 0.0 || (isfinite(f) && f >= 35.0 && f <= 100.0); }
++static int valid_fov(double f) { return f == 0.0 || (isfinite(f) && f >= 35.0 && f <= 120.0); }
 +
 +const char *pc_video_aspect_name(unsigned a)
 +{
@@ -40734,7 +40734,7 @@ index 0000000..b7b77eb
 +}
 diff --git a/src/video/pc_video.h b/src/video/pc_video.h
 new file mode 100644
-index 0000000..5610b01
+index 0000000..cc3e336
 --- /dev/null
 +++ b/src/video/pc_video.h
 @@ -0,0 +1,130 @@
@@ -40790,7 +40790,7 @@ index 0000000..5610b01
 +    unsigned vsync;
 +    unsigned fps_limit;                       /* 0 or one of the entries of pc_video_fps_limits */
 +    unsigned aspect;                          /* PCV_ASPECT_* */
-+    double fov;                               /* vertical degrees (35..100) or 0 = the game's own */
++    double fov;                               /* vertical degrees (35..120) or 0 = the game's own */
 +    unsigned motion_blur_off;
 +    unsigned aa;                              /* PCV_AA_* */
 +    unsigned af;                              /* anisotropic filtering: 1 (off), 2, 4, 8 or 16 */
@@ -40870,7 +40870,7 @@ index 0000000..5610b01
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
+index 0000000..9b53ca0
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
 @@ -0,0 +1,835 @@
@@ -41037,11 +41037,11 @@ index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
 +        s.aspect = wrap((int)s.aspect + dir, PCV_ASPECT_COUNT); break;
 +    case R_FOV: {
 +        int deg;
-+        /* Original, then 35 .. 100 degrees in steps of 5. */
++        /* Original, then 35 .. 120 degrees in steps of 5. */
 +        deg = s.fov == 0.0 ? 30 : (int)(s.fov / 5.0 + 0.5) * 5;
 +        deg += dir * 5;
-+        if (deg < 30) deg = 100;                 /* wrap: below Original is the widest */
-+        if (deg > 100) deg = 30;
++        if (deg < 30) deg = 120;                 /* wrap: below Original is the widest */
++        if (deg > 120) deg = 30;
 +        if (deg < 35) s.fov = 0.0; else s.fov = (double)deg;
 +        break;
 +    }
