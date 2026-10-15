@@ -1,6 +1,7 @@
 #pragma once
 
-#include "app/Widgets.h"
+#include "app/MenuFlow.h"
+#include "app/TextEntry.h"
 #include "core/ErrorReport.h"
 #include "core/ProjectLayout.h"
 #include "core/Settings.h"
@@ -15,21 +16,17 @@ namespace black::app {
 
 /// The settings pages, in the game's own menu style: each row is a setting that left/right (or a click) changes,
 /// saved at once to local/ where the game reads it.
-class SettingsFlow {
+class SettingsFlow final : public MenuFlow {
 public:
-    enum class Outcome { Stay, Back };
-
     explicit SettingsFlow(core::ProjectLayout project);
 
     /// Reads the settings again (the game's own settings pages may have changed them).
     void reload();
-    /// Call each frame before page(): finishes a key capture. `selectedRow` is the menu's selection.
-    void update(double time, std::size_t selectedRow);
-    [[nodiscard]] Page page();
-    Outcome handle(MenuEvent event);
-    Outcome back();
-    /// Reading a key or typed text: the menu keys are not the menu's meanwhile.
-    [[nodiscard]] bool busy() const noexcept { return m_capture.active || m_edit.active || m_inputUsed; }
+    void update(double time, std::size_t selectedRow) override;
+    [[nodiscard]] Page page() override;
+    Outcome handle(MenuEvent event) override;
+    Outcome back() override;
+    [[nodiscard]] bool busy() const override { return m_capture.active || m_entry.active() || m_inputUsed; }
 
 private:
     enum class Section { Hub, Display, Graphics, Controls, Bindings, Game, Diagnostics, Report };
@@ -52,11 +49,6 @@ private:
         double since = 0;
     };
 
-    struct Edit {
-        bool active = false;
-        std::size_t row = 0;
-        std::string text;
-    };
 
     [[nodiscard]] std::vector<Option> options(Section section);
     [[nodiscard]] std::vector<Option> displayOptions();
@@ -81,7 +73,8 @@ private:
     std::size_t m_slot = 0;
     std::size_t m_selectedRow = 0;
     Capture m_capture;
-    Edit m_edit;
+    TextEntry m_entry;
+    std::size_t m_entryRow = 0;
     bool m_inputUsed = false;  // the key or click that ended a capture or edit is not also a menu choice
     double m_time = 0;
     std::optional<std::filesystem::path> m_session;

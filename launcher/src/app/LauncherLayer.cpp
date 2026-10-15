@@ -3,6 +3,8 @@
 #include "app/EmbeddedAssets.h"
 #include "app/KeyCapture.h"
 #include "app/NativeDialogs.h"
+#include "app/SaveFlow.h"
+#include "app/SettingsFlow.h"
 #include "app/Theme.h"
 #include "core/Files.h"
 #include "core/Process.h"
@@ -171,11 +173,13 @@ Page LauncherLayer::mainPage() {
         add(Action::Play, {"STOP GAME", "RUNNING", "Ends the game at once. Save your progress in the game first.",
                            true});
         add(Action::Settings, {"SETTINGS", "", "Available when the game is closed.", false});
+        add(Action::Saves, {"SAVE GAME", "", "Available when the game is closed.", false});
         add(Action::Disc, disc);
         add(Action::Build, build);
     } else if (ready()) {
         add(Action::Play, {"PLAY", "", "Starts BLACK with your saved settings.", true});
         add(Action::Settings, {"SETTINGS", "", "Display, graphics, controls and language.", canConfigure});
+        add(Action::Saves, {"SAVE GAME", "", "Rename a profile, open missions, or put a backup back.", canConfigure});
         add(Action::Disc, disc);
         add(Action::Build, build);
     } else {
@@ -183,6 +187,7 @@ Page LauncherLayer::mainPage() {
         add(Action::Build, build);
         add(Action::Play, {"PLAY", "", "Available once your disc is in place and the game is built.", false});
         add(Action::Settings, {"SETTINGS", "", "Display, graphics, controls and language.", canConfigure});
+        add(Action::Saves, {"SAVE GAME", "", "Rename a profile, open missions, or put a backup back.", canConfigure});
     }
     add(Action::OpenFolder,
         {"OPEN GAME FOLDER", "", "Opens the folder with the game, your saves and settings.", m_project.has_value()});
@@ -198,9 +203,9 @@ void LauncherLayer::openDiscPages() {
     }
 }
 
-void LauncherLayer::openSettings() {
-    m_settings = std::make_unique<SettingsFlow>(*m_project);
-    m_screen = Screen::Settings;
+void LauncherLayer::openFlow(std::unique_ptr<MenuFlow> flow) {
+    m_flow = std::move(flow);
+    m_screen = Screen::Flow;
     m_notice.clear();
 }
 
@@ -217,7 +222,8 @@ void LauncherLayer::run(Action action) {
                 startGame();
             }
             return;
-        case Action::Settings: openSettings(); break;
+        case Action::Settings: openFlow(std::make_unique<SettingsFlow>(*m_project)); break;
+        case Action::Saves: openFlow(std::make_unique<SaveFlow>(*m_project)); break;
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
         case Action::Disc: openDiscPages(); break;
@@ -269,15 +275,15 @@ void LauncherLayer::OnUIRender() {
     }
 
     const double time = ImGui::GetTime();
-    if (m_screen == Screen::Settings && !m_settings) {
+    if (m_screen == Screen::Flow && !m_flow) {
         m_screen = Screen::Main;
     }
     Page page;
     if (m_screen == Screen::Disc && m_disc) {
         page = m_disc->page(time);
-    } else if (m_screen == Screen::Settings) {
-        m_settings->update(time, m_menu.selected());
-        page = m_settings->page();
+    } else if (m_screen == Screen::Flow) {
+        m_flow->update(time, m_menu.selected());
+        page = m_flow->page();
     } else {
         page = mainPage();
     }
@@ -293,10 +299,10 @@ void LauncherLayer::OnUIRender() {
             if (!playing()) {
                 Walnut::Application::Get().Close();
             }
-        } else if (m_screen == Screen::Settings) {
-            if (m_settings->back() == SettingsFlow::Outcome::Back) {
+        } else if (m_screen == Screen::Flow) {
+            if (m_flow->back() == MenuFlow::Outcome::Back) {
                 m_screen = Screen::Main;
-                m_settings.reset();
+                m_flow.reset();
             }
         } else if (m_disc && m_disc->back() == DiscFlow::Outcome::Back) {
             m_screen = Screen::Main;
@@ -311,7 +317,7 @@ void LauncherLayer::OnUIRender() {
 void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, const Page& page) {
     drawRails(list, topLeft.x + 30.0f, topLeft.y + 18.0f, topLeft.y + size.y - 18.0f);
     const bool main = m_screen == Screen::Main;
-    const bool settings = m_screen == Screen::Settings;
+    const bool settings = m_screen == Screen::Flow;
     const float contentWidth = main ? kMenuWidth : size.x - kPageMargin * 2.0f;
     const float promptY = topLeft.y + size.y - 34.0f;
 
@@ -332,13 +338,17 @@ void LauncherLayer::drawPage(ImDrawList& list, ImVec2 topLeft, ImVec2 size, cons
     layout.rowHeight = settings ? 28.0f : 31.0f;
     layout.textSize = kRowText;
     layout.selectorEnd = main ? topLeft.x + kPageMargin + kMenuWidth + 32.0f : 0.0f;
+    if (page.cellWidth > 0.0f) {
+        layout.cellWidth = page.cellWidth;
+    }
     constexpr float kHelpSpace = 58.0f;
     layout.visibleRows = static_cast<std::size_t>(std::max(1.0f, (promptY - kHelpSpace - y) / layout.rowHeight));
-    const bool acceptInput = !(settings && m_settings->busy());
+    const bool acceptInput = !(settings && m_flow->busy());
     if (const auto event = m_menu.draw(page.rows, m_rowFont, layout, acceptInput)) {
         if (settings) {
-            if (m_settings->handle(*event) == SettingsFlow::Outcome::Back) {
+            if (m_flow->handle(*event) == MenuFlow::Outcome::Back) {
                 m_screen = Screen::Main;
+                m_flow.reset();
             }
         } else if (main && event->step == 0) {
             run(m_mainActions[event->row]);

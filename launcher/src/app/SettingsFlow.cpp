@@ -477,44 +477,34 @@ void SettingsFlow::setSlot(std::size_t action, std::size_t slot, const std::stri
 
 void SettingsFlow::updateEdit() {
     const std::vector<Option> rows = options(m_section);
-    if (m_edit.row >= rows.size() || !rows[m_edit.row].commit) {
-        m_edit.active = false;
+    if (m_entryRow >= rows.size() || !rows[m_entryRow].commit) {
+        m_entry.end();
         return;
     }
-    const Option& option = rows[m_edit.row];
-    ImGuiIO& io = ImGui::GetIO();
-    for (const ImWchar c : io.InputQueueCharacters) {
-        if (c < 128 && option.allowed.find(static_cast<char>(c)) != std::string::npos && m_edit.text.size() < 24) {
-            m_edit.text.push_back(static_cast<char>(c));
-        }
+    if (!m_entry.update()) {
+        return;
     }
-    io.InputQueueCharacters.resize(0);
-    if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && !m_edit.text.empty()) {
-        m_edit.text.pop_back();
+    if (const auto problem = rows[m_entryRow].commit(m_entry.text())) {
+        m_notice = *problem;
+        m_noticeIsProblem = true;
+        return;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
-        if (const auto problem = option.commit(m_edit.text)) {
-            m_notice = *problem;
-            m_noticeIsProblem = true;
-            return;
-        }
-        m_edit.active = false;
-        m_notice.clear();
-        save();
-    }
+    m_entry.end();
+    m_notice.clear();
+    save();
 }
 
 void SettingsFlow::update(double time, std::size_t selectedRow) {
     m_selectedRow = selectedRow;
     m_time = time;
-    const bool wasBusy = m_capture.active || m_edit.active;
+    const bool wasBusy = m_capture.active || m_entry.active();
     m_inputUsed = false;
-    if (m_edit.active) {
+    if (m_entry.active()) {
         updateEdit();
     } else {
         updateCapture(time);
     }
-    m_inputUsed = wasBusy && !m_capture.active && !m_edit.active;
+    m_inputUsed = wasBusy && !m_capture.active && !m_entry.active();
 }
 
 void SettingsFlow::updateCapture(double time) {
@@ -654,8 +644,8 @@ Page SettingsFlow::page() {
             help += " Needs the GPU renderer (Settings > Game).";
         }
         std::string value = option.value();
-        if (m_edit.active && m_edit.row == i) {
-            value = m_edit.text + (std::fmod(m_time, 1.0) < 0.5 ? "_" : " ");
+        if (m_entry.active() && m_entryRow == i) {
+            value = m_entry.shown(m_time);
             help = "Type the value, then Enter. Escape keeps the old one.";
         }
         page.rows.push_back({option.label, value, help, enabled, option.adjustable});
@@ -674,7 +664,7 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
     if (m_capture.active) {
         return Outcome::Stay;
     }
-    if (m_edit.active) {
+    if (m_entry.active()) {
         return Outcome::Stay;
     }
     if (m_section == Section::Hub) {
@@ -724,7 +714,8 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
         return Outcome::Stay;
     }
     if (option.commit) {
-        m_edit = Edit{true, event.row, option.value() == "OFF" ? std::string() : option.value()};
+        m_entryRow = event.row;
+        m_entry.begin(option.value() == "OFF" ? std::string() : option.value(), option.allowed, 24);
         m_notice.clear();
         return Outcome::Stay;
     }
@@ -736,8 +727,8 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
 }
 
 SettingsFlow::Outcome SettingsFlow::back() {
-    if (m_edit.active) {
-        m_edit.active = false;
+    if (m_entry.active()) {
+        m_entry.end();
         m_notice.clear();
         return Outcome::Stay;
     }

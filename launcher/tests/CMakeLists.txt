@@ -9,6 +9,7 @@ add_executable(black_launcher_tests
     GameSessionTests.cpp
     InputBindingsTests.cpp
     LanguageBanksTests.cpp
+    ProfileTests.cpp
     ProjectLayoutTests.cpp
     SettingsTests.cpp
     Sha256Tests.cpp

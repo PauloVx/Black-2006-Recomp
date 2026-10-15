@@ -14,7 +14,9 @@ add_executable(black_launcher
     Main.cpp
     MenuFont.cpp
     NativeDialogs.cpp
+    SaveFlow.cpp
     SettingsFlow.cpp
+    TextEntry.cpp
     Theme.cpp
     Widgets.cpp)
 target_include_directories(black_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")

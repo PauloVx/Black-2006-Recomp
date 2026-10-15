@@ -33,6 +33,7 @@ struct Page {
     std::vector<MenuRow> rows;
     std::size_t initialRow = 0;
     float listWidth = 0;  // 0: the page's width
+    float cellWidth = 0;  // 0: the list's default
     std::string notice;
     bool noticeIsProblem = false;
 };

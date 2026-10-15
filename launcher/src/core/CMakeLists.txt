@@ -11,8 +11,10 @@ add_library(black_launcher_core STATIC
     InputBindings.cpp
     LanguageBanks.cpp
     Process.cpp
+    Profile.cpp
     ProjectLayout.cpp
     Settings.cpp
+    Sha1.cpp
     Sha256.cpp
     Text.cpp
     TraceLog.cpp
