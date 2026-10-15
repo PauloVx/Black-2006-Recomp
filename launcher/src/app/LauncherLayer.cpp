@@ -101,13 +101,7 @@ void LauncherLayer::setIcons() {
     if (bold == nullptr) {
         return;
     }
-    // The titlebar shows a tan "B"; the taskbar gets the same on a dark square, readable on any theme.
-    const IconPixels titlebar = makeGlyphIcon(*bold, 'B', 96, false);
-    m_titlebarIcon = std::make_shared<Walnut::Image>(static_cast<std::uint32_t>(titlebar.size),
-                                                     static_cast<std::uint32_t>(titlebar.size),
-                                                     Walnut::ImageFormat::RGBA, titlebar.rgba.data());
-    Walnut::Application::Get().SetApplicationIcon(m_titlebarIcon);
-
+    // The taskbar icon: a tan "B" on a dark square, readable on any theme (the titlebar itself shows no icon).
     IconPixels window = makeGlyphIcon(*bold, 'B', 64, true);
     GLFWimage image{window.size, window.size, window.rgba.data()};
     glfwSetWindowIcon(Walnut::Application::Get().GetWindowHandle(), 1, &image);

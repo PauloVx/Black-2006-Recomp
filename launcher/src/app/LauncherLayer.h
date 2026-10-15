@@ -60,7 +60,6 @@ private:
     MenuFont m_titleFont;
     MenuFont m_captionFont;
     std::shared_ptr<Walnut::Image> m_logo;
-    std::shared_ptr<Walnut::Image> m_titlebarIcon;
     bool m_artFromGame = false;
 
     MenuList m_menu;

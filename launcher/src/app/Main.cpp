@@ -46,6 +46,7 @@ Walnut::Application* Walnut::CreateApplication(int argc, char** argv) {
     specification.CenterWindow = true;
     specification.CustomTitlebar = true;  // Windows; elsewhere Walnut keeps the system frame
     specification.TitlebarShowsName = false;
+    specification.TitlebarShowsIcon = false;
     specification.TitlebarColor = black::app::toU32(black::app::colors::kTitlebar);
     specification.UseDockspace = true;  // hosts the custom titlebar; the launcher draws one window below it
     specification.UseViewports = false;
