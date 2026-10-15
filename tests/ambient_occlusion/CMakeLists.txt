@@ -17,7 +17,8 @@ add_executable(ao-video-test test_video.c
     "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c")
 add_executable(ao-menu-test test_menu.c
     "${runtime_video}/pc_menu.c" "${runtime_video}/pc_menu_assets.c"
-    "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c")
+    "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c"
+    "${runtime_input}/pc_controls.c")
 foreach(target ao-video-test ao-menu-test)
     target_include_directories(${target} PRIVATE "${runtime_video}" "${runtime_input}")
     target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)

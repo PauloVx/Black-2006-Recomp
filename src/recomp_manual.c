@@ -2654,6 +2654,53 @@ static void black_input_put_f32(uint32_t va, float value)
     memcpy((void *)((uintptr_t)g_xbox_mem_offset + va), &value, sizeof(value));
 }
 
+/* BEGIN BLACK_PC_CONTROLS
+ * The Controls pages' controller layout (xboxrecomp/src/input/pc_controls.c). sub_001F1520 fills the live action map
+ * [0x2F3BD4] (37 u32 control ids) from preset ECX of the four at 0x2A7AF0 (0x94 bytes each) whenever the profile's
+ * controller setting is applied. The original runs first; the player's layout then replaces what it wrote, so the
+ * pad, the keyboard (resolved through this map) and the prompts' button art all follow it. A change made in the
+ * menu is written at once, on the game thread. --exclude-manual keeps the generated fill as sub_001F1520_gen. */
+#include "pc_controls.h"
+extern void sub_001F1520_gen(void);
+static int black_controls_preset = -1;      /* the preset the game last filled the map from */
+
+static int black_controls_preset_control(int preset, int slot)
+{
+    const uint32_t at = 0x002A7AF0u + (uint32_t)preset * 0x94u + (uint32_t)slot * 4u;
+    uint32_t control;
+    if (preset < 0 || preset >= PCC_PRESETS || slot < 0 || slot >= PCC_SLOTS || !black_pc_ram_span(at, 4u)) return -1;
+    control = GUEST32(at);
+    return control < (uint32_t)PCC_CONTROLS ? (int)control : -1;
+}
+
+static void black_controls_write_map(void)
+{
+    uint32_t map, want[PCC_SLOTS], slot;
+    if (!black_pc_ram_span(0x002F3BD4u, 4u)) return;
+    map = GUEST32(0x002F3BD4u);
+    if (!map || !black_pc_ram_span(map, PCC_SLOTS * 4u) || !pc_controls_pad_map(black_controls_preset, want)) return;
+    for (slot = 0; slot < PCC_SLOTS; slot++)
+        if (GUEST32(map + slot * 4u) != want[slot]) GUEST32(map + slot * 4u) = want[slot];
+}
+
+static const PcControlsGame black_controls_game = { black_controls_preset_control, black_controls_write_map };
+
+void sub_001F1520(void)
+{
+    const uint32_t preset = g_ecx;
+    sub_001F1520_gen();
+    if (preset < (uint32_t)PCC_PRESETS) black_controls_preset = (int)preset;
+    black_controls_write_map();
+}
+
+/* main.c, before the first pad report: the layout and the file's keyboard bindings. */
+void black_controls_install(void)
+{
+    pc_controls_set_game(&black_controls_game);
+    pc_controls_load();
+}
+/* END BLACK_PC_CONTROLS */
+
 /* Called from the OHCI thread: a control id 0..27, -1 for "none".
  * Until the live action map is ready, read the default preset from the user's
  * loaded XBE. No retail control table is embedded in the host source. */

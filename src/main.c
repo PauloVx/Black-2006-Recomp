@@ -102,6 +102,7 @@ extern void xbe_entry_point(void);
 extern int black_pc_input_resolver(int slot);
 extern void pc_input_set_control_resolver(int (*resolver)(int slot));
 extern int black_pc_input_gameplay_blocked_query(void);
+extern void black_controls_install(void);
 extern void pc_input_set_gameplay_blocked_query(int (*query)(void));
 
 /* ── VEH crash handler ─────────────────────────────────────── */
@@ -574,6 +575,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     /* Before the guest reads its first pad report: keyboard actions resolve through the live map. */
     pc_input_set_control_resolver(black_pc_input_resolver);
     pc_input_set_gameplay_blocked_query(black_pc_input_gameplay_blocked_query);
+    black_controls_install();
 
     /* Step 7: Call the recompiled entry point */
     printf("\nStarting game...\n");

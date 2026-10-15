@@ -4050,23 +4050,420 @@ index 7888785..b671854 100644
  #define MAX_TSS   33
  #define MAX_TSU   8     /* texture stages */
 diff --git a/src/input/CMakeLists.txt b/src/input/CMakeLists.txt
-index caef326..161c0eb 100644
+index caef326..e1a51e2 100644
 --- a/src/input/CMakeLists.txt
 +++ b/src/input/CMakeLists.txt
-@@ -2,6 +2,7 @@
-
+@@ -2,6 +2,8 @@
+ 
  add_library(xbox_input STATIC
      xinput_device.c
 +    pc_input.c
++    pc_controls.c
  )
-
+ 
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+diff --git a/src/input/pc_controls.c b/src/input/pc_controls.c
+new file mode 100644
+index 0000000..6e628ac
+--- /dev/null
++++ b/src/input/pc_controls.c
+@@ -0,0 +1,298 @@
++/*
++ * pc_controls.c -- the player's controls: keyboard bindings and controller layout, kept in local\controls.ini.
++ * See pc_controls.h.
++ */
++#ifndef _CRT_SECURE_NO_WARNINGS
++#define _CRT_SECURE_NO_WARNINGS
++#endif
++#include "pc_controls.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <ctype.h>
++#include <windows.h>
++
++/* BLACK's controls (names table 0x2AC290). The menu font draws the face buttons, White, Black and the d-pad
++ * directions; triggers, START, BACK and the stick clicks are its blank button and stick with a mark on them. */
++static const struct PadControl {
++    const char *token, *name;
++    uint16_t glyph;
++    const char *mark;
++} k_pad[PCC_CONTROLS] = {
++    { "DpadUp", "D-PAD UP", 0x25B2, NULL }, { "DpadDown", "D-PAD DOWN", 0x25BC, NULL },
++    { "DpadLeft", "D-PAD LEFT", 0x25C4, NULL }, { "DpadRight", "D-PAD RIGHT", 0x25BA, NULL },
++    { "LeftStickUp", "LEFT STICK UP", 0x2518, "L" }, { "LeftStickDown", "LEFT STICK DOWN", 0x2518, "L" },
++    { "LeftStickLeft", "LEFT STICK LEFT", 0x2518, "L" }, { "LeftStickRight", "LEFT STICK RIGHT", 0x2518, "L" },
++    { "RightStickUp", "RIGHT STICK UP", 0x2518, "R" }, { "RightStickDown", "RIGHT STICK DOWN", 0x2518, "R" },
++    { "RightStickLeft", "RIGHT STICK LEFT", 0x2518, "R" }, { "RightStickRight", "RIGHT STICK RIGHT", 0x2518, "R" },
++    { "Start", "START", 0x2514, "START" }, { "Back", "BACK", 0x2514, "BACK" },
++    { "LeftThumb", "LEFT STICK CLICK", 0x2518, "L" }, { "RightThumb", "RIGHT STICK CLICK", 0x2518, "R" },
++    { "A", "A", 0x00B2, NULL }, { "B", "B", 0x00B9, NULL }, { "X", "X", 0x00B3, NULL }, { "Y", "Y", 0x00B0, NULL },
++    { "Black", "BLACK", 0x250C, NULL }, { "White", "WHITE", 0x2510, NULL },
++    { "LT", "LEFT TRIGGER", 0x2514, "LT" }, { "RT", "RIGHT TRIGGER", 0x2514, "RT" },
++    { "LeftStickX", "LEFT STICK", 0x2518, "L" }, { "LeftStickY", "LEFT STICK", 0x2518, "L" },
++    { "RightStickX", "RIGHT STICK", 0x2518, "R" }, { "RightStickY", "RIGHT STICK", 0x2518, "R" },
++};
++enum { C_START = 12 };
++
++static const PcControlsGame *s_game;
++static int s_loaded;
++static int s_layout = -1;                 /* the player's layout 0..3, -1 = the game's own (its profile) */
++static int s_game_preset;                 /* the preset the game last filled the map from */
++static int s_override[PCC_SLOTS];         /* a control the player chose for a slot, -1 = as the layout has it */
++
++void pc_controls_set_game(const PcControlsGame *game) { s_game = game; }
++
++int pc_controls_action_slot(PcAction action)
++{
++    return (unsigned)action < PC_ACTION_COUNT ? pc_input_actions[action].slot : -1;
++}
++
++int pc_controls_pad_action(PcAction action)
++{
++    switch (action) {
++    case PC_ACTION_FIRE: case PC_ACTION_AIM: case PC_ACTION_RELOAD: case PC_ACTION_CROUCH: case PC_ACTION_USE:
++    case PC_ACTION_NEXT_WEAPON: case PC_ACTION_PREV_WEAPON: case PC_ACTION_GRENADE: case PC_ACTION_FIRE_MODE:
++    case PC_ACTION_SUPPRESSOR: case PC_ACTION_MELEE: case PC_ACTION_HEALTH_PACK: case PC_ACTION_CYCLE_ITEM:
++    case PC_ACTION_BACK:
++        return 1;
++    default:
++        return 0;
++    }
++}
++
++int pc_controls_pad_bindable(int control)
++{
++    return (control >= 0 && control <= 3) || (control >= 13 && control <= 23);
++}
++
++static int layout_preset(void) { return s_layout >= 0 ? s_layout : s_game_preset; }
++
++static int preset_control(int preset, int slot)
++{
++    return s_game && s_game->preset_control ? s_game->preset_control(preset, slot) : -1;
++}
++
++static int slot_control(int slot)
++{
++    if (slot < 0 || slot >= PCC_SLOTS) return -1;
++    return s_override[slot] >= 0 ? s_override[slot] : preset_control(layout_preset(), slot);
++}
++
++int pc_controls_pad_layout(void) { pc_controls_load(); return layout_preset(); }
++
++int pc_controls_pad_control(PcAction action)
++{
++    pc_controls_load();
++    return pc_controls_pad_action(action) ? slot_control(pc_controls_action_slot(action)) : -1;
++}
++
++int pc_controls_pad_map(int preset, uint32_t map[PCC_SLOTS])
++{
++    int slot, c;
++    pc_controls_load();
++    if (preset >= 0 && preset < PCC_PRESETS) s_game_preset = preset;
++    for (slot = 0; slot < PCC_SLOTS; slot++) {
++        c = slot_control(slot);
++        if (c < 0) return 0;
++        map[slot] = (uint32_t)c;
++    }
++    return 1;
++}
++
++static void changed(void)
++{
++    pc_controls_save();
++    if (s_game && s_game->apply) s_game->apply();
++}
++
++int pc_controls_pad_layout_step(int dir)
++{
++    int i;
++    pc_controls_load();
++    if (!dir || preset_control(0, 0) < 0) return 0;
++    s_layout = ((layout_preset() + (dir < 0 ? -1 : 1)) % PCC_PRESETS + PCC_PRESETS) % PCC_PRESETS;
++    for (i = 0; i < PCC_SLOTS; i++) s_override[i] = -1;
++    changed();
++    return 1;
++}
++
++int pc_controls_pad_bind(PcAction action, int control)
++{
++    const int slot = pc_controls_action_slot(action);
++    int old, a;
++    pc_controls_load();
++    if (!pc_controls_pad_action(action) || slot < 0) return 0;
++    if (control < 0) {
++        s_override[slot] = -1;
++        changed();
++        return 1;
++    }
++    if (!pc_controls_pad_bindable(control) || (old = slot_control(slot)) < 0) return 0;
++    if (old == control) return 1;
++    /* a listed action that had this control takes this one's old control */
++    for (a = 0; a < PC_ACTION_COUNT; a++) {
++        const int other = pc_controls_action_slot((PcAction)a);
++        if (a == (int)action || !pc_controls_pad_action((PcAction)a) || other < 0 || slot_control(other) != control) continue;
++        s_override[other] = old;
++        if (preset_control(layout_preset(), other) == old) s_override[other] = -1;
++    }
++    s_override[slot] = preset_control(layout_preset(), slot) == control ? -1 : control;
++    changed();
++    return 1;
++}
++
++void pc_controls_pad_reset(void)
++{
++    int i;
++    pc_controls_load();
++    s_layout = -1;
++    for (i = 0; i < PCC_SLOTS; i++) s_override[i] = -1;
++    changed();
++}
++
++uint32_t pc_controls_pad_held(const uint8_t r[20])
++{
++    static const int analog[8] = { 16, 17, 18, 19, 20, 21, 22, 23 };   /* A B X Y Black White LT RT */
++    uint32_t bits = 0;
++    int i;
++    for (i = 0; i < 8; i++) if (r[2] & (1u << i)) bits |= 1u << (i < 4 ? i : 8 + i);   /* d-pad 0..3, START..RTHUMB 12..15 */
++    for (i = 0; i < 8; i++) if (r[4 + i] > 100) bits |= 1u << analog[i];
++    return bits;
++}
++
++uint16_t pc_controls_pad_glyph(int control, const char **mark)
++{
++    if (mark) *mark = NULL;
++    if (control < 0 || control >= PCC_CONTROLS) return 0;
++    if (mark) *mark = k_pad[control].mark;
++    return k_pad[control].glyph;
++}
++
++const char *pc_controls_pad_name(int control)
++{
++    return control >= 0 && control < PCC_CONTROLS ? k_pad[control].name : "";
++}
++
++/* ---- keyboard ---- */
++
++int pc_controls_key_bind(PcAction action, int column, unsigned source)
++{
++    pc_controls_load();
++    if (!pc_input_bind(action, column, source)) return 0;
++    pc_controls_save();
++    return 1;
++}
++
++void pc_controls_key_reset(void)
++{
++    pc_controls_load();
++    pc_input_bindings_reset();
++    pc_controls_save();
++}
++
++/* ---- the file ---- */
++
++static const char *path(void)
++{
++    const char *p = getenv("RECOMP_CONTROLS_INI");
++    return p && *p ? p : "local\\controls.ini";
++}
++
++static int action_named(const char *name)
++{
++    int a;
++    for (a = 0; a < PC_ACTION_COUNT; a++) if (!_stricmp(pc_input_actions[a].name, name)) return a;
++    return -1;
++}
++
++static int control_named(const char *name)
++{
++    int c;
++    for (c = 0; c < PCC_CONTROLS; c++) if (!_stricmp(k_pad[c].token, name)) return c;
++    return -1;
++}
++
++static char *trim(char *s)
++{
++    char *e;
++    while (*s == ' ' || *s == '\t') s++;
++    e = s + strlen(s);
++    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) *--e = 0;
++    return s;
++}
++
++void pc_controls_load(void)
++{
++    FILE *f;
++    char line[256];
++    int section = 0, i, n = 0;             /* 1 keyboard, 2 controller */
++    if (s_loaded) return;
++    s_loaded = 1;
++    for (i = 0; i < PCC_SLOTS; i++) s_override[i] = -1;
++    pc_input_init();
++    f = fopen(path(), "r");
++    if (!f) return;
++    while (fgets(line, sizeof(line), f)) {
++        char *s = trim(line), *eq, *key, *val;
++        if (!*s || *s == ';' || *s == '#') continue;
++        if (*s == '[') {
++            section = !_strnicmp(s, "[keyboard]", 10) ? 1 : !_strnicmp(s, "[controller]", 12) ? 2 : 0;
++            continue;
++        }
++        if (!(eq = strchr(s, '='))) continue;
++        *eq = 0;
++        key = trim(s); val = trim(eq + 1);
++        if (section == 1) {
++            const int a = action_named(key);
++            if (a >= 0 && pc_input_set_binding_names((PcAction)a, val)) n++;
++        } else if (section == 2) {
++            if (!_stricmp(key, "layout")) {
++                const int v = atoi(val);
++                s_layout = v >= 1 && v <= PCC_PRESETS ? v - 1 : -1;
++            } else {
++                const int a = action_named(key), c = control_named(val);
++                if (a >= 0 && pc_controls_pad_action((PcAction)a) && pc_controls_pad_bindable(c)) {
++                    s_override[pc_controls_action_slot((PcAction)a)] = c;
++                    n++;
++                }
++            }
++        }
++    }
++    fclose(f);
++    fprintf(stderr, "[INPUT] %s: %d control setting(s)%s\n", path(), n, s_layout >= 0 ? ", controller layout chosen" : "");
++}
++
++int pc_controls_save(void)
++{
++    char tmp[600], names[128], dir[512], *slash;
++    FILE *f;
++    int a, ok;
++    snprintf(dir, sizeof(dir), "%s", path());
++    slash = strrchr(dir, '\\');
++    if (!slash) slash = strrchr(dir, '/');
++    if (slash) { *slash = 0; CreateDirectoryA(dir, NULL); }
++    snprintf(tmp, sizeof(tmp), "%s.tmp", path());
++    f = fopen(tmp, "w");
++    if (!f) return 0;
++    fprintf(f, "; BLACK controls. Edited by the in-game Controls pages and by the launcher.\n");
++    fprintf(f, "; [keyboard] ACTION=keys as RECOMP_BLACK_BIND_<ACTION> (comma separated, None = unbound).\n");
++    fprintf(f, "; [controller] layout=1..4 is one of the game's presets (absent: the profile's own); ACTION=CONTROL moves\n");
++    fprintf(f, "; one button action (A B X Y Black White LT RT Back LeftThumb RightThumb DpadUp DpadDown DpadLeft DpadRight).\n");
++    fprintf(f, "[keyboard]\n");
++    for (a = 0; a < PC_ACTION_COUNT; a++) {
++        pc_input_binding_names((PcAction)a, names, sizeof(names));
++        fprintf(f, "%s=%s\n", pc_input_actions[a].name, names);
++    }
++    fprintf(f, "[controller]\n");
++    if (s_layout >= 0) fprintf(f, "layout=%d\n", s_layout + 1);
++    for (a = 0; a < PC_ACTION_COUNT; a++) {
++        const int slot = pc_controls_action_slot((PcAction)a);
++        if (pc_controls_pad_action((PcAction)a) && slot >= 0 && s_override[slot] >= 0)
++            fprintf(f, "%s=%s\n", pc_input_actions[a].name, k_pad[s_override[slot]].token);
++    }
++    ok = fclose(f) == 0 && MoveFileExA(tmp, path(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
++    if (!ok) DeleteFileA(tmp);
++    return ok;
++}
+diff --git a/src/input/pc_controls.h b/src/input/pc_controls.h
+new file mode 100644
+index 0000000..838497f
+--- /dev/null
++++ b/src/input/pc_controls.h
+@@ -0,0 +1,86 @@
++/*
++ * pc_controls.h -- the player's controls, as the native Controls pages edit them and local\controls.ini keeps them.
++ *
++ * Keyboard and mouse are pc_input's bindings: RECOMP_BLACK_BIND_* (what the launcher exports) first, then the
++ * file's [keyboard] section, which both the game and the launcher write.
++ *
++ * The controller is BLACK's own action map: which of its 28 controls each of the 37 action slots reads. The game
++ * fills it from one of four presets ([0x2F3BD4], sub_001F1520). The player picks a layout -- one of those presets --
++ * and may move single actions to other buttons; an action moved onto a button another listed action uses swaps
++ * the two. Because the game reads its prompts and its keyboard routing from the same map, the button art in
++ * "press ..." prompts and every keyboard key follow the change. The game project owns guest memory: it supplies
++ * the preset tables and writes the map (PcControlsGame).
++ *
++ * Threads: the game thread (the menu tick, the game's own map fill). pc_input reads the keyboard bindings on the
++ * input threads (see pc_input_bind).
++ */
++#ifndef XBOXRECOMP_PC_CONTROLS_H
++#define XBOXRECOMP_PC_CONTROLS_H
++
++#include <stddef.h>
++#include <stdint.h>
++#include "pc_input.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++enum { PCC_PRESETS = 4, PCC_SLOTS = 37, PCC_CONTROLS = 28 };
++
++typedef struct PcControlsGame {
++    /* The control a preset gives a slot (0..27), -1 when the presets cannot be read yet. */
++    int (*preset_control)(int preset, int slot);
++    /* The layout changed: write it into the live map now (when there is one). */
++    void (*apply)(void);
++} PcControlsGame;
++
++void pc_controls_set_game(const PcControlsGame *game);
++
++/* Reads the file once (RECOMP_CONTROLS_INI, else local\controls.ini), after pc_input_init. */
++void pc_controls_load(void);
++/* Writes the file; 1 on success. Every change below saves by itself. */
++int pc_controls_save(void);
++
++/* ---- keyboard and mouse ---- */
++
++/* Binds a captured source at a column (0 primary, 1 secondary); 0 clears. Saves. 0 when it cannot be bound. */
++int pc_controls_key_bind(PcAction action, int column, unsigned source);
++void pc_controls_key_reset(void);
++
++/* ---- controller ---- */
++
++/* Whether the Controls pages may move this action on the controller (a button action, not movement or pause). */
++int pc_controls_pad_action(PcAction action);
++/* Whether a control can be given to an action (buttons and the d-pad; START is kept for the pause menu). */
++int pc_controls_pad_bindable(int control);
++/* The layout in use, 0..3 (the game's own choice until the player picks one). */
++int pc_controls_pad_layout(void);
++/* Picks a layout, dir -1 / +1 through the four; per-action changes are dropped. Saves and applies. */
++int pc_controls_pad_layout_step(int dir);
++/* The control an action reads now, -1 when unknown. */
++int pc_controls_pad_control(PcAction action);
++/* Moves an action to a control (swapping with a listed action that had it); -1 puts it back as the layout has it. */
++int pc_controls_pad_bind(PcAction action, int control);
++void pc_controls_pad_reset(void);
++
++/* The control of every slot for the game's map: the layout's preset, then the player's changes. The game calls it
++ * after it filled the map itself (`preset` = the preset it used, its profile's choice). Returns 0 while the presets
++ * cannot be read; `map` is then untouched. */
++int pc_controls_pad_map(int preset, uint32_t map[PCC_SLOTS]);
++
++/* The controls held in a 20-byte pad report, as a bit per control (bit i = control i; buttons and d-pad only). */
++uint32_t pc_controls_pad_held(const uint8_t report[20]);
++
++/* How a control is drawn: a glyph of the game's small menu font, and a short mark drawn on it ("LT", "START") or
++ * NULL; a name for help texts ("RIGHT TRIGGER"). */
++uint16_t pc_controls_pad_glyph(int control, const char **mark);
++const char *pc_controls_pad_name(int control);
++
++/* The slot an action is in the game's map, -1 for none. */
++int pc_controls_action_slot(PcAction action);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* XBOXRECOMP_PC_CONTROLS_H */
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..11631b9
+index 0000000..b96e033
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1508 @@
+@@ -0,0 +1,1627 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -4453,6 +4850,118 @@ index 0000000..11631b9
 +static const char *mode_name(PcMode m)
 +{
 +    return m == PC_MODE_KEYBOARD_MOUSE ? "keyboard_mouse" : m == PC_MODE_CONTROLLER ? "controller" : "auto";
++}
++
++/* ---- bindings at run time (the Controls pages) ----------------------------------------------------- */
++
++/* Changes come from the game thread while the input threads read the lists. A list only ever holds valid
++ * sources, its count is written last when it grows and first when it shrinks, so a reader that races a change
++ * sees the old binding or the new one for a single poll, never a source that was not bound. */
++static volatile LONG s_bindings_generation;
++
++static void binding_store(PcBindingList *list, const PcBindingList *want)
++{
++    int i;
++    if (want->count < list->count) { list->count = want->count; MemoryBarrier(); }
++    for (i = 0; i < PC_MAX_BINDINGS; i++) list->b[i] = want->b[i];
++    MemoryBarrier();
++    list->count = want->count;
++    InterlockedIncrement(&s_bindings_generation);
++}
++
++unsigned pc_input_bindings_generation(void) { return (unsigned)InterlockedCompareExchange(&s_bindings_generation, 0, 0); }
++
++int pc_input_source_bindable(unsigned source)
++{
++    if (source == KEY_ESC || source == KEY_F11 || source == SRC_ANY_SHIFT || source == SRC_ANY_CTRL || source == SRC_ANY_ALT)
++        return 0;
++    return key_by_id(source) != NULL;
++}
++
++unsigned pc_input_binding(PcAction action, int index)
++{
++    pc_input_init();
++    if ((unsigned)action >= PC_ACTION_COUNT || index < 0 || index >= s_bindings[action].count) return 0;
++    return s_bindings[action].b[index].src;
++}
++
++int pc_input_bind(PcAction action, int index, unsigned source)
++{
++    PcBindingList want;
++    int a, i;
++    pc_input_init();
++    if ((unsigned)action >= PC_ACTION_COUNT || index < 0 || index >= PC_MAX_BINDINGS) return 0;
++    if (source && !pc_input_source_bindable(source)) return 0;
++    if (source) {
++        /* one key does one thing: it leaves whatever it was bound to before */
++        for (a = 0; a < PC_ACTION_COUNT; a++) {
++            int k = 0;
++            want.count = 0;
++            for (i = 0; i < s_bindings[a].count; i++)
++                if (s_bindings[a].b[i].src != source || (a == (int)action && i == index)) want.b[k++] = s_bindings[a].b[i];
++            if (k == s_bindings[a].count) continue;
++            for (i = k; i < PC_MAX_BINDINGS; i++) want.b[i].src = 0;
++            want.count = k;
++            if (a == (int)action && index > k) index = k;
++            binding_store(&s_bindings[a], &want);
++        }
++    }
++    want = s_bindings[action];
++    if (!source) {
++        if (index >= want.count) return 1;
++        for (i = index; i + 1 < want.count; i++) want.b[i] = want.b[i + 1];
++        want.b[--want.count].src = 0;
++    } else if (index < want.count) {
++        want.b[index].src = (uint16_t)source;
++    } else {
++        want.b[want.count++].src = (uint16_t)source;    /* a later column of an empty list fills the first free one */
++    }
++    binding_store(&s_bindings[action], &want);
++    trace("bind %s[%d] = %s", pc_input_actions[action].name, index, source ? key_by_id(source)->name : "none");
++    return 1;
++}
++
++void pc_input_bindings_reset(void)
++{
++    int a;
++    pc_input_init();
++    for (a = 0; a < PC_ACTION_COUNT; a++) {
++        PcBindingList def;
++        memset(&def, 0, sizeof(def));
++        parse_bindings(pc_input_actions[a].name, pc_input_actions[a].default_binding, &def);
++        binding_store(&s_bindings[a], &def);
++    }
++}
++
++size_t pc_input_binding_names(PcAction action, char *out, size_t cap)
++{
++    size_t n = 0;
++    int i;
++    pc_input_init();
++    if (!out || !cap) return 0;
++    out[0] = 0;
++    if ((unsigned)action >= PC_ACTION_COUNT) return 0;
++    for (i = 0; i < s_bindings[action].count; i++) {
++        const struct KeyName *k = key_by_id(s_bindings[action].b[i].src);
++        int w;
++        if (!k) continue;
++        w = snprintf(out + n, cap - n, "%s%s", n ? "," : "", k->name);
++        if (w < 0 || (size_t)w >= cap - n) break;
++        n += (size_t)w;
++    }
++    if (!n) n = (size_t)snprintf(out, cap, "None");
++    return n < cap ? n : cap - 1;
++}
++
++int pc_input_set_binding_names(PcAction action, const char *value)
++{
++    PcBindingList got;
++    pc_input_init();
++    if ((unsigned)action >= PC_ACTION_COUNT) return 0;
++    memset(&got, 0, sizeof(got));
++    if (parse_bindings(pc_input_actions[action].name, value, &got) < 0) return 0;
++    binding_store(&s_bindings[action], &got);
++    return 1;
 +}
 +
 +static void load_script(void);
@@ -5334,6 +5843,13 @@ index 0000000..11631b9
 +    return buf;
 +}
 +
++int pc_input_source_label(unsigned source, char *out, size_t cap)
++{
++    if (!out || cap < 2 || !key_by_id(source)) return 0;
++    src_label(source, out, cap);
++    return 1;
++}
++
 +int pc_input_prompt_text(int slot, char *out, size_t cap)
 +{
 +    int a;
@@ -5577,10 +6093,10 @@ index 0000000..11631b9
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..b6b60ec
+index 0000000..e822ad2
 --- /dev/null
 +++ b/src/input/pc_input.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,230 @@
 +/*
 + * pc_input.h -- native keyboard and mouse for BLACK.
 + *
@@ -5775,6 +6291,29 @@ index 0000000..b6b60ec
 + * own formatter. With `confirm_only` every token becomes the confirm key. Returns the number of
 + * tokens replaced. */
 +int pc_input_expand_prompt(uint16_t *buf, size_t cap, int confirm_only);
++
++/* ---- bindings at run time ----------------------------------------------------------------------------- */
++
++/* A source is a scancode (0x100 set for an extended key) or one of these. */
++#define PC_SOURCE_MOUSE(button) (0x300u + (unsigned)(button))   /* 0 left .. 4 */
++#define PC_SOURCE_WHEEL_UP      0x310u
++#define PC_SOURCE_WHEEL_DOWN    0x311u
++
++/* Any thread. Bumped by every change below. */
++unsigned pc_input_bindings_generation(void);
++/* Whether a source can be bound (Escape and F11 belong to the host). */
++int pc_input_source_bindable(unsigned source);
++/* The label a person reads for a source ("R" in their layout, "LMB", "WHEEL UP"). */
++int pc_input_source_label(unsigned source, char *out, size_t cap);
++/* The source at `index` (0 primary, 1 secondary ...) of an action, 0 for none. */
++unsigned pc_input_binding(PcAction action, int index);
++/* Game thread. Binds `source` at `index`, or clears that binding when `source` is 0 (later ones move up). A source
++ * leaves any other action it was bound to, so one key does one thing. Returns 0 for a source that cannot be bound. */
++int pc_input_bind(PcAction action, int index, unsigned source);
++void pc_input_bindings_reset(void);
++/* An action's bindings in the RECOMP_BLACK_BIND_<ACTION> form ("LCtrl,C", "None"), and back. */
++size_t pc_input_binding_names(PcAction action, char *out, size_t cap);
++int pc_input_set_binding_names(PcAction action, const char *value);
 +
 +/* ---- tests ----------------------------------------------------------------------------------------- */
 +
@@ -36909,9 +37448,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
+index 0000000..d91ce90
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2484 @@
+@@ -0,0 +1,2776 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -36925,6 +37465,7 @@ new file mode 100644
 +#include "pc_video_menu.h"
 +#include "pc_movie_skip.h"
 +#include "../input/pc_input.h"
++#include "../input/pc_controls.h"
 +#include <ctype.h>
 +#include <math.h>
 +#include <stdio.h>
@@ -36948,11 +37489,12 @@ new file mode 100644
 +#define PCM_VARS 8
 +#define PCM_TEXT_CAP 160
 +
-+enum { OP_NONE, OP_GAMECODE, OP_PAGE, OP_SET, OP_VIDEO, OP_BACK, OP_OPEN, OP_CLOSE, OP_EXIT, OP_RESET_VIDEO };
++enum { OP_NONE, OP_GAMECODE, OP_PAGE, OP_SET, OP_VIDEO, OP_BACK, OP_OPEN, OP_CLOSE, OP_EXIT, OP_RESET_VIDEO, OP_RESET_KEYS, OP_RESET_PAD };
 +typedef struct Cmd { int op; int nargs; char arg[4][PCM_NAME]; } Cmd;
 +typedef struct Script { int n; Cmd cmd[PCM_CMDS]; } Script;
 +
-+enum { IT_BUTTON, IT_TOGGLE, IT_SLIDER, IT_VIDEO };
++/* IT_KEY / IT_PAD: an action's keyboard keys (two columns) / controller button; IT_LAYOUT: the controller layout. */
++enum { IT_BUTTON, IT_TOGGLE, IT_SLIDER, IT_VIDEO, IT_KEY, IT_PAD, IT_LAYOUT };
 +typedef struct Item {
 +    int kind;
 +    char text[PCM_SPEC];
@@ -36961,6 +37503,7 @@ new file mode 100644
 +    char var[PCM_NAME], call[PCM_NAME];
 +    int lo, hi, step;
 +    int video_row;
++    int action;                    /* IT_KEY, IT_PAD: a PcAction */
 +    char cond[PCM_NAME];           /* shown only when the game's number is non-zero ("!" = zero) */
 +    char dim[PCM_NAME];            /* drawn in the dim colour when the game's number is non-zero ("!" = zero) */
 +    char off[PCM_NAME];            /* disabled (greyed, skipped by up / down) when the game's number is non-zero */
@@ -37143,12 +37686,14 @@ new file mode 100644
 +        else if (!_stricmp(w[0], "close")) c->op = OP_CLOSE;
 +        else if (!_stricmp(w[0], "exit")) c->op = OP_EXIT;
 +        else if (!_stricmp(w[0], "reset_video")) c->op = OP_RESET_VIDEO;
++        else if (!_stricmp(w[0], "reset_keys")) c->op = OP_RESET_KEYS;
++        else if (!_stricmp(w[0], "reset_pad")) c->op = OP_RESET_PAD;
 +        else if (!_stricmp(w[0], "none")) c->op = OP_NONE;
-+        else { perr(ps, "unknown action '%s' (gamecode, page, open, close, set, video, reset_video, back, exit, none)", w[0]); return 0; }
++        else { perr(ps, "unknown action '%s' (gamecode, page, open, close, set, video, reset_video, reset_keys, reset_pad, back, exit, none)", w[0]); return 0; }
 +        if ((c->op == OP_GAMECODE || c->op == OP_PAGE || c->op == OP_OPEN) && k < 2) { perr(ps, "'%s' needs a name", w[0]); return 0; }
 +        if (c->op == OP_SET && k != 3) { perr(ps, "'set' needs a name and a value", NULL); return 0; }
 +        if ((c->op == OP_PAGE || c->op == OP_OPEN) && k != 2) { perr(ps, "'%s' takes one name", w[0]); return 0; }
-+        if ((c->op == OP_CLOSE || c->op == OP_EXIT || c->op == OP_RESET_VIDEO) && k != 1) { perr(ps, "'%s' takes nothing", w[0]); return 0; }
++        if ((c->op == OP_CLOSE || c->op == OP_EXIT || c->op == OP_RESET_VIDEO || c->op == OP_RESET_KEYS || c->op == OP_RESET_PAD) && k != 1) { perr(ps, "'%s' takes nothing", w[0]); return 0; }
 +        if (k > 5) { perr(ps, "too many arguments for '%s' (at most 3)", w[0]); return 0; }
 +        c->nargs = k - 1;
 +        for (j = 1; j < k; j++) {
@@ -37232,6 +37777,13 @@ new file mode 100644
 +    return 0;
 +}
 +
++static int action_named(const char *name)
++{
++    int a;
++    for (a = 0; a < PC_ACTION_COUNT; a++) if (!_stricmp(name, pc_input_actions[a].name)) return a;
++    return -1;
++}
++
 +static int video_row_named(const char *name)
 +{
 +    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "ao_method", "ao_quality", "aspect",
@@ -37281,7 +37833,8 @@ new file mode 100644
 +        p->ntext++;
 +        return 1;
 +    }
-+    if (!_stricmp(key, "item") || !_stricmp(key, "toggle") || !_stricmp(key, "slider") || !_stricmp(key, "setting")) {
++    if (!_stricmp(key, "item") || !_stricmp(key, "toggle") || !_stricmp(key, "slider") || !_stricmp(key, "setting") ||
++        !_stricmp(key, "keybind") || !_stricmp(key, "padbind") || !_stricmp(key, "padlayout")) {
 +        Item *it;
 +        int first_opt;
 +        if (p->nitem >= PCM_ITEMS) { perr(ps, "too many items on one page (at most %s)", "12"); return 0; }
@@ -37294,6 +37847,18 @@ new file mode 100644
 +            it->kind = IT_BUTTON;
 +            if (n >= 2 && !parse_script(ps, f[1], &it->act)) return 0;
 +            first_opt = 2;
++        } else if (!_stricmp(key, "keybind") || !_stricmp(key, "padbind")) {
++            it->kind = !_stricmp(key, "keybind") ? IT_KEY : IT_PAD;
++            if (n < 2 || (it->action = action_named(f[1])) < 0 ||
++                (it->kind == IT_PAD && !pc_controls_pad_action((PcAction)it->action))) {
++                perr(ps, it->kind == IT_KEY ? "keybind needs: TEXT | ACTION (as RECOMP_BLACK_BIND_<ACTION>)" :
++                                              "padbind needs: TEXT | a button ACTION", NULL);
++                return 0;
++            }
++            first_opt = 2;
++        } else if (!_stricmp(key, "padlayout")) {
++            it->kind = IT_LAYOUT;
++            first_opt = 1;
 +        } else if (!_stricmp(key, "setting")) {
 +            it->kind = IT_VIDEO;
 +            if (n < 2 || (it->video_row = video_row_named(f[1])) < 0) { perr(ps, "setting needs: TEXT | video row name", NULL); return 0; }
@@ -37500,7 +38065,8 @@ new file mode 100644
 +            for (c = val; *c; c++) {
 +                if (*c == '"') q = !q;
 +                if (!q && *c == ';' && (c == val || c[-1] == ' ' || c[-1] == '\t') && (c[1] == ' ' || c[1] == 0) &&
-+                    strncmp(key, "item", 4) && strncmp(key, "back", 4) && strncmp(key, "toggle", 6) && strncmp(key, "slider", 6) && strncmp(key, "setting", 7)) {
++                    strncmp(key, "item", 4) && strncmp(key, "back", 4) && strncmp(key, "toggle", 6) && strncmp(key, "slider", 6) && strncmp(key, "setting", 7) &&
++                    strncmp(key, "keybind", 7) && strncmp(key, "padbind", 7) && strncmp(key, "padlayout", 9)) {
 +                    *c = 0; val = trim(val); break;
 +                }
 +            }
@@ -37604,6 +38170,18 @@ new file mode 100644
 +    return i ? &f->glyphs[i - 1] : NULL;
 +}
 +
++/* Where a glyph's cell lands, relative to a text prim at the given size: x, y (from the prim's top of capitals), w, h
++ * in menu units. 0 when the font has no such glyph. */
++static int glyph_box(int font, uint16_t code, float size, float box[4])
++{
++    const Font *f = &m_font[font];
++    const PcMenuGlyph *g = f->pixels ? glyph(f, code) : NULL;
++    const float u = f->nominal > 0 ? size / f->nominal : 0;
++    if (!g || u <= 0) return 0;
++    box[0] = g->ox * u; box[1] = (g->oy - f->cap_oy) * u; box[2] = g->w * u; box[3] = g->h * u;
++    return 1;
++}
++
 +/* Width of text in menu units at the given size. */
 +static float text_width(int font, const uint16_t *t, float size)
 +{
@@ -37647,6 +38225,16 @@ new file mode 100644
 +static struct { int page, focus; } m_stack[8];
 +static int m_depth;
 +static int m_focus = -1, m_prev_focus = -1;
++/* The Controls pages: the keyboard column in focus (0 primary, 1 secondary), and a capture in progress -- the next
++ * key, mouse button or pad button goes to the focused row. The input threads read m_capture to route their events. */
++enum { CAP_KEY = 1, CAP_PAD = 2 };
++static int m_bind_col;
++static volatile LONG m_capture;
++static double m_capture_t0;
++/* Actions the input threads queue besides PCM_ACT_*: clear the focused binding, cancel a capture, and what a capture
++ * caught (ACT_KEY | a pc_input source, ACT_PAD | a control). */
++enum { ACT_CLEAR = 32, ACT_CANCEL, ACT_KEY = 0x10000, ACT_PAD = 0x20000, ACT_KIND = 0x30000 };
++#define PCM_CAPTURE_SECONDS 8.0
 +static double m_focus_t0, m_page_t0;
 +static int m_slider[PCM_ITEMS];          /* the sliders' own values, as BkMovieclipSlider keeps them */
 +static char m_var_name[PCM_VARS][PCM_NAME], m_var_val[PCM_VARS][PCM_NAME];
@@ -37784,7 +38372,8 @@ new file mode 100644
 +            parse_doc(m_default_text, defaults, NULL, 0);
 +            for (i = 0; i < defaults->npage && d->npage < PCM_PAGES; i++) {
 +                const Page *p = &defaults->page[i];
-+                if (_stricmp(p->name, "VideoSettings") && _stricmp(p->name, "VideoDisplay") && _stricmp(p->name, "VideoGraphics")) continue;
++                if (_stricmp(p->name, "VideoSettings") && _stricmp(p->name, "VideoDisplay") && _stricmp(p->name, "VideoGraphics") &&
++                    _strnicmp(p->name, "Controls", 8)) continue;
 +                for (j = 0; j < d->npage; j++) if (!_stricmp(p->name, d->page[j].name)) break;
 +                if (j == d->npage) d->page[d->npage++] = *p;
 +            }
@@ -37910,6 +38499,8 @@ new file mode 100644
 +            else if (host->video) { host->video(host->ctx); did = 1; }
 +            break;
 +        case OP_RESET_VIDEO: pc_video_menu_reset_settings(); did = 1; break;
++        case OP_RESET_KEYS: pc_controls_key_reset(); did = 1; break;
++        case OP_RESET_PAD: pc_controls_pad_reset(); did = 1; break;
 +        case OP_BACK: if (depth < 2) did |= run(host, p, &p->back, 1, depth + 1); break;
 +        case OP_OPEN: did |= open_page(host, resolve(host, c->arg[0])); break;
 +        case OP_CLOSE: did |= close_page(host); break;
@@ -37960,6 +38551,7 @@ new file mode 100644
 +    m_page = idx;
 +    m_focus = m_prev_focus = -1;
 +    m_page_t0 = t;
++    InterlockedExchange(&m_capture, 0);
 +    for (i = 0; i < p->nitem; i++) {
 +        int v = 0;
 +        m_slider[i] = p->item[i].kind == IT_SLIDER && read_value(host, p->item[i].var, &v) ? v : 0;
@@ -38000,6 +38592,28 @@ new file mode 100644
 +static void apply(const PcMenuHost *host, const Page *p, int action, double t)
 +{
 +    const Item *it = m_focus >= 0 && m_focus < p->nitem ? &p->item[m_focus] : NULL;
++    if (InterlockedCompareExchange(&m_capture, 0, 0)) {
++        /* waiting for a key or button: only what was caught, or a cancel, does anything */
++        const LONG cap = m_capture;
++        int ok = -1;
++        if (action == ACT_CANCEL) { InterlockedExchange(&m_capture, 0); play(host, "SNDBack"); return; }
++        if (it && cap == CAP_KEY && it->kind == IT_KEY && (action & ACT_KIND) == ACT_KEY)
++            ok = pc_controls_key_bind((PcAction)it->action, m_bind_col, (unsigned)(action & 0xFFFF));
++        else if (it && cap == CAP_PAD && it->kind == IT_PAD && (action & ACT_KIND) == ACT_PAD)
++            ok = pc_controls_pad_bind((PcAction)it->action, action & 0xFFFF);
++        if (ok == 1) InterlockedExchange(&m_capture, 0);
++        if (ok >= 0) play(host, ok ? "SNDSelect" : "SNDError");
++        return;
++    }
++    if (action & ACT_KIND) return;
++    if (action == ACT_CLEAR) {
++        int did = 0;
++        if (it && it->kind == IT_KEY) did = pc_input_binding((PcAction)it->action, m_bind_col) &&
++                                            pc_controls_key_bind((PcAction)it->action, m_bind_col, 0);
++        else if (it && it->kind == IT_PAD) did = pc_controls_pad_bind((PcAction)it->action, -1);
++        if (it && (it->kind == IT_KEY || it->kind == IT_PAD)) play(host, did ? "SNDChange" : "SNDError");
++        return;
++    }
 +    if (action == PCM_ACT_START) action = p->start_back ? PCM_ACT_BACK : PCM_ACT_CONFIRM;
 +    switch (action) {
 +    case PCM_ACT_UP: case PCM_ACT_DOWN: {
@@ -38014,6 +38628,11 @@ new file mode 100644
 +        if (it->kind == IT_VIDEO) {
 +            const int did = pc_video_menu_row_change(it->video_row, action == PCM_ACT_LEFT ? -1 : 1);
 +            play(host, did ? "SNDChange" : "SNDError");
++        } else if (it->kind == IT_KEY) {
++            const int col = action == PCM_ACT_LEFT ? 0 : 1;
++            if (col != m_bind_col) { m_bind_col = col; play(host, "SNDChange"); }
++        } else if (it->kind == IT_LAYOUT) {
++            play(host, pc_controls_pad_layout_step(action == PCM_ACT_LEFT ? -1 : 1) ? "SNDChange" : "SNDError");
 +        } else if (it->kind == IT_TOGGLE) {
 +            int cur = 0, want = action == PCM_ACT_LEFT ? 1 : 0;      /* ON is on the left, OFF on the right */
 +            read_value(host, it->var, &cur);
@@ -38042,6 +38661,12 @@ new file mode 100644
 +    case PCM_ACT_CONFIRM: {
 +        int did = 0;
 +        if (it && it->kind == IT_VIDEO) did = pc_video_menu_row_change(it->video_row, 1);
++        else if (it && it->kind == IT_LAYOUT) did = pc_controls_pad_layout_step(1);
++        else if (it && (it->kind == IT_KEY || it->kind == IT_PAD)) {
++            m_capture_t0 = t;
++            InterlockedExchange(&m_capture, it->kind == IT_KEY ? CAP_KEY : CAP_PAD);
++            did = 1;
++        }
 +        else if (it && it->kind == IT_BUTTON && it->act.n) did = run(host, p, &it->act, 0, 0);
 +        else if (script_has(&p->back, OP_PAGE)) did = run(host, p, &p->back, 1, 0);   /* the original's "Going Backwards 2" */
 +        play(host, did ? "SNDSelect" : "SNDError");
@@ -38110,6 +38735,88 @@ new file mode 100644
 +    return 0;
 +}
 +
++/* The Controls pages' own words. Portuguese is reviewed; the other languages are machine drafts, like the launcher's. */
++static const char *controls_text(const char *text)
++{
++    static const struct { const char *english, *pt, *es, *fr, *de, *it; } words[] = {
++        { "CONTROLS", "CONTROLES", "CONTROLES", "COMMANDES", "STEUERUNG", "COMANDI" },
++        { "KEYBOARD AND MOUSE", "TECLADO E MOUSE", "TECLADO Y RATÓN", "CLAVIER ET SOURIS", "TASTATUR UND MAUS", "TASTIERA E MOUSE" },
++        { "CONTROLLER", "CONTROLE", "MANDO", "MANETTE", "CONTROLLER", "CONTROLLER" },
++        { "MOVEMENT", "MOVIMENTO", "MOVIMIENTO", "DÉPLACEMENT", "BEWEGUNG", "MOVIMENTO" },
++        { "COMBAT", "COMBATE", "COMBATE", "COMBAT", "KAMPF", "COMBATTIMENTO" },
++        { "ITEMS AND MENUS", "ITENS E MENUS", "OBJETOS Y MENÚS", "OBJETS ET MENUS", "GEGENSTÄNDE UND MENÜS", "OGGETTI E MENU" },
++        { "BUTTON LAYOUT", "LAYOUT DOS BOTÕES", "DISTRIBUCIÓN", "DISPOSITION", "TASTENBELEGUNG", "CONFIGURAZIONE" },
++        { "RESET TO DEFAULTS", "RESTAURAR PADRÕES", "RESTABLECER VALORES", "RÉINITIALISER", "ZURÜCKSETZEN", "RIPRISTINA PREDEFINITI" },
++        { "BACK", "VOLTAR", "ATRÁS", "RETOUR", "ZURÜCK", "INDIETRO" },
++        { "MOVE FORWARD", "ANDAR PARA FRENTE", "AVANZAR", "AVANCER", "VORWÄRTS", "AVANTI" },
++        { "MOVE BACK", "ANDAR PARA TRÁS", "RETROCEDER", "RECULER", "RÜCKWÄRTS", "INDIETRO" },
++        { "MOVE LEFT", "ANDAR PARA A ESQUERDA", "IZQUIERDA", "GAUCHE", "LINKS", "SINISTRA" },
++        { "MOVE RIGHT", "ANDAR PARA A DIREITA", "DERECHA", "DROITE", "RECHTS", "DESTRA" },
++        { "LOOK LEFT", "OLHAR PARA A ESQUERDA", "MIRAR A LA IZQUIERDA", "REGARDER À GAUCHE", "NACH LINKS SEHEN", "GUARDA A SINISTRA" },
++        { "LOOK RIGHT", "OLHAR PARA A DIREITA", "MIRAR A LA DERECHA", "REGARDER À DROITE", "NACH RECHTS SEHEN", "GUARDA A DESTRA" },
++        { "LOOK UP", "OLHAR PARA CIMA", "MIRAR ARRIBA", "REGARDER EN HAUT", "NACH OBEN SEHEN", "GUARDA IN ALTO" },
++        { "LOOK DOWN", "OLHAR PARA BAIXO", "MIRAR ABAJO", "REGARDER EN BAS", "NACH UNTEN SEHEN", "GUARDA IN BASSO" },
++        { "FIRE", "ATIRAR", "DISPARAR", "TIRER", "FEUERN", "SPARA" },
++        { "AIM", "MIRAR", "APUNTAR", "VISER", "ZIELEN", "MIRA" },
++        { "RELOAD", "RECARREGAR", "RECARGAR", "RECHARGER", "NACHLADEN", "RICARICA" },
++        { "CROUCH", "AGACHAR", "AGACHARSE", "S'ACCROUPIR", "DUCKEN", "ACCOVACCIATI" },
++        { "USE", "USAR", "USAR", "UTILISER", "BENUTZEN", "USA" },
++        { "NEXT WEAPON", "PRÓXIMA ARMA", "ARMA SIGUIENTE", "ARME SUIVANTE", "NÄCHSTE WAFFE", "ARMA SUCCESSIVA" },
++        { "PREVIOUS WEAPON", "ARMA ANTERIOR", "ARMA ANTERIOR", "ARME PRÉCÉDENTE", "VORHERIGE WAFFE", "ARMA PRECEDENTE" },
++        { "GRENADE", "GRANADA", "GRANADA", "GRENADE", "GRANATE", "GRANATA" },
++        { "FIRE MODE", "MODO DE DISPARO", "MODO DE DISPARO", "MODE DE TIR", "FEUERMODUS", "MODALITÀ DI FUOCO" },
++        { "SUPPRESSOR", "SILENCIADOR", "SILENCIADOR", "SILENCIEUX", "SCHALLDÄMPFER", "SILENZIATORE" },
++        { "MELEE", "CORPO A CORPO", "CUERPO A CUERPO", "CORPS À CORPS", "NAHKAMPF", "CORPO A CORPO" },
++        { "HEALTH PACK", "KIT MÉDICO", "BOTIQUÍN", "TROUSSE DE SOINS", "MEDIKIT", "KIT MEDICO" },
++        { "CYCLE ITEM", "TROCAR ITEM", "CAMBIAR OBJETO", "CHANGER D'OBJET", "GEGENSTAND WECHSELN", "CAMBIA OGGETTO" },
++        { "OBJECTIVES", "OBJETIVOS", "OBJETIVOS", "OBJECTIFS", "ZIELE", "OBIETTIVI" },
++        { "PAUSE", "PAUSAR", "PAUSA", "PAUSE", "PAUSE", "PAUSA" },
++        { "PRESS A KEY", "PRESSIONE UMA TECLA", "PULSA UNA TECLA", "APPUIE SUR UNE TOUCHE", "TASTE DRÜCKEN", "PREMI UN TASTO" },
++        { "PRESS A BUTTON", "PRESSIONE UM BOTÃO", "PULSA UN BOTÓN", "APPUIE SUR UN BOUTON", "TASTE DRÜCKEN", "PREMI UN PULSANTE" },
++        { "PRESET", "PREDEFINIÇÃO", "PREAJUSTE", "PRÉRÉGLAGE", "VORGABE", "PRESET" },
++        /* help texts stay under PCM_TEXT_CAP (160) in every language */
++        { "Enter changes the key and Delete clears it. Left and right pick the first or second key. A key moves from any action that had it.",
++          "Enter troca a tecla e Delete a apaga. Esquerda e direita escolhem a primeira ou a segunda. Uma tecla sai da ação que a tinha.",
++          "Intro cambia la tecla y Supr la borra. Izquierda y derecha eligen la primera o la segunda. Una tecla deja la acción que la tenía.",
++          "Entrée change la touche, Suppr l'efface. Gauche et droite choisissent la première ou la seconde. Une touche quitte l'action qui l'avait.",
++          "Eingabe ändert die Taste, Entf löscht sie. Links und rechts wählen die erste oder zweite. Eine Taste verlässt die Aktion, die sie hatte.",
++          "Invio cambia il tasto, Canc lo cancella. Sinistra e destra scelgono il primo o il secondo. Un tasto lascia l'azione che lo aveva." },
++        { "Press the key or mouse button to use. Escape cancels.",
++          "Pressione a tecla ou o botão do mouse a usar. Esc cancela.",
++          "Pulsa la tecla o el botón del ratón que quieras usar. Esc cancela.",
++          "Appuie sur la touche ou le bouton de souris à utiliser. Échap annule.",
++          "Drücke die gewünschte Taste oder Maustaste. Esc bricht ab.",
++          "Premi il tasto o il pulsante del mouse da usare. Esc annulla." },
++        { "Confirm, then press the button to use. Taking another action's button swaps the two. X puts back the layout's button.",
++          "Confirme e pressione o botão a usar. Pegar o botão de outra ação troca as duas. X volta ao botão do layout.",
++          "Confirma y pulsa el botón que quieras usar. Tomar el botón de otra acción intercambia las dos. X devuelve el botón de la distribución.",
++          "Confirme, puis appuie sur le bouton à utiliser. Prendre le bouton d'une autre action échange les deux. X remet le bouton de la disposition.",
++          "Bestätigen, dann die gewünschte Taste drücken. Die Taste einer anderen Aktion tauscht beide. X stellt die Taste der Belegung wieder her.",
++          "Conferma, poi premi il pulsante da usare. Prendere il pulsante di un'altra azione scambia le due. X rimette il pulsante della configurazione." },
++        { "Press the button to use. Start or Escape cancels.",
++          "Pressione o botão a usar. Start ou Esc cancela.",
++          "Pulsa el botón que quieras usar. Start o Esc cancela.",
++          "Appuie sur le bouton à utiliser. Start ou Échap annule.",
++          "Drücke die gewünschte Taste. Start oder Esc bricht ab.",
++          "Premi il pulsante da usare. Start o Esc annulla." },
++        { "The game's four button layouts; preset 4 swaps the sticks. Choosing one drops your own button changes.",
++          "Os quatro layouts de botões do jogo; a predefinição 4 inverte os analógicos. Escolher um desfaz suas mudanças de botões.",
++          "Las cuatro distribuciones del juego; el preajuste 4 intercambia los sticks. Elegir una descarta tus cambios de botones.",
++          "Les quatre dispositions du jeu ; le préréglage 4 inverse les sticks. En choisir une annule tes changements de boutons.",
++          "Die vier Tastenbelegungen des Spiels; Vorgabe 4 tauscht die Sticks. Eine Auswahl verwirft deine eigenen Änderungen.",
++          "Le quattro configurazioni del gioco; il preset 4 inverte le levette. Sceglierne una annulla le tue modifiche." },
++    };
++    const int locale = pc_menu_locale();
++    int i;
++    if (!locale) return text;
++    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
++        if (!strcmp(text, words[i].english)) {
++            const char *values[] = { words[i].english, words[i].pt, words[i].es, words[i].fr, words[i].de, words[i].it };
++            return values[locale];
++        }
++    return text;
++}
++
 +static const char *localized_video_literal(const char *text)
 +{
 +    const char *active_page = m_page >= 0 && m_doc ? m_doc->page[m_page].name : m_page_name;
@@ -38138,6 +38845,7 @@ new file mode 100644
 +        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" }
 +    };
 +    int i;
++    if (!_strnicmp(active_page, "Controls", 8) || !strcmp(text, "CONTROLS")) return controls_text(text);
 +    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
 +    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
 +        if (!strcmp(text, words[i].english)) {
@@ -38160,6 +38868,16 @@ new file mode 100644
 +    } else if (!strcmp(spec, "&VIDEO_HELP")) {
 +        const Item *it = m_page >= 0 && m_focus >= 0 && m_focus < m_doc->page[m_page].nitem ? &m_doc->page[m_page].item[m_focus] : NULL;
 +        utf8_to_utf16(it && it->kind == IT_VIDEO ? pc_video_menu_row_help(it->video_row) : "", out, cap);
++    } else if (!strcmp(spec, "&CONTROLS_HELP")) {
++        const Item *it = m_page >= 0 && m_focus >= 0 && m_focus < m_doc->page[m_page].nitem ? &m_doc->page[m_page].item[m_focus] : NULL;
++        const LONG cap_mode = InterlockedCompareExchange(&m_capture, 0, 0);
++        const char *help = "";
++        if (it && it->kind == IT_KEY) help = cap_mode ? "Press the key or mouse button to use. Escape cancels." :
++            "Enter changes the key and Delete clears it. Left and right pick the first or second key. A key moves from any action that had it.";
++        else if (it && it->kind == IT_PAD) help = cap_mode ? "Press the button to use. Start or Escape cancels." :
++            "Confirm, then press the button to use. Taking another action's button swaps the two. X puts back the layout's button.";
++        else if (it && it->kind == IT_LAYOUT) help = "The game's four button layouts; preset 4 swaps the sticks. Choosing one drops your own button changes.";
++        utf8_to_utf16(controls_text(help), out, cap);
 +    } else if (spec[0] == '@') {
 +        const char *v = var_lookup(host, spec + 1);
 +        utf8_to_utf16(v ? v : "", out, cap);
@@ -38253,6 +38971,35 @@ new file mode 100644
 +    text_prim(d, PCM_FONT_SMALL, x, y + 4.0f, 15.0f * 0.56f, 1.0f, c, t);   /* centred on the text's capitals */
 +}
 +
++/* Text at x, made smaller when it would be wider than `room`. */
++static void fit_text(Display *d, float x, float y, float size, float room, uint32_t c, const uint16_t *t)
++{
++    const float width = text_width(PCM_FONT_SMALL, t, size);
++    if (room > 0 && width > room) size *= room / width;
++    text_prim(d, PCM_FONT_SMALL, x, y, size, 1.0f, c, t);
++}
++
++/* A controller control as the prompts draw it: the menu font's button art, with its mark (LT, START, L ...) on the
++ * blank button or stick. Returns the width it took. */
++static float pad_icon(Display *d, float x, float y, int control)
++{
++    const char *mark;
++    const uint16_t code = pc_controls_pad_glyph(control, &mark);
++    const float size = 15.0f * 0.56f;              /* prompt_icon's size; it draws the glyph at y + 4 */
++    uint16_t m[8];
++    float box[4];
++    if (!code || !glyph_box(PCM_FONT_SMALL, code, size, box)) return 0;
++    prompt_icon(d, x, y, 0xFFFFFFFFu, code, 0);
++    if (mark) {
++        /* centred on the cell; capitals are about 0.72 of the text size tall */
++        const float ms = strlen(mark) > 2 ? 5.0f : 7.0f;
++        const float cx = x + box[0] + box[2] * 0.5f, cy = y + 4.0f + box[1] + box[3] * 0.5f;
++        utf8_to_utf16(mark, m, 8);
++        text_prim(d, PCM_FONT_SMALL, cx - text_width(PCM_FONT_SMALL, m, ms) * 0.5f, cy - ms * 0.36f, ms, 1.0f, 0xFFC8C8C8u, m);
++    }
++    return box[0] + box[2];
++}
++
 +static void build(Display *d, const PcMenuHost *host, const Page *p, int ready, double t)
 +{
 +    const Style *st = &m_doc->style;
@@ -38338,6 +39085,55 @@ new file mode 100644
 +                if (room > 0 && width > room) size *= room / width;
 +                text_prim(d, PCM_FONT_SMALL, right - text_width(PCM_FONT_SMALL, buf, size), ys[i], size, 1.0f,
 +                    pc_video_menu_row_locked(it->video_row) ? mix(st->item, st->focus, k) : st->text, buf);
++            } else if (it->kind == IT_KEY || it->kind == IT_PAD) {
++                /* a capture shows its request where the binding is, pulsing; the focused keyboard column is framed */
++                const int capturing = i == m_focus && InterlockedCompareExchange(&m_capture, 0, 0) &&
++                                      !loading;
++                const uint32_t pulse = ((int)((t - m_capture_t0) * 2.5)) & 1 ? st->item : st->focus;
++                const float room = (p->col2 > p->col1 ? p->col2 - p->col1 : 100.0f) - 10.0f;
++                if (it->kind == IT_KEY) {
++                    int col;
++                    for (col = 0; col < 2; col++) {
++                        const float cx = col ? p->col2 : p->col1;
++                        const unsigned source = pc_input_binding((PcAction)it->action, col);
++                        char label[48];
++                        uint32_t vc = st->text;
++                        if (capturing && col == m_bind_col) {
++                            utf8_to_utf16(controls_text("PRESS A KEY"), buf, PCM_TEXT_CAP);
++                            vc = pulse;
++                        } else if (source && pc_input_source_label(source, label, sizeof(label))) {
++                            utf8_to_utf16(label, buf, PCM_TEXT_CAP);
++                        } else {
++                            buf[0] = '-'; buf[1] = 0;
++                            vc = st->item;
++                        }
++                        fit_text(d, cx, ys[i], isize, room, vc, buf);
++                        if (i == m_focus && col == m_bind_col && k > 0.5f) {
++                            const float fx = cx - 6, fy = ys[i] - 6, fw = room + 8, fh = 22;
++                            rect(d, fx, fy, fw, 1, st->line, 0);
++                            rect(d, fx, fy + fh - 1, fw, 1, st->line, 0);
++                            rect(d, fx, fy, 1, fh, st->line, 0);
++                            rect(d, fx + fw - 1, fy, 1, fh, st->line, 0);
++                        }
++                    }
++                } else {
++                    const int control = pc_controls_pad_control((PcAction)it->action);
++                    if (capturing) {
++                        utf8_to_utf16(controls_text("PRESS A BUTTON"), buf, PCM_TEXT_CAP);
++                        fit_text(d, p->col1, ys[i], isize, room * 2, pulse, buf);
++                    } else if (control >= 0) {
++                        /* the names in one column, whatever the icon's width (the blank button is the widest) */
++                        const float w = pad_icon(d, p->col1, ys[i] - 4.0f, control), name_x = w > 24.0f ? w + 6 : 30.0f;
++                        utf8_to_utf16(pc_controls_pad_name(control), buf, PCM_TEXT_CAP);
++                        fit_text(d, p->col1 + name_x, ys[i], isize, room * 2 - name_x, st->text, buf);
++                    }
++                }
++            } else if (it->kind == IT_LAYOUT) {
++                char value[48];
++                const float right = p->values_x > 0 ? p->values_x : p->list_x + p->bar_w - 12.0f;
++                snprintf(value, sizeof(value), "%s %d", controls_text("PRESET"), pc_controls_pad_layout() + 1);
++                utf8_to_utf16(value, buf, PCM_TEXT_CAP);
++                text_prim(d, PCM_FONT_SMALL, right - text_width(PCM_FONT_SMALL, buf, isize), ys[i], isize, 1.0f, st->text, buf);
 +            } else if (it->kind == IT_TOGGLE) {
 +                int v = 0;
 +                static const uint16_t on[] = { 'o', 'n', 0 }, off[] = { 'o', 'f', 'f', 0 };
@@ -38474,6 +39270,10 @@ new file mode 100644
 +    AcquireSRWLockExclusive(&m_lock);
 +    while (m_qhead != m_qtail && n < 32) { actions[n++] = m_queue[m_qhead]; m_qhead = (m_qhead + 1) % 32; }
 +    ReleaseSRWLockExclusive(&m_lock);
++    if (InterlockedCompareExchange(&m_capture, 0, 0) && t - m_capture_t0 > PCM_CAPTURE_SECONDS) {
++        InterlockedExchange(&m_capture, 0);
++        if (m_page >= 0) play(host, "SNDBack");
++    }
 +    if (ready) {
 +        for (i = 0; i < n; i++) {
 +            if (actions[i] == PCM_ACT_VIDEO) {
@@ -38487,7 +39287,8 @@ new file mode 100644
 +            p = &m_doc->page[m_page];
 +            first_focus(host, p, t);
 +            apply(host, p, actions[i], t);
-+            if (actions[i] == PCM_ACT_CONFIRM || actions[i] == PCM_ACT_BACK || actions[i] == PCM_ACT_START)
++            if ((actions[i] == PCM_ACT_CONFIRM || actions[i] == PCM_ACT_BACK || actions[i] == PCM_ACT_START) &&
++                !InterlockedCompareExchange(&m_capture, 0, 0))
 +                break;                                                                  /* the page may be leaving */
 +        }
 +    }
@@ -38524,6 +39325,7 @@ new file mode 100644
 +#define KEY_RIGHT 0x14Du
 +#define KEY_DOWN 0x150u
 +#define KEY_F11 0x057u
++#define KEY_DELETE 0x153u
 +#define KEY_W 0x011u
 +#define KEY_A 0x01Eu
 +#define KEY_S 0x01Fu
@@ -38531,6 +39333,7 @@ new file mode 100644
 +
 +static unsigned char m_key_swallowed[0x200];
 +static unsigned m_button_swallowed, m_pad_prev;
++static uint32_t m_pad_controls_prev;
 +static int m_pad_hold;
 +static ULONGLONG m_pad_repeat[4];
 +
@@ -38570,6 +39373,16 @@ new file mode 100644
 +        /* a key held since before the page (ESC that opened the pause menu) keeps repeating: not ours */
 +        return 0;
 +    }
++    if (InterlockedCompareExchange(&m_capture, 0, 0)) {
++        /* every key goes to the capture; Escape cancels it */
++        AcquireSRWLockExclusive(&m_lock);
++        m_key_swallowed[id] = 1;
++        ReleaseSRWLockExclusive(&m_lock);
++        input_seen();
++        if (!repeat && id == KEY_ESC) queue(ACT_CANCEL);
++        else if (!repeat && InterlockedCompareExchange(&m_capture, 0, 0) == CAP_KEY) queue(ACT_KEY | (int)id);
++        return 1;
++    }
 +    switch (id) {
 +    case KEY_UP: case KEY_W: action = PCM_ACT_UP; break;
 +    case KEY_DOWN: case KEY_S: action = PCM_ACT_DOWN; break;
@@ -38578,6 +39391,7 @@ new file mode 100644
 +    case KEY_RIGHT: case KEY_D: if (!repeat) action = PCM_ACT_RIGHT; break;
 +    case KEY_ENTER: case KEY_NUMENTER: case KEY_SPACE: if (!repeat) action = PCM_ACT_CONFIRM; break;
 +    case KEY_ESC: case KEY_BACKSPACE: if (!repeat) action = PCM_ACT_BACK; break;
++    case KEY_DELETE: if (!repeat) action = ACT_CLEAR; break;
 +    default: break;
 +    }
 +    AcquireSRWLockExclusive(&m_lock);
@@ -38603,8 +39417,10 @@ new file mode 100644
 +    }
 +    ReleaseSRWLockExclusive(&m_lock);
 +    if (take && down) {
++        const LONG cap = InterlockedCompareExchange(&m_capture, 0, 0);
 +        input_seen();
-+        if (button == 0) queue(PCM_ACT_CONFIRM);
++        if (cap) { if (cap == CAP_KEY) queue(ACT_KEY | (int)PC_SOURCE_MOUSE(button)); }
++        else if (button == 0) queue(PCM_ACT_CONFIRM);
 +        else if (button == 1) queue(PCM_ACT_BACK);
 +    }
 +    return take;
@@ -38612,13 +39428,16 @@ new file mode 100644
 +
 +static int f_wheel(int delta)
 +{
++    LONG cap;
 +    if (!pc_menu_active()) return 0;
 +    input_seen();
-+    queue(delta > 0 ? PCM_ACT_UP : PCM_ACT_DOWN);
++    cap = InterlockedCompareExchange(&m_capture, 0, 0);
++    if (cap) { if (cap == CAP_KEY) queue(ACT_KEY | (int)(delta > 0 ? PC_SOURCE_WHEEL_UP : PC_SOURCE_WHEEL_DOWN)); }
++    else queue(delta > 0 ? PCM_ACT_UP : PCM_ACT_DOWN);
 +    return 1;
 +}
 +
-+enum { P_UP = 1, P_DOWN = 2, P_LEFT = 4, P_RIGHT = 8, P_A = 16, P_B = 32, P_START = 64, P_ALL = 127 };
++enum { P_UP = 1, P_DOWN = 2, P_LEFT = 4, P_RIGHT = 8, P_A = 16, P_B = 32, P_START = 64, P_X = 128, P_ALL = 255 };
 +
 +static unsigned pad_bits(const uint8_t out[20])
 +{
@@ -38631,6 +39450,7 @@ new file mode 100644
 +    if (out[4] > 100) b |= P_A;
 +    if (out[5] > 100) b |= P_B;
 +    if (out[2] & 0x10) b |= P_START;
++    if (out[6] > 100) b |= P_X;
 +    return b;
 +}
 +
@@ -38656,11 +39476,22 @@ new file mode 100644
 +    const int activity = pad_present && pad_activity(out);
 +    const ULONGLONG now = GetTickCount64();
 +    const int active = pc_menu_active();
++    const LONG cap = active ? InterlockedCompareExchange(&m_capture, 0, 0) : 0;
++    const uint32_t controls = pad_present ? pc_controls_pad_held(out) : 0;
 +    unsigned edges;
++    uint32_t control_edges;
 +    int actions[8], n = 0, i, take;
 +    AcquireSRWLockExclusive(&m_lock);
 +    edges = held & ~m_pad_prev;
-+    if (active) {
++    control_edges = controls & ~m_pad_controls_prev;
++    m_pad_controls_prev = controls;
++    if (cap) {
++        /* a capture: the first control pressed now (START cancels a button capture), B cancels a key capture */
++        if (cap == CAP_PAD) {
++            if (control_edges & (1u << 12)) actions[n++] = ACT_CANCEL;
++            else for (i = 0; i < PCC_CONTROLS; i++) if (control_edges & (1u << i)) { actions[n++] = ACT_PAD | i; break; }
++        } else if (edges & P_B) actions[n++] = ACT_CANCEL;
++    } else if (active) {
 +        static const unsigned dir_bit[4] = { P_UP, P_DOWN, P_LEFT, P_RIGHT };
 +        static const int dir_action[4] = { PCM_ACT_UP, PCM_ACT_DOWN, PCM_ACT_LEFT, PCM_ACT_RIGHT };
 +        for (i = 0; i < 4; i++) {
@@ -38671,6 +39502,7 @@ new file mode 100644
 +        if (edges & P_A) actions[n++] = PCM_ACT_CONFIRM;
 +        if (edges & P_B) actions[n++] = PCM_ACT_BACK;
 +        if (edges & P_START) actions[n++] = PCM_ACT_START;
++        if (edges & P_X) actions[n++] = ACT_CLEAR;
 +    }
 +    /* The buttons that left a page belong to it until they are let go: the game never sees that press. */
 +    if (active) {
