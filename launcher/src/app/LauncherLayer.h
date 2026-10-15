@@ -65,6 +65,8 @@ private:
     MenuFont m_titleFont;
     MenuFont m_captionFont;
     std::shared_ptr<Walnut::Image> m_logo;
+    std::optional<std::filesystem::file_time_type> m_logoStamp;  // local/logo.png as last loaded
+    bool m_refreshPending = false;                               // refresh() at the start of the next frame
     bool m_artFromGame = false;
 
     Screen m_screen = Screen::Main;
