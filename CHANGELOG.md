@@ -11,6 +11,15 @@ game starts (`RECOMP_KGPU_PRECOMPILE=0` skips it). A program first met in play r
 a quick unoptimised build, about twice as fast, until its optimised build is cached
 (`RECOMP_KGPU_VS_QUICK=0` disables it). Existing caches carry over.
 
+**Options > CONTROLS** rebinds the keyboard, mouse and controller in game,
+replacing the console's Controller Setup page. Keyboard and mouse actions take
+a primary and a secondary key; the controller picks one of the four original
+button layouts and moves single button actions, swapping with an action that
+already had the button. Changes write the game's own action map, so prompts
+show the new keys and button art at once. Bindings live in
+`local/controls.ini`, shared with the launcher. Unedited `menus.ini` files
+upgrade to the new pages automatically.
+
 ## 0.1.0-alpha.2 — 2026-10-14
 
 **Build BLACK.sh** now generates and compiles the game entirely on x86_64 Linux

@@ -147,6 +147,12 @@ namespace BlackXboxLauncher
             string videoPath = LaunchOptions.VideoIniPath(root);
             var options = File.Exists(settingsPath) ? LaunchOptions.FromSettingsJson(File.ReadAllText(settingsPath)) : new LaunchOptions();
             if (File.Exists(videoPath)) options.ApplyVideoIni(File.ReadAllText(videoPath));
+            string controlsPath = LaunchOptions.ControlsIniPath(root);
+            if (File.Exists(controlsPath))
+            {
+                Dictionary<string, string> keys = InputBindings.FromControlsIni(File.ReadAllText(controlsPath));
+                if (keys != null) options.Bindings = keys;
+            }
             options.Validate();
             return options;
         }
@@ -336,6 +342,9 @@ namespace BlackXboxLauncher
         // The video settings live in one file the game and the launcher share (local\video.ini). The game's Video
         // Settings page edits it too, so the launcher shows what the game last saved.
         internal static string VideoIniPath(string root) { return Path.Combine(Path.GetFullPath(root), "local", "video.ini"); }
+        // Key bindings are shared the same way (local\controls.ini): the game's Controls pages write the [keyboard] and
+        // [controller] sections, the launcher only [keyboard].
+        internal static string ControlsIniPath(string root) { return Path.Combine(Path.GetFullPath(root), "local", "controls.ini"); }
 
         internal string VideoIni()
         {
@@ -717,6 +726,45 @@ namespace BlackXboxLauncher
             return repaired;
         }
 
+        // The [keyboard] section of controls.ini (ACTION=keys, as RECOMP_BLACK_BIND_<ACTION>), or null without one.
+        internal static Dictionary<string, string> FromControlsIni(string text)
+        {
+            Dictionary<string, string> found = null;
+            bool keyboard = false;
+            foreach (string raw in (text ?? "").Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line[0] == ';' || line[0] == '#') continue;
+                if (line[0] == '[') { keyboard = line.Equals("[keyboard]", StringComparison.OrdinalIgnoreCase); if (keyboard && found == null) found = new Dictionary<string, string>(); continue; }
+                int eq = line.IndexOf('=');
+                if (!keyboard || eq <= 0) continue;
+                InputAction action = Find(line.Substring(0, eq).Trim());
+                if (action != null) found[action.Name] = line.Substring(eq + 1).Trim();
+            }
+            return found == null ? null : Repair(found);
+        }
+
+        // controls.ini with its [keyboard] section replaced by these bindings; the game's other sections are kept.
+        internal static string ToControlsIni(string existing, LaunchOptions options)
+        {
+            var text = new StringBuilder();
+            var kept = new StringBuilder();
+            bool skip = false, any = false;
+            foreach (string raw in (existing ?? "").Split('\n'))
+            {
+                string line = raw.TrimEnd('\r'), trimmed = line.Trim();
+                if (trimmed.StartsWith("[")) skip = trimmed.Equals("[keyboard]", StringComparison.OrdinalIgnoreCase);
+                if (skip || (!any && (trimmed.Length == 0 || trimmed.StartsWith(";")))) continue;   // the header is written again
+                any = true;
+                kept.Append(line).Append('\n');
+            }
+            text.Append("; BLACK controls. Edited by the in-game Controls pages and by the launcher.\n");
+            text.Append("[keyboard]\n");
+            foreach (InputAction action in Actions) text.Append(action.Name).Append('=').Append(Effective(options, action)).Append('\n');
+            text.Append(kept.ToString());
+            return text.ToString();
+        }
+
         // JavaScriptSerializer rejects a wrongly typed field outright; remove each bad new field
         // instead so the rest of the file survives.
         internal static void SanitizeFields(Dictionary<string, object> fields)
@@ -882,6 +930,7 @@ namespace BlackXboxLauncher
             // them from the settings file, which its own Video Settings page edits too, and a variable would pin
             // a value there. GameSession.Start writes the file from these options just before the game starts.
             info.EnvironmentVariables["RECOMP_VIDEO_INI"] = LaunchOptions.VideoIniPath(root);
+            info.EnvironmentVariables["RECOMP_CONTROLS_INI"] = LaunchOptions.ControlsIniPath(root);
             info.EnvironmentVariables["RECOMP_LANGUAGE"] = options.MenuLanguage;
             if (options.InfiniteAmmo) info.EnvironmentVariables["RECOMP_BLACK_INFINITE_AMMO"] = "1";
             if (options.SilverWeaponMode == "force-on") info.EnvironmentVariables["RECOMP_BLACK_SILVER_WEAPONS"] = "1";
@@ -945,6 +994,9 @@ namespace BlackXboxLauncher
                 if (!preserveVideoSettings || !File.Exists(videoPath))
                     File.WriteAllText(videoPath, options.VideoIni(), new UTF8Encoding(false));
                 File.Copy(videoPath, Path.Combine(session.DirectoryPath, "video.ini"));
+                string controlsPath = LaunchOptions.ControlsIniPath(root);
+                if (!preserveVideoSettings || !File.Exists(controlsPath))
+                    File.WriteAllText(controlsPath, InputBindings.ToControlsIni(File.Exists(controlsPath) ? File.ReadAllText(controlsPath) : null, options), new UTF8Encoding(false));
                 var environment = new Dictionary<string, string>();
                 foreach (DictionaryEntry entry in info.EnvironmentVariables)
                     if (((string)entry.Key).StartsWith("RECOMP_", StringComparison.OrdinalIgnoreCase)) environment[(string)entry.Key] = (string)entry.Value;
@@ -1879,6 +1931,16 @@ namespace BlackXboxLauncher
             SelectChoice(depthOfField, settings.DepthOfField); SelectChoice(sharpening, settings.Sharpening);
             SelectChoice(aoMethod, settings.AoMethod); SelectChoice(aoQuality, settings.AoQuality);
         }
+        // The game's Controls pages may have changed the keys: what they saved is what the launcher shows.
+        private Dictionary<string, string> ControlsFileBindings()
+        {
+            try
+            {
+                string path = LaunchOptions.ControlsIniPath(root);
+                return File.Exists(path) ? InputBindings.FromControlsIni(File.ReadAllText(path)) : null;
+            }
+            catch { return null; }
+        }
         private void ReloadVideo()
         {
             try
@@ -1896,6 +1958,8 @@ namespace BlackXboxLauncher
                 if (!haveJson && !haveVideo) return;
                 var settings = haveJson ? LaunchOptions.FromSettingsJson(File.ReadAllText(SettingsPath)) : new LaunchOptions();
                 if (haveVideo) settings.ApplyVideoIni(File.ReadAllText(VideoPath));
+                Dictionary<string, string> fileBindings = ControlsFileBindings();
+                if (fileBindings != null) settings.Bindings = fileBindings;
                 threads.Value = settings.Threads;
                 skipMovies.Checked = settings.SkipMovies; advanceMenus.Checked = settings.AdvanceMenus;
                 SelectChoice(menuLanguage, settings.MenuLanguage);
@@ -2002,6 +2066,8 @@ namespace BlackXboxLauncher
             running.Dispose(); session = null;
             settingsTabs.Enabled = true; stop.Enabled = false;
             ReloadVideo();                                  // the game's Video Settings page may have changed them
+            Dictionary<string, string> fileBindings = ControlsFileBindings();
+            if (fileBindings != null) bindings = fileBindings;
             RefreshReady();
             status.Text = UiText(stopped ? "Game stopped" : code == 0 && error == null ? "Game closed" : "Game exited with an error (" + code + ")");
             detail.Text = UiText(error == null ? "Open logs for this session's output and launch settings." : "Session logging error: " + error);

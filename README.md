@@ -155,6 +155,19 @@ and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 game and back up all three data directories before moving or removing the
 project folder if you want to keep your progress.
 
+**Options > CONTROLS** replaces the console's Controller Setup page, in the title
+menu and the pause menu's options. Its pages use the game's own menu look.
+Keyboard and mouse actions have a primary and a secondary key: Enter waits for
+a key, mouse button or wheel, Escape cancels, and Delete clears. A key given to
+one action leaves any other action that had it. The controller page picks one
+of the game's four button layouts (preset 4 swaps the sticks) and moves single
+button actions: confirm, then press the new button. Taking a button another
+action uses swaps the two; X restores the layout's button. Movement, look and
+Start stay with the layout. The change goes into the game's own action map, so
+"press ..." prompts show the new key or button art straight away. Bindings are
+kept in `local/controls.ini`, which the launcher's key bindings also read and
+write. See the [Controls tests](tests/controls/README.md).
+
 The launcher's **Game > Menu language** setting chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
