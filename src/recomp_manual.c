@@ -908,94 +908,71 @@ void black_viewmodel_muzzle_constants(uint32_t upload, uint32_t caller)
 static double black_fov_vertical, black_fov_window_per_aspect;
 static volatile LONG black_fov_announced;
 
-/* BEGIN BLACK_PHOTO_PROBE (photo mode feasibility, Phase 0; diagnostic only)
- * RECOMP_PHOTO_PROBE=BACK,UP,YAW[;BACK,UP,YAW ...] (up to 8 poses): while the game is paused, captures the frame
- * (photo-probe-paused.bmp), then takes each pose for three seconds -- the world camera BACK units behind and UP units
- * above where the game put it, turned YAW degrees -- and captures it (photo-probe-N.bmp in the working directory). Every second it logs how often D2F40 ran, whether the game is paused and where the
- * camera is. D2F40 copies the camera entity's matrix into the RwCamera's frame ([camera+58]+4: modelling matrix at
- * +10, LTM at +50, rows right/up/at/pos of 16 bytes) and then sets the view window; the probe rewrites both matrices
- * after it, so the frustum the renderer culls with is the moved one. */
+/* BEGIN BLACK_PHOTO_MODE
+ * Photo mode (xboxrecomp/src/video/pc_photo.c), opened from the pause menu's PHOTO MODE item. The paused game keeps
+ * producing its world camera, renderer[2D67F4]+D450, about sixty times a second through D2F40, which copies the
+ * camera entity's matrix into the RwCamera's frame ([camera+58]+4: modelling matrix at +10, LTM at +50, rows
+ * right / up / at / pos of 16 bytes) and then sets the view window from +70. While photo mode is on, the view window
+ * is scaled for its field of view before the original runs, and both matrices are replaced with the photo camera's
+ * after it, so the picture and the frustum the renderer culls with follow it. The original rebuilds the matrices
+ * from the entity every update, so leaving photo mode needs no restoring; the first-person weapon, drawn from the
+ * gameplay camera, leaves the picture as soon as the camera moves. Only the player's own view of a paused mission
+ * opens it: the camera entity's FOV-enable byte +16A4 is clear while a scripted camera runs (BLACK_PC_FOV). */
+#include "pc_photo.h"
 extern void kgpu_request_capture(const char *path);
+extern int kgpu_capture_result(void);
 extern int black_pc_input_gameplay_blocked_query(void);
 
-static float black_probe_f32(uint32_t va) { float v; memcpy(&v, (const void *)((uintptr_t)g_xbox_mem_offset + va), 4); return v; }
-static void black_probe_put(uint32_t va, float v) { memcpy((void *)((uintptr_t)g_xbox_mem_offset + va), &v, 4); }
+static float black_photo_f32(uint32_t va) { float v; memcpy(&v, (const void *)((uintptr_t)g_xbox_mem_offset + va), 4); return v; }
+static void black_photo_put(uint32_t va, float v) { memcpy((void *)((uintptr_t)g_xbox_mem_offset + va), &v, 4); }
 
-static void black_photo_probe(uint32_t camera)
+/* The world camera bound to the player's camera entity, outside scripted camera mode; 0 otherwise. */
+static uint32_t black_photo_world_camera(void)
 {
-    static int on = -1, poses;
-    static float pose[8][3];
-    float back, up, yaw;
-    int step;
-    static ULONGLONG last_log, paused_at;
-    static unsigned calls, applied;
-    static int was_paused, shots;
-    uint32_t renderer, rwcam, frame, row;
-    int paused;
-    ULONGLONG now;
-    if (on < 0) {
-        const char *e = getenv("RECOMP_PHOTO_PROBE");
-        while (e && *e && poses < 8 && sscanf(e, "%f,%f,%f", &pose[poses][0], &pose[poses][1], &pose[poses][2]) == 3) {
-            poses++;
-            e = strchr(e, ';');
-            if (e) e++;
-        }
-        on = poses > 0;
-        if (on) fprintf(stderr, "[PHOTO] probe: %d pose(s) while paused\n", poses);
-    }
-    if (!on || !black_pc_ram_span(0x002D67F4u, 4u)) return;
+    uint32_t renderer, owner, camera;
+    if (!black_pc_ram_span(0x002D67F4u, 4u) || !black_pc_ram_span(0x002D12B8u, 4u)) return 0;
     renderer = GUEST32(0x002D67F4u);
-    if (!black_pc_ram_span(renderer, 0xD4F0u) || camera != renderer + 0xD450u) return;
+    owner = GUEST32(0x002D12B8u);
+    if (!black_pc_ram_span(renderer, 0xD4F0u) || !black_pc_ram_span(owner, 0x16A5u)) return 0;
+    camera = renderer + 0xD450u;
+    if (GUEST32(camera + 0x68u) != owner + 0x740u ||
+        !*(const unsigned char *)((uintptr_t)g_xbox_mem_offset + owner + 0x16A4u)) return 0;
+    return camera;
+}
+
+static int black_photo_can_start(void)
+{
+    return black_pc_input_gameplay_blocked_query() && black_photo_world_camera() != 0;
+}
+
+static const PcPhotoHost black_photo_host = { black_photo_can_start, kgpu_request_capture, kgpu_capture_result };
+
+void black_photo_install(void) { pc_photo_set_host(&black_photo_host); }
+
+/* After D2F40: the photo camera replaces both of the RwCamera frame's matrices. */
+static void black_photo_camera(uint32_t camera)
+{
+    const unsigned caller_csr = _mm_getcsr();
+    uint32_t rwcam, frame, row;
+    float m[4][3];
+    int k;
+    if (!pc_photo_active() || camera != black_photo_world_camera()) return;
     rwcam = GUEST32(camera + 0x58u);
     if (!black_pc_ram_span(rwcam, 8u)) return;
     frame = GUEST32(rwcam + 4u);
     if (!black_pc_ram_span(frame, 0x90u)) return;
-    calls++;
-    now = GetTickCount64();
-    paused = black_pc_input_gameplay_blocked_query();
-    if (paused && !was_paused) { paused_at = now; shots = 0; }
-    was_paused = paused;
-    if (paused && now - paused_at > 2000 && shots == 0) { kgpu_request_capture("photo-probe-paused.bmp"); shots = 1; }
-    step = paused && now - paused_at > 4000 ? (int)((now - paused_at - 4000) / 3000) : -1;
-    if (step >= poses) step = poses - 1;
-    if (step >= 0) {
-        back = pose[step][0]; up = pose[step][1]; yaw = pose[step][2];
-    }
-    if (step >= 0) {
-        const unsigned caller_csr = _mm_getcsr();
-        float r[3], u[3], a[3], p[3], c, s;
-        int k;
-        _mm_setcsr(0x1F80u);
-        for (k = 0; k < 3; k++) {
-            r[k] = black_probe_f32(frame + 0x10u + k * 4u); u[k] = black_probe_f32(frame + 0x20u + k * 4u);
-            a[k] = black_probe_f32(frame + 0x30u + k * 4u); p[k] = black_probe_f32(frame + 0x40u + k * 4u);
-        }
-        c = (float)cos(yaw * 0.017453292519943295); s = (float)sin(yaw * 0.017453292519943295);
-        for (k = 0; k < 3; k++) {
-            const float nr = r[k] * c - a[k] * s, na = a[k] * c + r[k] * s, np = p[k] - a[k] * back + u[k] * up;
-            for (row = 0; row < 2; row++) {          /* the modelling matrix and the LTM */
-                black_probe_put(frame + 0x10u + row * 0x40u + k * 4u, nr);
-                black_probe_put(frame + 0x30u + row * 0x40u + k * 4u, na);
-                black_probe_put(frame + 0x40u + row * 0x40u + k * 4u, np);
+    _mm_setcsr(0x1F80u);
+    for (row = 0; row < 4; row++)
+        for (k = 0; k < 3; k++) m[row][k] = black_photo_f32(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u);
+    if (pc_photo_camera(m, black_photo_f32(camera + 0x4Cu)))
+        for (row = 0; row < 4; row++)
+            for (k = 0; k < 3; k++) {
+                black_photo_put(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);   /* modelling */
+                black_photo_put(frame + 0x50u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);   /* LTM */
             }
-        }
-        _mm_setcsr(caller_csr);
-        applied++;
-        if (shots == step + 1 && (now - paused_at - 4000) % 3000 > 2000) {
-            char name[64];
-            snprintf(name, sizeof(name), "photo-probe-%d.bmp", step);
-            kgpu_request_capture(name);
-            fprintf(stderr, "[PHOTO] pose %d: back %.2f up %.2f yaw %.1f\n", step, back, up, yaw);
-            shots++;
-        }
-    }
-    if (now - last_log >= 1000) {
-        fprintf(stderr, "[PHOTO] D2F40 %u/s paused=%d applied=%u pos=%.2f,%.2f,%.2f\n", calls, paused, applied,
-                (double)black_probe_f32(frame + 0x80u), (double)black_probe_f32(frame + 0x84u), (double)black_probe_f32(frame + 0x88u));
-        calls = 0; applied = 0; last_log = now;
-    }
+    _mm_setcsr(caller_csr);
 }
-/* END BLACK_PHOTO_PROBE */
+/* END BLACK_PHOTO_MODE */
 
 /* The gameplay FOV is a video setting too (pc_video.c): the Video Settings page changes it while the game runs. */
 static void black_fov_refresh(void)
@@ -1071,13 +1048,25 @@ void sub_000D2F40(void)
         if (black_pc_ram_span(renderer, 0xD4F0u) && camera == renderer + 0xD450u)
             black_viewmodel_scale(adjusted ? saved_window : 0u, adjusted ? new_window : 0u);
     }
+    if (pc_photo_active() && camera == black_photo_world_camera()) {
+        /* photo mode's field of view scales the window the original builds the lens from */
+        const uint32_t base_window = adjusted ? new_window : GUEST32(camera + 0x70u);
+        float photo_window;
+        if (!adjusted) saved_window = base_window;
+        memcpy(&photo_window, &base_window, sizeof(photo_window));
+        photo_window *= pc_photo_zoom();
+        memcpy(&new_window, &photo_window, sizeof(new_window));
+        adjusted = saved_window > 0u && saved_window < 0x7F800000u && new_window > 0u && new_window < 0x7F800000u;
+    }
+    /* photo mode leaves the first-person weapon out: its draws (BLACK_VIEWMODEL_OWNER) scale to nothing */
+    if (pc_photo_weapon_hidden() && camera == black_photo_world_camera()) black_vm_scale_bits = 0u;
     fesetenv(&caller_environment);
     _mm_setcsr(caller_csr);
     if (adjusted) GUEST32(camera + 0x70u) = new_window;
     sub_000D2F40_gen();
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
     black_ao_camera_publish(camera);
-    black_photo_probe(camera);
+    black_photo_camera(camera);
 }
 /* END BLACK_PC_FOV */
 
@@ -1464,7 +1453,8 @@ void sub_00168A30(void)
      * producer's controls or sticky flags, including the first call. */
     _mm_setcsr(caller_csr);
     sub_00168A30_gen();
-    if (black_motion_blur_off)
+    /* photo mode keeps photos sharp: the camera it turns is not a fast look */
+    if (black_motion_blur_off || pc_photo_active())
         GUEST32(effect + 0x20u) = 0u;
 }
 /* END BLACK_PC_MOTION_BLUR */
@@ -1489,7 +1479,7 @@ void sub_001772E0(void)
     PcVideoSettings video;
     pc_video_get(&video);
     _mm_setcsr(caller_csr);
-    if (video.dof == PCV_STEP_OFF) GUEST32(effect + 0x34u) = 0u;
+    if (video.dof == PCV_STEP_OFF || pc_photo_active()) GUEST32(effect + 0x34u) = 0u;   /* photo mode: no reload/aim blur */
     sub_001772E0_gen();
     GUEST32(effect + 0x34u) = mode;
 }

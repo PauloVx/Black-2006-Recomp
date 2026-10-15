@@ -4063,10 +4063,10 @@ index caef326..161c0eb 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..11631b9
+index 0000000..b57f24d
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1508 @@
+@@ -0,0 +1,1525 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -4248,13 +4248,16 @@ index 0000000..11631b9
 +static volatile LONG s_dx, s_dy;
 +static volatile LONG s_focused = 1, s_captured;
 +/* Movies own input ahead of the Video Settings page and native menus. */
-+static const PcInputFilter *volatile s_filters[3];
-+static const unsigned s_filter_order[3] = { 2, 0, 1 };
++/* Slots: 0 Video Settings, 1 native menus, 2 native movies, 3 photo mode (ahead of the menus it is drawn with). */
++#define PC_FILTER_SLOTS 4
++static const PcInputFilter *volatile s_filters[PC_FILTER_SLOTS];
++static const unsigned s_filter_order[PC_FILTER_SLOTS] = { 2, 3, 0, 1 };
++static int (*s_capture_query)(void);
 +
 +static int filter_key(unsigned id, int down, int repeat)
 +{
 +    int i;
-+    for (i = 0; i < 3; i++) {
++    for (i = 0; i < PC_FILTER_SLOTS; i++) {
 +        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->key && f->key(id, down, repeat)) return 1;
 +    }
@@ -4264,7 +4267,7 @@ index 0000000..11631b9
 +static int filter_button(int button, int down)
 +{
 +    int i;
-+    for (i = 0; i < 3; i++) {
++    for (i = 0; i < PC_FILTER_SLOTS; i++) {
 +        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->button && f->button(button, down)) return 1;
 +    }
@@ -4274,9 +4277,19 @@ index 0000000..11631b9
 +static int filter_wheel(int delta)
 +{
 +    int i;
-+    for (i = 0; i < 3; i++) {
++    for (i = 0; i < PC_FILTER_SLOTS; i++) {
 +        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->wheel && f->wheel(delta)) return 1;
++    }
++    return 0;
++}
++
++static int filter_motion(long dx, long dy)
++{
++    int i;
++    for (i = 0; i < PC_FILTER_SLOTS; i++) {
++        const PcInputFilter *f = s_filters[s_filter_order[i]];
++        if (f && f->motion && f->motion(dx, dy)) return 1;
 +    }
 +    return 0;
 +}
@@ -4284,7 +4297,7 @@ index 0000000..11631b9
 +static int filter_report(uint8_t out[20], int pad_present)
 +{
 +    int i;
-+    for (i = 0; i < 3; i++) {
++    for (i = 0; i < PC_FILTER_SLOTS; i++) {
 +        const PcInputFilter *f = s_filters[s_filter_order[i]];
 +        if (f && f->report && f->report(out, pad_present)) return 1;
 +    }
@@ -4859,7 +4872,9 @@ index 0000000..11631b9
 +{
 +    pc_input_init();
 +    if (s_script_background) return;
-+    if (!s_focused || !s_captured || !kbm_enabled()) return;
++    if (!s_focused || !s_captured) return;
++    if (filter_motion(dx, dy)) return;
++    if (!kbm_enabled()) return;
 +    motion_internal(dx, dy);
 +}
 +
@@ -4878,7 +4893,7 @@ index 0000000..11631b9
 +    }
 +    {
 +        int i;
-+        for (i = 0; i < 3; ++i) {
++        for (i = 0; i < PC_FILTER_SLOTS; ++i) {
 +            const PcInputFilter *f = s_filters[s_filter_order[i]];
 +            if (f && f->focus) f->focus(focused);
 +        }
@@ -4908,6 +4923,7 @@ index 0000000..11631b9
 +int pc_input_capture_wanted(void)
 +{
 +    pc_input_init();
++    if (!s_script_background && s_focused && s_capture_query && s_capture_query()) return 1;
 +    return !s_script_background && s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
 +}
 +
@@ -5531,7 +5547,7 @@ index 0000000..11631b9
 +        case 'd': script_key(ev->arg, 1, now); break;
 +        case 'u': script_key(ev->arg, 0, now); break;
 +        case 't': script_key(ev->arg, 1, now); script_key(ev->arg, 0, now); break; /* latch keeps it down */
-+        case 'm': if (kbm_enabled()) motion_internal(ev->a, ev->b); break;
++        case 'm': if (!filter_motion(ev->a, ev->b) && kbm_enabled()) motion_internal(ev->a, ev->b); break;   /* as a captured pointer's counts */
 +        case 'w':
 +            observe_wheel_device((int)ev->a);
 +            if (!filter_wheel((int)ev->a)) wheel_event_internal((int)ev->a, now);
@@ -5543,7 +5559,8 @@ index 0000000..11631b9
 +}
 +
 +void pc_input_set_filter(const PcInputFilter *filter) { s_filters[0] = filter; }
-+void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { if (slot >= 0 && slot < 3) s_filters[slot] = filter; }
++void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { if (slot >= 0 && slot < PC_FILTER_SLOTS) s_filters[slot] = filter; }
++void pc_input_set_capture_query(int (*query)(void)) { s_capture_query = query; }
 +
 +/* ---- tests -------------------------------------------------------------------------------------------------------------- */
 +
@@ -5577,10 +5594,10 @@ index 0000000..11631b9
 +void pc_input_test_set_layout_labels(int layout_aware) { s_layout_labels = layout_aware; }
 diff --git a/src/input/pc_input.h b/src/input/pc_input.h
 new file mode 100644
-index 0000000..b6b60ec
+index 0000000..452ba79
 --- /dev/null
 +++ b/src/input/pc_input.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,212 @@
 +/*
 + * pc_input.h -- native keyboard and mouse for BLACK.
 + *
@@ -5702,10 +5719,15 @@ index 0000000..b6b60ec
 +    int (*wheel)(int delta);
 +    int (*report)(uint8_t out[20], int pad_present);
 +    void (*focus)(int focused); /* Optional notification; cancels transient confirmations. */
++    /* Optional: raw mouse counts while the pointer is captured (the window thread). Taken counts never turn the
++     * game's camera. */
++    int (*motion)(long dx, long dy);
 +} PcInputFilter;
 +void pc_input_set_filter(const PcInputFilter *filter);
-+/* Priority: slot 2 (native movies), slot 0 (Video Settings), slot 1 (native menus). */
++/* Priority: slot 2 (native movies), slot 3 (photo mode), slot 0 (Video Settings), slot 1 (native menus). */
 +void pc_input_set_filter_slot(int slot, const PcInputFilter *filter);
++/* A module that wants the pointer captured (hidden, confined, raw motion) outside gameplay: photo mode. */
++void pc_input_set_capture_query(int (*query)(void));
 +
 +/* ---- host events (presenter/UI thread) ------------------------------------------------------ */
 +
@@ -8754,7 +8776,7 @@ index 23df8b2..208f81e 100644
   * Free a block from the Xbox heap. Currently a no-op (bump allocator).
   */
 diff --git a/src/nv2a/CMakeLists.txt b/src/nv2a/CMakeLists.txt
-index 20075a9..8a8d7bd 100644
+index 20075a9..c0c10b1 100644
 --- a/src/nv2a/CMakeLists.txt
 +++ b/src/nv2a/CMakeLists.txt
 @@ -11,9 +11,30 @@ add_library(xbox_nv2a STATIC
@@ -8778,14 +8800,14 @@ index 20075a9..8a8d7bd 100644
 +    kelvin/nv2a_vsh_cpu/nv2a_vsh_emulator8.c
 +    kelvin/nv2a_vsh_cpu/nv2a_vsh_emulator_execution_state.c
  )
-
+ 
 +# The production renderer takes its raster size from the video settings (src/video/pc_video.c); the unit tests that
 +# include kelvin_render.c directly keep the environment-only behaviour.
 +set_source_files_properties(kelvin/kelvin_render.c PROPERTIES COMPILE_DEFINITIONS KRES_PC_VIDEO=1)
 +
  target_include_directories(xbox_nv2a PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 +target_include_directories(xbox_nv2a PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-
+ 
  if(MSVC)
      target_compile_options(xbox_nv2a PRIVATE
 @@ -21,6 +42,11 @@ if(MSVC)
@@ -8800,6 +8822,12 @@ index 20075a9..8a8d7bd 100644
      )
      target_compile_definitions(xbox_nv2a PRIVATE
          _CRT_SECURE_NO_WARNINGS
+@@ -32,4 +58,5 @@ endif()
+ target_link_libraries(xbox_nv2a PRIVATE platform)
+ if(WIN32)
+     target_link_libraries(xbox_nv2a PRIVATE kernel32)
++    target_link_libraries(xbox_nv2a PRIVATE windowscodecs ole32)  # photo captures as PNG (WIC)
+ endif()
 diff --git a/src/nv2a/kelvin/kelvin.c b/src/nv2a/kelvin/kelvin.c
 new file mode 100644
 index 0000000..c6f3b23
@@ -14140,10 +14168,10 @@ index 0000000..345e83c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_post.inc b/src/nv2a/kelvin/kelvin_gpu_post.inc
 new file mode 100644
-index 0000000..fb9bccb
+index 0000000..d8ff8d9
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_post.inc
-@@ -0,0 +1,845 @@
+@@ -0,0 +1,892 @@
 +/* Picture effects of the GPU renderer, included by kelvin_gpu.c after the surface and pass helpers.
 + *
 + * What the player chooses in the Video Settings page (pc_video.c) that the renderer does itself:
@@ -14159,6 +14187,7 @@ index 0000000..fb9bccb
 + * bindings to be set again (kg_cache_invalidate). */
 +
 +#include "kelvin_post_order.h"
++#include <wincodec.h>
 +
 +static const char kgpu_hlsl_post[] =
 +"cbuffer PostCB : register(b0) {\n"
@@ -14950,22 +14979,68 @@ index 0000000..fb9bccb
 +
 +/* The frame to present: the target itself, or under super-sampling that target resolved down to the internal resolution. */
 +/* A capture of the next finished frame as the renderer hands it to the presenter (internal resolution, before window
-+ * scaling): any thread asks, the renderer writes it. */
-+static volatile LONG s_capture_pending;
++ * scaling, so without the presenter's menus and hints): any thread asks, the renderer writes it -- a PNG through WIC
++ * for a .png path, else a BMP. kgpu_capture_result says how the last one went. */
++static volatile LONG s_capture_pending, s_capture_result;
 +static char s_capture_path[512];
 +
 +void kgpu_request_capture(const char *path)
 +{
 +    if (!path || !*path || InterlockedCompareExchange(&s_capture_pending, 0, 0)) return;
 +    snprintf(s_capture_path, sizeof(s_capture_path), "%s", path);
++    InterlockedExchange(&s_capture_result, 0);
 +    InterlockedExchange(&s_capture_pending, 1);
++}
++
++int kgpu_capture_result(void) { return (int)InterlockedCompareExchange(&s_capture_result, 0, 0); }
++
++/* 24-bit RGB (the target's alpha is not a picture's), UTF-8 path. */
++static int write_png(const char *path, const uint8_t *bgra, unsigned int w, unsigned int h)
++{
++    IWICImagingFactory *factory = NULL;
++    IWICStream *stream = NULL;
++    IWICBitmapEncoder *encoder = NULL;
++    IWICBitmapFrameEncode *frame = NULL;
++    WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
++    WCHAR wide[MAX_PATH];
++    uint8_t *bgr = (uint8_t *)malloc((size_t)w * h * 3);
++    const HRESULT com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
++    HRESULT hr = bgr && MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, MAX_PATH) ? S_OK : E_FAIL;
++    size_t i;
++    if (SUCCEEDED(hr)) for (i = 0; i < (size_t)w * h; i++) { bgr[i * 3] = bgra[i * 4]; bgr[i * 3 + 1] = bgra[i * 4 + 1]; bgr[i * 3 + 2] = bgra[i * 4 + 2]; }
++    if (SUCCEEDED(hr)) hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void **)&factory);
++    if (SUCCEEDED(hr)) hr = IWICImagingFactory_CreateStream(factory, &stream);
++    if (SUCCEEDED(hr)) hr = IWICStream_InitializeFromFilename(stream, wide, GENERIC_WRITE);
++    if (SUCCEEDED(hr)) hr = IWICImagingFactory_CreateEncoder(factory, &GUID_ContainerFormatPng, NULL, &encoder);
++    if (SUCCEEDED(hr)) hr = IWICBitmapEncoder_Initialize(encoder, (IStream *)stream, WICBitmapEncoderNoCache);
++    if (SUCCEEDED(hr)) hr = IWICBitmapEncoder_CreateNewFrame(encoder, &frame, NULL);
++    if (SUCCEEDED(hr)) hr = IWICBitmapFrameEncode_Initialize(frame, NULL);
++    if (SUCCEEDED(hr)) hr = IWICBitmapFrameEncode_SetSize(frame, w, h);
++    if (SUCCEEDED(hr)) hr = IWICBitmapFrameEncode_SetPixelFormat(frame, &format);
++    if (SUCCEEDED(hr) && !IsEqualGUID(&format, &GUID_WICPixelFormat24bppBGR)) hr = E_FAIL;
++    if (SUCCEEDED(hr)) hr = IWICBitmapFrameEncode_WritePixels(frame, h, w * 3, w * h * 3, bgr);
++    if (SUCCEEDED(hr)) hr = IWICBitmapFrameEncode_Commit(frame);
++    if (SUCCEEDED(hr)) hr = IWICBitmapEncoder_Commit(encoder);
++    if (frame) IWICBitmapFrameEncode_Release(frame);
++    if (encoder) IWICBitmapEncoder_Release(encoder);
++    if (stream) IWICStream_Release(stream);
++    if (factory) IWICImagingFactory_Release(factory);
++    if (FAILED(hr)) { MultiByteToWideChar(CP_UTF8, 0, path, -1, wide, MAX_PATH); DeleteFileW(wide); }
++    if (SUCCEEDED(com)) CoUninitialize();
++    free(bgr);
++    return SUCCEEDED(hr);
 +}
 +
 +static ID3D11Texture2D *kg_capture(ID3D11Texture2D *tex, unsigned int w, unsigned int h)
 +{
 +    if (InterlockedCompareExchange(&s_capture_pending, 0, 0)) {
-+        free(post_ao_colour_capture(tex, w, h, s_capture_path));
-+        fprintf(stderr, "[KGPU] captured %ux%u to %s\n", w, h, s_capture_path);
++        const size_t n = strlen(s_capture_path);
++        const int png = n > 4 && !_stricmp(s_capture_path + n - 4, ".png");
++        uint8_t *pixels = post_ao_colour_capture(tex, w, h, png ? NULL : s_capture_path);
++        const int ok = pixels && (!png || write_png(s_capture_path, pixels, w, h));
++        free(pixels);
++        fprintf(stderr, "[KGPU] capture %ux%u to %s: %s\n", w, h, s_capture_path, ok ? "written" : "failed");
++        InterlockedExchange(&s_capture_result, ok ? 1 : -1);
 +        InterlockedExchange(&s_capture_pending, 0);
 +    }
 +    return tex;
@@ -35573,10 +35648,10 @@ index 1e4b250..959f683 100644
      return 20;
  }
 diff --git a/src/video/CMakeLists.txt b/src/video/CMakeLists.txt
-index 2189a3b..175c522 100644
+index 2189a3b..edce77a 100644
 --- a/src/video/CMakeLists.txt
 +++ b/src/video/CMakeLists.txt
-@@ -3,12 +3,17 @@ add_library(xbox_video STATIC
+@@ -3,12 +3,18 @@ add_library(xbox_video STATIC
      video_player.c
      video_pump.c
      fb_present.c
@@ -35585,6 +35660,7 @@ index 2189a3b..175c522 100644
 +    pc_menu.c
 +    pc_menu_assets.c
 +    pc_movie_skip.c
++    pc_photo.c
  )
  target_include_directories(xbox_video PUBLIC
      ${CMAKE_CURRENT_SOURCE_DIR}
@@ -35594,13 +35670,13 @@ index 2189a3b..175c522 100644
 +target_link_libraries(xbox_video PUBLIC xbox_d3d8 xbox_input)
  if(WIN32)
 -    target_link_libraries(xbox_video PUBLIC mfplat mfreadwrite mfuuid mf ole32)
-+    target_link_libraries(xbox_video PUBLIC mfplat mfreadwrite mfuuid mf ole32 gdi32 user32)
++    target_link_libraries(xbox_video PUBLIC mfplat mfreadwrite mfuuid mf ole32 shell32 gdi32 user32)
  endif()
 diff --git a/src/video/fb_present.c b/src/video/fb_present.c
-index 69ced11..80c3783 100644
+index 69ced11..ca0f7b9 100644
 --- a/src/video/fb_present.c
 +++ b/src/video/fb_present.c
-@@ -1,219 +1,981 @@
+@@ -1,219 +1,983 @@
 -/**
 - * Show the guest framebuffer in a window.
 - *
@@ -35629,6 +35705,7 @@ index 69ced11..80c3783 100644
 +#include "pc_video_menu.h"
 +#include "pc_menu.h"
 +#include "pc_movie_skip.h"
++#include "pc_photo.h"
  #if defined(_WIN32)
 +#define COBJMACROS
  #include <windows.h>
@@ -35640,7 +35717,7 @@ index 69ced11..80c3783 100644
  #include <stdlib.h>
  #include <string.h>
 +#include <xmmintrin.h>
-
+ 
 -extern ptrdiff_t xbox_GetMemoryOffset(void);
 +enum { FB_NOT_STARTED, FB_RUNNING, FB_CLOSED };
 +typedef struct FbFrame {
@@ -35693,14 +35770,14 @@ index 69ced11..80c3783 100644
 +static uint32_t s_pin_va;
 +static const char *s_dump;
 +static RECT s_window_rect;
-
+ 
 -static volatile LONG s_fb_running;
 -static uint32_t      s_fb_va, s_fb_pitch, s_fb_width = 640, s_fb_height = 480;
 -static uint32_t     *s_rgb;           /* converted 32-bit copy for GDI */
 +static unsigned s_applied_w, s_applied_h;   /* the window size last set from the settings */
 +static const char *s_menu_shot;             /* RECOMP_VIDEO_MENU_SHOT: dump the back buffer whenever the page changes */
 +static unsigned s_menu_shots;
-
+ 
 -void xbox_FramebufferWindowSet(uint32_t fb_va, uint32_t pitch)
 +/* Everything in the presentation policy the Video Settings page can change. The window size and mode are
 + * applied separately, because they act on the window. */
@@ -35723,7 +35800,7 @@ index 69ced11..80c3783 100644
 +    s_policy.aspect_w = num; s_policy.aspect_h = den;
 +    s_policy.borderless = v->borderless;
  }
-
+ 
 -static LRESULT CALLBACK fb_wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 +static BOOL CALLBACK fb_initialize(PINIT_ONCE once, PVOID arg, PVOID *context)
  {
@@ -35750,7 +35827,7 @@ index 69ced11..80c3783 100644
  }
 +/* Legacy display-mode calls precede any completed pixels; do not sample RAM. */
 +void xbox_FramebufferWindowSet(uint32_t va, uint32_t pitch) { (void)va; (void)pitch; }
-
+ 
 -/* The display formats an Xbox front buffer is actually set to. The pitch says
 - * how wide a row is in bytes, so pitch/width gives the pixel size; the exact
 - * component layout only matters for 16-bit, where 5:6:5 and 1:5:5:5 differ. */
@@ -35766,7 +35843,7 @@ index 69ced11..80c3783 100644
 -        uint32_t *dst = s_rgb + (size_t)y * s_fb_width;
 +    InterlockedExchange(&s_input_by_caller, on ? 1 : 0);
 +}
-
+ 
 -        if (bpp == 4) {
 -            memcpy(dst, row, (size_t)s_fb_width * 4);
 -        } else if (bpp == 2) {
@@ -36039,7 +36116,7 @@ index 69ced11..80c3783 100644
 +static int s_ui_captured, s_ui_cursor_hidden, s_ui_sizemove;
 +static unsigned s_mouse_down_mask;
 +static RECT s_ui_clip;
-
+ 
 +static void fb_capture_release(void)
 +{
 +    if (!s_ui_captured) return;
@@ -36595,6 +36672,7 @@ index 69ced11..80c3783 100644
 +    pc_video_menu_install();
 +    pc_menu_install();
 +    pc_movie_skip_install();
++    pc_photo_install();
 +    pc_input_set_movie_active_query(fb_movie_input_active);
 +    {
 +        RAWINPUTDEVICE mouse;
@@ -36931,9 +37009,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
+index 0000000..505c88b
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2484 @@
+@@ -0,0 +1,2594 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -36946,6 +37025,7 @@ new file mode 100644
 +#include "pc_menu.h"
 +#include "pc_video_menu.h"
 +#include "pc_movie_skip.h"
++#include "pc_photo.h"
 +#include "../input/pc_input.h"
 +#include <ctype.h>
 +#include <math.h>
@@ -36970,11 +37050,13 @@ new file mode 100644
 +#define PCM_VARS 8
 +#define PCM_TEXT_CAP 160
 +
-+enum { OP_NONE, OP_GAMECODE, OP_PAGE, OP_SET, OP_VIDEO, OP_BACK, OP_OPEN, OP_CLOSE, OP_EXIT, OP_RESET_VIDEO };
++enum { OP_NONE, OP_GAMECODE, OP_PAGE, OP_SET, OP_VIDEO, OP_BACK, OP_OPEN, OP_CLOSE, OP_EXIT, OP_RESET_VIDEO, OP_PHOTO_SHOT,
++       OP_PHOTO_RESET, OP_PHOTO_HIDE };
 +typedef struct Cmd { int op; int nargs; char arg[4][PCM_NAME]; } Cmd;
 +typedef struct Script { int n; Cmd cmd[PCM_CMDS]; } Script;
 +
-+enum { IT_BUTTON, IT_TOGGLE, IT_SLIDER, IT_VIDEO };
++/* IT_PHOTO: a photo mode setting (pc_photo rows, in video_row). */
++enum { IT_BUTTON, IT_TOGGLE, IT_SLIDER, IT_VIDEO, IT_PHOTO };
 +typedef struct Item {
 +    int kind;
 +    char text[PCM_SPEC];
@@ -37020,6 +37102,8 @@ new file mode 100644
 +    int line;
 +    uint32_t column;
 +    int has_column;                /* front-end pages leave the movie unchanged between the rails */
++    int photo;                     /* photo mode's page: a panel over the picture, photo mode on while shown */
++    float panel[4];                /* its box: x, y, w, h */
 +} Page;
 +
 +typedef struct Style {
@@ -37165,12 +37249,15 @@ new file mode 100644
 +        else if (!_stricmp(w[0], "close")) c->op = OP_CLOSE;
 +        else if (!_stricmp(w[0], "exit")) c->op = OP_EXIT;
 +        else if (!_stricmp(w[0], "reset_video")) c->op = OP_RESET_VIDEO;
++        else if (!_stricmp(w[0], "photo_shot")) c->op = OP_PHOTO_SHOT;
++        else if (!_stricmp(w[0], "photo_reset")) c->op = OP_PHOTO_RESET;
++        else if (!_stricmp(w[0], "photo_hide")) c->op = OP_PHOTO_HIDE;
 +        else if (!_stricmp(w[0], "none")) c->op = OP_NONE;
-+        else { perr(ps, "unknown action '%s' (gamecode, page, open, close, set, video, reset_video, back, exit, none)", w[0]); return 0; }
++        else { perr(ps, "unknown action '%s' (gamecode, page, open, close, set, video, reset_video, photo_shot, photo_reset, photo_hide, back, exit, none)", w[0]); return 0; }
 +        if ((c->op == OP_GAMECODE || c->op == OP_PAGE || c->op == OP_OPEN) && k < 2) { perr(ps, "'%s' needs a name", w[0]); return 0; }
 +        if (c->op == OP_SET && k != 3) { perr(ps, "'set' needs a name and a value", NULL); return 0; }
 +        if ((c->op == OP_PAGE || c->op == OP_OPEN) && k != 2) { perr(ps, "'%s' takes one name", w[0]); return 0; }
-+        if ((c->op == OP_CLOSE || c->op == OP_EXIT || c->op == OP_RESET_VIDEO) && k != 1) { perr(ps, "'%s' takes nothing", w[0]); return 0; }
++        if ((c->op == OP_CLOSE || c->op == OP_EXIT || c->op == OP_RESET_VIDEO || c->op >= OP_PHOTO_SHOT) && k != 1) { perr(ps, "'%s' takes nothing", w[0]); return 0; }
 +        if (k > 5) { perr(ps, "too many arguments for '%s' (at most 3)", w[0]); return 0; }
 +        c->nargs = k - 1;
 +        for (j = 1; j < k; j++) {
@@ -37254,6 +37341,14 @@ new file mode 100644
 +    return 0;
 +}
 +
++static int photo_row_named(const char *name)
++{
++    static const char *const names[] = { "fov", "roll", "weapon", "speed", "range" };
++    int i;
++    for (i = 0; i < PCP_ROW_COUNT; i++) if (!_stricmp(name, names[i])) return i;
++    return -1;
++}
++
 +static int video_row_named(const char *name)
 +{
 +    static const char *const names[] = { "mode", "window", "internal", "aa", "af", "dof", "sharpen", "ao_method", "ao_quality", "aspect",
@@ -37303,7 +37398,8 @@ new file mode 100644
 +        p->ntext++;
 +        return 1;
 +    }
-+    if (!_stricmp(key, "item") || !_stricmp(key, "toggle") || !_stricmp(key, "slider") || !_stricmp(key, "setting")) {
++    if (!_stricmp(key, "item") || !_stricmp(key, "toggle") || !_stricmp(key, "slider") || !_stricmp(key, "setting") ||
++        !_stricmp(key, "photo")) {
 +        Item *it;
 +        int first_opt;
 +        if (p->nitem >= PCM_ITEMS) { perr(ps, "too many items on one page (at most %s)", "12"); return 0; }
@@ -37315,6 +37411,10 @@ new file mode 100644
 +        if (!_stricmp(key, "item")) {
 +            it->kind = IT_BUTTON;
 +            if (n >= 2 && !parse_script(ps, f[1], &it->act)) return 0;
++            first_opt = 2;
++        } else if (!_stricmp(key, "photo")) {
++            it->kind = IT_PHOTO;
++            if (n < 2 || (it->video_row = photo_row_named(f[1])) < 0) { perr(ps, "photo needs: TEXT | fov, roll, weapon, speed or range", NULL); return 0; }
 +            first_opt = 2;
 +        } else if (!_stricmp(key, "setting")) {
 +            it->kind = IT_VIDEO;
@@ -37335,6 +37435,14 @@ new file mode 100644
 +        }
 +        for (i = first_opt; i < n; i++) if (*f[i] && !parse_item_option(ps, f[i], it)) return 0;
 +        p->nitem++;
++        return 1;
++    }
++    if (!_stricmp(key, "photomode")) {
++        p->photo = !_stricmp(val, "on");
++        return 1;
++    }
++    if (!_stricmp(key, "panel")) {
++        if (!parse_floats(val, p->panel, 4)) { perr(ps, "panel needs: X Y W H", NULL); return 0; }
 +        return 1;
 +    }
 +    if (!_stricmp(key, "column")) {
@@ -37522,7 +37630,7 @@ new file mode 100644
 +            for (c = val; *c; c++) {
 +                if (*c == '"') q = !q;
 +                if (!q && *c == ';' && (c == val || c[-1] == ' ' || c[-1] == '\t') && (c[1] == ' ' || c[1] == 0) &&
-+                    strncmp(key, "item", 4) && strncmp(key, "back", 4) && strncmp(key, "toggle", 6) && strncmp(key, "slider", 6) && strncmp(key, "setting", 7)) {
++                    strncmp(key, "item", 4) && strncmp(key, "back", 4) && strncmp(key, "toggle", 6) && strncmp(key, "slider", 6) && strncmp(key, "setting", 7) && strncmp(key, "photo", 5)) {
 +                    *c = 0; val = trim(val); break;
 +                }
 +            }
@@ -37806,7 +37914,8 @@ new file mode 100644
 +            parse_doc(m_default_text, defaults, NULL, 0);
 +            for (i = 0; i < defaults->npage && d->npage < PCM_PAGES; i++) {
 +                const Page *p = &defaults->page[i];
-+                if (_stricmp(p->name, "VideoSettings") && _stricmp(p->name, "VideoDisplay") && _stricmp(p->name, "VideoGraphics")) continue;
++                if (_stricmp(p->name, "VideoSettings") && _stricmp(p->name, "VideoDisplay") && _stricmp(p->name, "VideoGraphics") &&
++                    _stricmp(p->name, "PhotoMode")) continue;
 +                for (j = 0; j < d->npage; j++) if (!_stricmp(p->name, d->page[j].name)) break;
 +                if (j == d->npage) d->page[d->npage++] = *p;
 +            }
@@ -37932,6 +38041,9 @@ new file mode 100644
 +            else if (host->video) { host->video(host->ctx); did = 1; }
 +            break;
 +        case OP_RESET_VIDEO: pc_video_menu_reset_settings(); did = 1; break;
++        case OP_PHOTO_SHOT: did = pc_photo_take(); break;
++        case OP_PHOTO_RESET: pc_photo_reset(); did = 1; break;
++        case OP_PHOTO_HIDE: pc_photo_hide_panel(); did = 1; break;
 +        case OP_BACK: if (depth < 2) did |= run(host, p, &p->back, 1, depth + 1); break;
 +        case OP_OPEN: did |= open_page(host, resolve(host, c->arg[0])); break;
 +        case OP_CLOSE: did |= close_page(host); break;
@@ -37995,6 +38107,7 @@ new file mode 100644
 +    const int idx = find_page(name);
 +    int i;
 +    if (idx < 0 || idx == m_page) { fprintf(stderr, "[MENU] open %s: not a page of the file\n", name); return 0; }
++    if (m_doc->page[idx].photo && !pc_photo_allowed()) { fprintf(stderr, "[MENU] open %s: photo mode is not available now\n", name); return 0; }
 +    for (i = 0; i < m_doc->page[idx].nrequire; i++) if (!var_lookup(host, m_doc->page[idx].require[i])) return 0;
 +    if (m_depth >= (int)(sizeof(m_stack) / sizeof(m_stack[0]))) return 0;
 +    m_stack[m_depth].page = m_page; m_stack[m_depth].focus = m_focus; m_depth++;
@@ -38022,6 +38135,11 @@ new file mode 100644
 +static void apply(const PcMenuHost *host, const Page *p, int action, double t)
 +{
 +    const Item *it = m_focus >= 0 && m_focus < p->nitem ? &p->item[m_focus] : NULL;
++    if (p->photo && pc_photo_panel_put_away() && action != PCM_ACT_BACK && action != PCM_ACT_START) {
++        pc_photo_show_panel();
++        play(host, "SNDChange");
++        return;
++    }
 +    if (action == PCM_ACT_START) action = p->start_back ? PCM_ACT_BACK : PCM_ACT_CONFIRM;
 +    switch (action) {
 +    case PCM_ACT_UP: case PCM_ACT_DOWN: {
@@ -38036,6 +38154,8 @@ new file mode 100644
 +        if (it->kind == IT_VIDEO) {
 +            const int did = pc_video_menu_row_change(it->video_row, action == PCM_ACT_LEFT ? -1 : 1);
 +            play(host, did ? "SNDChange" : "SNDError");
++        } else if (it->kind == IT_PHOTO) {
++            play(host, pc_photo_row_change(it->video_row, action == PCM_ACT_LEFT ? -1 : 1) ? "SNDChange" : "SNDError");
 +        } else if (it->kind == IT_TOGGLE) {
 +            int cur = 0, want = action == PCM_ACT_LEFT ? 1 : 0;      /* ON is on the left, OFF on the right */
 +            read_value(host, it->var, &cur);
@@ -38064,6 +38184,7 @@ new file mode 100644
 +    case PCM_ACT_CONFIRM: {
 +        int did = 0;
 +        if (it && it->kind == IT_VIDEO) did = pc_video_menu_row_change(it->video_row, 1);
++        else if (it && it->kind == IT_PHOTO) did = pc_photo_row_change(it->video_row, 1);
 +        else if (it && it->kind == IT_BUTTON && it->act.n) did = run(host, p, &it->act, 0, 0);
 +        else if (script_has(&p->back, OP_PAGE)) did = run(host, p, &p->back, 1, 0);   /* the original's "Going Backwards 2" */
 +        play(host, did ? "SNDSelect" : "SNDError");
@@ -38157,10 +38278,43 @@ new file mode 100644
 +        { "AMBIENT OCCLUSION", "OCLUSÃO DE AMBIENTE", "OCLUSIÓN AMBIENTAL", "OCCLUSION AMBIANTE", "UMGEBUNGSVERDECKUNG", "OCCLUSIONE AMBIENTALE" },
 +        { "AO QUALITY", "QUALIDADE DA OCLUSÃO", "CALIDAD DE OCLUSIÓN", "QUALITÉ DE L’OCCLUSION", "AO-QUALITÄT", "QUALITÀ AO" },
 +        { "FIELD OF VIEW", "FOV", "CAMPO DE VISIÓN", "CHAMP DE VISION", "SICHTFELD", "CAMPO VISIVO" },
-+        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" }
++        { "MOTION BLUR", "DESFOQUE DE MOVIMENTO", "DESENFOQUE DE MOVIMIENTO", "FLOU DE MOUVEMENT", "BEWEGUNGSUNSCHÄRFE", "MOSSO DI MOVIMENTO" },
++        /* photo mode (Portuguese reviewed; the others machine drafts, like the launcher's) */
++        { "PHOTO MODE", "MODO FOTO", "MODO FOTO", "MODE PHOTO", "FOTOMODUS", "MODALITÀ FOTO" },
++        { "WEAPON", "ARMA", "ARMA", "ARME", "WAFFE", "ARMA" },
++        { "HIDDEN", "OCULTA", "OCULTA", "MASQUÉE", "AUSGEBLENDET", "NASCOSTA" },
++        { "SHOWN", "VISÍVEL", "VISIBLE", "VISIBLE", "SICHTBAR", "VISIBILE" },
++        { "ROLL", "INCLINAÇÃO", "GIRO", "ROULIS", "NEIGUNG", "ROLLIO" },
++        { "CAMERA SPEED", "VELOCIDADE DA CÂMERA", "VELOCIDAD DE CÁMARA", "VITESSE DE LA CAMÉRA", "KAMERATEMPO", "VELOCITÀ CAMERA" },
++        { "CAMERA RANGE", "ALCANCE DA CÂMERA", "ALCANCE DE CÁMARA", "PORTÉE DE LA CAMÉRA", "KAMERAREICHWEITE", "RAGGIO CAMERA" },
++        { "TAKE PHOTO", "TIRAR FOTO", "HACER FOTO", "PRENDRE UNE PHOTO", "FOTO AUFNEHMEN", "SCATTA FOTO" },
++        { "RESET CAMERA", "REDEFINIR CÂMERA", "REINICIAR CÁMARA", "RÉINITIALISER LA CAMÉRA", "KAMERA ZURÜCKSETZEN", "RIPRISTINA CAMERA" },
++        { "HIDE PANEL", "OCULTAR PAINEL", "OCULTAR PANEL", "MASQUER LE PANNEAU", "LEISTE AUSBLENDEN", "NASCONDI PANNELLO" },
++        { "EXIT PHOTO MODE", "SAIR DO MODO FOTO", "SALIR DEL MODO FOTO", "QUITTER LE MODE PHOTO", "FOTOMODUS VERLASSEN", "ESCI DALLA MODALITÀ FOTO" },
++        { "SLOW", "LENTA", "LENTA", "LENTE", "LANGSAM", "LENTA" },
++        { "NORMAL", "NORMAL", "NORMAL", "NORMALE", "NORMAL", "NORMALE" },
++        { "FAST", "RÁPIDA", "RÁPIDA", "RAPIDE", "SCHNELL", "VELOCE" },
++        { "VERY FAST", "MUITO RÁPIDA", "MUY RÁPIDA", "TRÈS RAPIDE", "SEHR SCHNELL", "MOLTO VELOCE" },
++        { "WASD MOVES, THE MOUSE LOOKS, Q AND E DOWN AND UP, SHIFT AND CTRL SPEED, WHEEL ZOOMS, Z AND C ROLL. F12 TAKES A PHOTO, H HIDES THIS PANEL.",
++          "WASD MOVE, O MOUSE OLHA, Q E E DESCEM E SOBEM, SHIFT E CTRL MUDAM A VELOCIDADE, A RODA DÁ ZOOM, Z E C INCLINAM. F12 TIRA UMA FOTO, H OCULTA O PAINEL.",
++          "WASD MUEVE, EL RATÓN MIRA, Q Y E BAJAN Y SUBEN, SHIFT Y CTRL VELOCIDAD, LA RUEDA HACE ZOOM, Z Y C GIRAN. F12 HACE UNA FOTO, H OCULTA EL PANEL.",
++          "WASD DÉPLACE, LA SOURIS REGARDE, Q ET E DESCENDENT ET MONTENT, MAJ ET CTRL VITESSE, MOLETTE ZOOM, Z ET C ROULIS. F12 PHOTO, H MASQUE LE PANNEAU.",
++          "WASD BEWEGT, DIE MAUS SCHAUT, Q UND E RUNTER UND HOCH, SHIFT UND STRG TEMPO, MAUSRAD ZOOM, Z UND C NEIGEN. F12 MACHT EIN FOTO, H BLENDET AUS.",
++          "WASD MUOVE, IL MOUSE GUARDA, Q ED E SCENDONO E SALGONO, SHIFT E CTRL VELOCITÀ, ROTELLA ZOOM, Z E C ROLLIO. F12 SCATTA, H NASCONDE IL PANNELLO." },
++        { "LEFT STICK MOVES, RIGHT STICK LOOKS, TRIGGERS DOWN AND UP, WHITE AND BLACK ZOOM. Y TAKES A PHOTO, X HIDES THIS PANEL.",
++          "ANALÓGICO ESQUERDO MOVE, O DIREITO OLHA, GATILHOS DESCEM E SOBEM, BRANCO E PRETO DÃO ZOOM. Y TIRA UMA FOTO, X OCULTA O PAINEL.",
++          "STICK IZQUIERDO MUEVE, EL DERECHO MIRA, GATILLOS BAJAN Y SUBEN, BLANCO Y NEGRO ZOOM. Y HACE UNA FOTO, X OCULTA EL PANEL.",
++          "STICK GAUCHE DÉPLACE, LE DROIT REGARDE, GÂCHETTES DESCENDENT ET MONTENT, BLANC ET NOIR ZOOM. Y PHOTO, X MASQUE LE PANNEAU.",
++          "LINKER STICK BEWEGT, DER RECHTE SCHAUT, TRIGGER RUNTER UND HOCH, WEISS UND SCHWARZ ZOOM. Y MACHT EIN FOTO, X BLENDET AUS.",
++          "LEVETTA SINISTRA MUOVE, LA DESTRA GUARDA, GRILLETTI SCENDONO E SALGONO, BIANCO E NERO ZOOM. Y SCATTA, X NASCONDE IL PANNELLO." },
++        { "THE PHOTO COULD NOT BE SAVED.", "NÃO FOI POSSÍVEL SALVAR A FOTO.", "NO SE PUDO GUARDAR LA FOTO.", "IMPOSSIBLE D'ENREGISTRER LA PHOTO.",
++          "DAS FOTO KONNTE NICHT GESPEICHERT WERDEN.", "IMPOSSIBILE SALVARE LA FOTO." },
++        { "PHOTO SAVED TO PICTURES\\BLACK:", "FOTO SALVA EM IMAGENS\\BLACK:", "FOTO GUARDADA EN IMÁGENES\\BLACK:", "PHOTO ENREGISTRÉE DANS IMAGES\\BLACK :",
++          "FOTO GESPEICHERT IN BILDER\\BLACK:", "FOTO SALVATA IN IMMAGINI\\BLACK:" }
 +    };
 +    int i;
-+    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics"))) return text;
++    if (!locale || (_stricmp(active_page, "VideoSettings") && _stricmp(active_page, "VideoDisplay") && _stricmp(active_page, "VideoGraphics") &&
++                    _stricmp(active_page, "PhotoMode"))) return text;
 +    for (i = 0; i < (int)(sizeof(words) / sizeof(words[0])); ++i)
 +        if (!strcmp(text, words[i].english)) {
 +            const char *values[] = { words[i].english, words[i].pt, words[i].es, words[i].fr, words[i].de, words[i].it };
@@ -38182,6 +38336,19 @@ new file mode 100644
 +    } else if (!strcmp(spec, "&VIDEO_HELP")) {
 +        const Item *it = m_page >= 0 && m_focus >= 0 && m_focus < m_doc->page[m_page].nitem ? &m_doc->page[m_page].item[m_focus] : NULL;
 +        utf8_to_utf16(it && it->kind == IT_VIDEO ? pc_video_menu_row_help(it->video_row) : "", out, cap);
++    } else if (!strcmp(spec, "&PHOTO_HELP")) {
++        /* the controls, or the last photo: "PHOTO SAVED TO PICTURES\BLACK: <name>" translates up to its name */
++        const char *help = pc_photo_help(), *colon = strstr(help, "BLACK: ");
++        char line[PCM_TEXT_CAP * 2];
++        if (colon) {
++            char head[64];
++            const size_t n = (size_t)(colon - help) + 6;
++            snprintf(head, sizeof(head), "%.*s", (int)(n < sizeof(head) ? n : sizeof(head) - 1), help);
++            snprintf(line, sizeof(line), "%s%s", localized_video_literal(head), colon + 6);
++        } else {
++            snprintf(line, sizeof(line), "%s", localized_video_literal(help));
++        }
++        utf8_to_utf16(line, out, cap);
 +    } else if (spec[0] == '@') {
 +        const char *v = var_lookup(host, spec + 1);
 +        utf8_to_utf16(v ? v : "", out, cap);
@@ -38288,8 +38455,18 @@ new file mode 100644
 +        const float u = st->intro > 0 ? (float)((t - m_page_t0) / st->intro) : 1.0f;
 +        d->slide = (1.0f - ease(u)) * 40.0f;
 +    }
-+    rails(d, st, p);
-+    if (m_image[PCM_IMAGE_LOGO].pixels && st->logo_w > 0 && !p->no_logo) {
++    if (p->photo) {
++        /* photo mode: a panel over the picture, or nothing while the camera moves or the player hid it */
++        if (pc_photo_panel_hidden()) { d->n = 0; return; }
++        rect(d, p->panel[0], p->panel[1], p->panel[2], p->panel[3], st->bar, 0);
++        rect(d, p->panel[0], p->panel[1], 5, p->panel[3], st->rail, 0);
++        rect(d, p->panel[0] + 8, p->panel[1], 2, p->panel[3], mix(0xFF000000u, st->rail, 0.68f), 0);
++        rect(d, p->panel[0], p->panel[1], p->panel[2], 1, st->line, 0);
++        rect(d, p->panel[0], p->panel[1] + p->panel[3] - 1, p->panel[2], 1, st->line, 0);
++    } else {
++        rails(d, st, p);
++    }
++    if (m_image[PCM_IMAGE_LOGO].pixels && st->logo_w > 0 && !p->no_logo && !p->photo) {
 +        Prim *q = add(d, PR_IMAGE);
 +        if (q) {
 +            q->image = PCM_IMAGE_LOGO; q->x = p->logo_x; q->y = p->logo_y; q->w = st->logo_w;
@@ -38327,8 +38504,10 @@ new file mode 100644
 +                rect(d, bx, by, bw, bh, st->bar, 0);
 +                rect(d, bx - 1, by, 1, bh, st->line, 0);
 +                rect(d, bx + bw, by, 1, bh, st->line, 0);
-+                rect(d, p->rail_r + 1, mid, bx - 1 - (p->rail_r + 1), 2, st->line, 0);
-+                rect(d, bx + bw + 1, mid, 640 - (bx + bw + 1), 2, st->line, PF_EXT_RIGHT);
++                if (!p->photo) {                      /* out to the rails; a panel keeps its selector inside */
++                    rect(d, p->rail_r + 1, mid, bx - 1 - (p->rail_r + 1), 2, st->line, 0);
++                    rect(d, bx + bw + 1, mid, 640 - (bx + bw + 1), 2, st->line, PF_EXT_RIGHT);
++                }
 +            }
 +        }
 +        for (i = 0; i < p->nitem; i++) {
@@ -38360,6 +38539,12 @@ new file mode 100644
 +                if (room > 0 && width > room) size *= room / width;
 +                text_prim(d, PCM_FONT_SMALL, right - text_width(PCM_FONT_SMALL, buf, size), ys[i], size, 1.0f,
 +                    pc_video_menu_row_locked(it->video_row) ? mix(st->item, st->focus, k) : st->text, buf);
++            } else if (it->kind == IT_PHOTO) {
++                char value[48];
++                const float right = p->values_x > 0 ? p->values_x : p->list_x + p->bar_w - 12.0f;
++                pc_photo_row_value(it->video_row, value, sizeof(value));
++                utf8_to_utf16(localized_video_literal(value), buf, PCM_TEXT_CAP);
++                text_prim(d, PCM_FONT_SMALL, right - text_width(PCM_FONT_SMALL, buf, isize), ys[i], isize, 1.0f, st->text, buf);
 +            } else if (it->kind == IT_TOGGLE) {
 +                int v = 0;
 +                static const uint16_t on[] = { 'o', 'n', 0 }, off[] = { 'o', 'f', 'f', 0 };
@@ -38439,6 +38624,7 @@ new file mode 100644
 +
 +static void deactivate(void)
 +{
++    pc_photo_set_shown(0);
 +    pc_video_menu_hide_hint(0);
 +    AcquireSRWLockExclusive(&m_lock);
 +    if (m_display.n) { m_display.n = 0; m_generation++; }
@@ -38514,10 +38700,13 @@ new file mode 100644
 +        }
 +    }
 +    if (m_page < 0) {
++        pc_photo_set_shown(0);
 +        if (InterlockedCompareExchange(&m_active, 0, 0)) deactivate();
 +        return 0;
 +    }
 +    p = &m_doc->page[m_page];                       /* an action may have opened or closed a page */
++    pc_photo_set_shown(p->photo);
++    if (pc_photo_shutter()) play(host, "SNDSelect");
 +    first_focus(host, p, t);
 +    build(&m_scratch, host, p, ready, t);
 +    AcquireSRWLockExclusive(&m_lock);
@@ -40143,6 +40332,651 @@ new file mode 100644
 +void pc_movie_skip_test_reset(void);
 +#endif
 +#endif
+diff --git a/src/video/pc_photo.c b/src/video/pc_photo.c
+new file mode 100644
+index 0000000..9321499
+--- /dev/null
++++ b/src/video/pc_photo.c
+@@ -0,0 +1,549 @@
++/*
++ * pc_photo.c -- photo mode: a free camera over the paused game, and photos of it. See pc_photo.h.
++ */
++#ifndef _CRT_SECURE_NO_WARNINGS
++#define _CRT_SECURE_NO_WARNINGS
++#endif
++#include "pc_photo.h"
++#include "../input/pc_input.h"
++
++#include <math.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#if defined(_WIN32)
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#include <shlobj.h>
++
++#define PCP_PI 3.14159265358979323846
++#define PCP_DEG (PCP_PI / 180.0)
++
++/* ---- tuning ---- */
++
++static const double k_speeds[] = { 0.75, 1.5, 3.0, 6.0 };           /* metres a second: slow .. very fast */
++static const char *const k_speed_names[] = { "SLOW", "NORMAL", "FAST", "VERY FAST" };
++static const double k_ranges[] = { 6.0, 12.0, 20.0, 30.0 };          /* metres from where photo mode started */
++#define PCP_BELOW 3.0                    /* how far below the start the camera may go */
++#define PCP_MOUSE_DEG 0.06               /* degrees a mouse count, as gameplay at sensitivity 1 */
++#define PCP_STICK_DEG 110.0              /* degrees a second, stick fully over */
++#define PCP_ROLL_DEG 45.0                /* degrees a second while Z / C is held */
++#define PCP_ZOOM_MIN 0.15                /* view window: about 11 degrees vertically at the game's 70 */
++#define PCP_ZOOM_MAX 1.7
++#define PCP_IDLE_SHOW 0.6                /* seconds without camera input before the panel comes back */
++#define PCP_STATUS_SECONDS 4.0
++
++/* ---- input (input threads) ---- */
++
++enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_Q = 16, K_E = 32, K_Z = 64, K_C = 128, K_FAST = 256, K_SLOW = 512 };
++static volatile LONG s_keys, s_mouse_dx, s_mouse_dy, s_wheel, s_shot_request, s_panel_toggle;
++static volatile LONG s_pad[8];           /* left x, left y, right x, right y (-32768..32767), LT, RT, White, Black (0..255) */
++static volatile LONG s_pad_buttons;      /* X, Y held: edges are taken here */
++static volatile LONG s_active;           /* the photo page is on screen */
++static volatile LONG s_shutter;          /* a photo was taken: the menu plays its sound */
++static volatile LONG64 s_input_at;       /* when camera input last arrived (ms) */
++
++static const PcPhotoHost *s_host;
++
++/* ---- the camera (game thread) ---- */
++
++static SRWLOCK s_lock = SRWLOCK_INIT;
++static int s_started;                    /* the camera has taken the game's pose for this session */
++static double s_pos[3], s_anchor[3], s_yaw, s_pitch, s_roll, s_zoom = 1.0;
++static double s_hand = 1.0, s_up_sign = 1.0;   /* the game's handedness, read from its own matrix */
++static int s_speed = 1, s_range = 1, s_panel_hidden, s_show_weapon;
++static float s_half_y;
++static LONGLONG s_last_qpc;
++static char s_status[160];
++static ULONGLONG s_status_at;
++static int s_waiting_result;
++
++void pc_photo_set_host(const PcPhotoHost *host) { s_host = host; }
++
++int pc_photo_active(void) { return InterlockedCompareExchange(&s_active, 0, 0) != 0; }
++
++static ULONGLONG now_ms(void) { return GetTickCount64(); }
++
++static void note_input(void) { InterlockedExchange64(&s_input_at, (LONG64)now_ms()); }
++
++int pc_photo_panel_hidden(void)
++{
++    int hidden;
++    if (!pc_photo_active()) return 0;
++    AcquireSRWLockShared(&s_lock);
++    hidden = s_panel_hidden;
++    ReleaseSRWLockShared(&s_lock);
++    /* moving the camera clears the picture; the panel comes back when it stops */
++    return hidden || now_ms() - (ULONGLONG)InterlockedCompareExchange64(&s_input_at, 0, 0) < (ULONGLONG)(PCP_IDLE_SHOW * 1000);
++}
++
++static int key_bit(unsigned id)
++{
++    switch (id) {
++    case 0x11: return K_W;
++    case 0x1E: return K_A;
++    case 0x1F: return K_S;
++    case 0x20: return K_D;
++    case 0x10: return K_Q;
++    case 0x12: return K_E;
++    case 0x2C: return K_Z;
++    case 0x2E: return K_C;
++    case 0x2A: case 0x36: return K_FAST;          /* either Shift */
++    case 0x1D: case 0x11D: return K_SLOW;         /* either Ctrl */
++    default: return 0;
++    }
++}
++
++static int f_key(unsigned id, int down, int repeat)
++{
++    const int bit = key_bit(id);
++    if (!pc_photo_active()) {
++        /* a camera key held when photo mode ended is let go */
++        if (!down && bit && (InterlockedCompareExchange(&s_keys, 0, 0) & bit)) { InterlockedAnd(&s_keys, ~bit); return 1; }
++        return 0;
++    }
++    if (bit) {
++        if (down) InterlockedOr(&s_keys, bit); else InterlockedAnd(&s_keys, ~bit);
++        if (down && bit != K_FAST && bit != K_SLOW) note_input();
++        return 1;
++    }
++    if (id == 0x58) {                             /* F12 */
++        if (down && !repeat) InterlockedExchange(&s_shot_request, 1);
++        return 1;
++    }
++    if (id == 0x23) {                             /* H */
++        if (down && !repeat) InterlockedExchange(&s_panel_toggle, 1);
++        return 1;
++    }
++    return 0;
++}
++
++static int f_wheel(int delta)
++{
++    if (!pc_photo_active() || !delta) return 0;
++    InterlockedExchangeAdd(&s_wheel, delta > 0 ? 1 : -1);
++    note_input();
++    return 1;
++}
++
++static int f_motion(long dx, long dy)
++{
++    if (!pc_photo_active()) return 0;
++    if (dx) InterlockedExchangeAdd(&s_mouse_dx, dx);
++    if (dy) InterlockedExchangeAdd(&s_mouse_dy, dy);
++    if (labs(dx) + labs(dy) > 1) note_input();
++    return 1;
++}
++
++static int stick(const uint8_t *p) { return (int16_t)(p[0] | (p[1] << 8)); }
++
++/* The camera's controls are taken out of the report; the d-pad, A, B and START stay for the panel. */
++static int f_report(uint8_t out[20], int pad_present)
++{
++    static const int dead = 7800;                 /* about a quarter of the throw */
++    LONG held, prev;
++    int i, moving = 0;
++    if (!pc_photo_active()) {
++        for (i = 0; i < 8; i++) InterlockedExchange(&s_pad[i], 0);
++        InterlockedExchange(&s_pad_buttons, 0);
++        return 0;
++    }
++    if (!pad_present) return 0;
++    for (i = 0; i < 4; i++) {
++        int v = stick(out + 12 + i * 2);
++        if (v > -dead && v < dead) v = 0;
++        else moving = 1;
++        InterlockedExchange(&s_pad[i], v);
++        out[12 + i * 2] = out[13 + i * 2] = 0;
++    }
++    InterlockedExchange(&s_pad[4], out[10]); InterlockedExchange(&s_pad[5], out[11]);   /* LT RT */
++    InterlockedExchange(&s_pad[6], out[9]); InterlockedExchange(&s_pad[7], out[8]);     /* White Black */
++    if (out[10] > 30 || out[11] > 30 || out[8] > 30 || out[9] > 30) moving = 1;
++    held = (out[6] > 100 ? 1 : 0) | (out[7] > 100 ? 2 : 0);                             /* X Y */
++    prev = InterlockedExchange(&s_pad_buttons, held);
++    if ((held & 2) && !(prev & 2)) InterlockedExchange(&s_shot_request, 1);
++    if ((held & 1) && !(prev & 1)) InterlockedExchange(&s_panel_toggle, 1);
++    for (i = 6; i <= 11; i++) out[i] = 0;          /* X Y Black White LT RT */
++    if (moving) note_input();
++    return 0;
++}
++
++static void f_focus(int focused)
++{
++    if (focused) return;
++    InterlockedExchange(&s_keys, 0);
++    InterlockedExchange(&s_mouse_dx, 0); InterlockedExchange(&s_mouse_dy, 0);
++}
++
++static int capture_wanted(void) { return pc_photo_active(); }
++
++static const PcInputFilter k_filter = { f_key, NULL, f_wheel, f_report, f_focus, f_motion };
++
++void pc_photo_install(void)
++{
++    pc_input_set_filter_slot(3, &k_filter);
++    pc_input_set_capture_query(capture_wanted);
++}
++
++/* ---- the menus ---- */
++
++int pc_photo_allowed(void) { return s_host && s_host->can_start && s_host->can_start(); }
++
++void pc_photo_set_shown(int shown)
++{
++    shown = shown ? 1 : 0;
++    if (InterlockedExchange(&s_active, shown) == shown) return;
++    AcquireSRWLockExclusive(&s_lock);
++    if (shown) { s_started = 0; s_panel_hidden = 0; s_status[0] = 0; s_waiting_result = 0; }
++    ReleaseSRWLockExclusive(&s_lock);
++    InterlockedExchange(&s_keys, 0); InterlockedExchange(&s_wheel, 0);
++    InterlockedExchange(&s_mouse_dx, 0); InterlockedExchange(&s_mouse_dy, 0);
++    InterlockedExchange(&s_shot_request, 0); InterlockedExchange(&s_panel_toggle, 0);
++    InterlockedExchange64(&s_input_at, 0);
++    fprintf(stderr, "[PHOTO] photo mode %s\n", shown ? "on" : "off");
++}
++
++const char *pc_photo_row_label(int row)
++{
++    switch (row) {
++    case PCP_ROW_FOV: return "FIELD OF VIEW";
++    case PCP_ROW_ROLL: return "ROLL";
++    case PCP_ROW_WEAPON: return "WEAPON";
++    case PCP_ROW_SPEED: return "CAMERA SPEED";
++    case PCP_ROW_LIMIT: return "CAMERA RANGE";
++    default: return "";
++    }
++}
++
++size_t pc_photo_row_value(int row, char *out, size_t cap)
++{
++    int n = 0;
++    if (!out || !cap) return 0;
++    AcquireSRWLockShared(&s_lock);
++    switch (row) {
++    case PCP_ROW_FOV:
++        n = s_half_y > 0 ? snprintf(out, cap, "%d", (int)floor(2.0 * atan((double)s_half_y) / PCP_DEG + 0.5)) : snprintf(out, cap, "-");
++        break;
++    case PCP_ROW_ROLL: n = snprintf(out, cap, "%d", (int)floor(s_roll / PCP_DEG + (s_roll >= 0 ? 0.5 : -0.5))); break;
++    case PCP_ROW_WEAPON: n = snprintf(out, cap, "%s", s_show_weapon ? "SHOWN" : "HIDDEN"); break;
++    case PCP_ROW_SPEED: n = snprintf(out, cap, "%s", k_speed_names[s_speed]); break;
++    case PCP_ROW_LIMIT: n = snprintf(out, cap, "%d M", (int)k_ranges[s_range]); break;
++    default: out[0] = 0; break;
++    }
++    ReleaseSRWLockShared(&s_lock);
++    return n < 0 ? 0 : (size_t)n < cap ? (size_t)n : cap - 1;
++}
++
++static double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
++
++int pc_photo_row_change(int row, int dir)
++{
++    int did = 0;
++    if (!dir) return 0;
++    AcquireSRWLockExclusive(&s_lock);
++    switch (row) {
++    case PCP_ROW_FOV: {
++        const double z = clampd(s_zoom * (dir > 0 ? 1.08 : 1.0 / 1.08), PCP_ZOOM_MIN, PCP_ZOOM_MAX);
++        did = z != s_zoom; s_zoom = z;
++        break;
++    }
++    case PCP_ROW_ROLL: {
++        /* five-degree steps, snapping a hand-rolled angle onto the grid */
++        const double steps = floor(s_roll / (5.0 * PCP_DEG) + 0.5) + (dir > 0 ? 1 : -1);
++        s_roll = clampd(steps * 5.0 * PCP_DEG, -90.0 * PCP_DEG, 90.0 * PCP_DEG);
++        did = 1;
++        break;
++    }
++    case PCP_ROW_WEAPON: s_show_weapon = !s_show_weapon; did = 1; break;
++    case PCP_ROW_SPEED: {
++        const int v = s_speed + (dir > 0 ? 1 : -1);
++        if (v >= 0 && v < (int)(sizeof(k_speeds) / sizeof(k_speeds[0]))) { s_speed = v; did = 1; }
++        break;
++    }
++    case PCP_ROW_LIMIT: {
++        const int v = s_range + (dir > 0 ? 1 : -1);
++        if (v >= 0 && v < (int)(sizeof(k_ranges) / sizeof(k_ranges[0]))) { s_range = v; did = 1; }
++        break;
++    }
++    default: break;
++    }
++    ReleaseSRWLockExclusive(&s_lock);
++    return did;
++}
++
++void pc_photo_hide_panel(void) { InterlockedExchange(&s_panel_toggle, 1); }
++
++int pc_photo_panel_put_away(void)
++{
++    int hidden;
++    AcquireSRWLockShared(&s_lock);
++    hidden = s_panel_hidden;
++    ReleaseSRWLockShared(&s_lock);
++    return pc_photo_active() && hidden;
++}
++
++void pc_photo_show_panel(void)
++{
++    AcquireSRWLockExclusive(&s_lock);
++    s_panel_hidden = 0;
++    ReleaseSRWLockExclusive(&s_lock);
++}
++
++int pc_photo_take(void)
++{
++    if (!pc_photo_active()) return 0;
++    InterlockedExchange(&s_shot_request, 1);
++    return 1;
++}
++
++void pc_photo_reset(void)
++{
++    AcquireSRWLockExclusive(&s_lock);
++    s_started = 0;                                 /* the next camera update takes the game's pose again */
++    s_zoom = 1.0;
++    ReleaseSRWLockExclusive(&s_lock);
++}
++
++const char *pc_photo_help(void)
++{
++    static char text[200];
++    AcquireSRWLockExclusive(&s_lock);
++    if (s_waiting_result && s_host && s_host->capture_result) {
++        const int r = s_host->capture_result();
++        if (r != 0) {
++            if (r < 0) snprintf(s_status, sizeof(s_status), "THE PHOTO COULD NOT BE SAVED.");
++            s_waiting_result = 0;
++            s_status_at = now_ms();
++        }
++    }
++    if (s_status[0] && (s_waiting_result || now_ms() - s_status_at < (ULONGLONG)(PCP_STATUS_SECONDS * 1000)))
++        snprintf(text, sizeof(text), "%s", s_status);
++    else if (pc_input_prompt_device() == PC_DEVICE_CONTROLLER)
++        snprintf(text, sizeof(text), "LEFT STICK MOVES, RIGHT STICK LOOKS, TRIGGERS DOWN AND UP, WHITE AND BLACK ZOOM. Y TAKES A PHOTO, X HIDES THIS PANEL.");
++    else
++        snprintf(text, sizeof(text), "WASD MOVES, THE MOUSE LOOKS, Q AND E DOWN AND UP, SHIFT AND CTRL SPEED, WHEEL ZOOMS, Z AND C ROLL. F12 TAKES A PHOTO, H HIDES THIS PANEL.");
++    ReleaseSRWLockExclusive(&s_lock);
++    return text;
++}
++
++/* ---- photos ---- */
++
++/* Pictures\BLACK (RECOMP_PHOTO_DIR moves it), created when missing; a name from the local time, never an old one. */
++static int photo_path(char *out, size_t cap, char *name, size_t name_cap)
++{
++    char dir[MAX_PATH];
++    const char *env = getenv("RECOMP_PHOTO_DIR");
++    SYSTEMTIME t;
++    int i;
++    if (env && *env) {
++        snprintf(dir, sizeof(dir), "%s", env);
++    } else {
++        PWSTR pictures = NULL;
++        char base[MAX_PATH];
++        if (FAILED(SHGetKnownFolderPath(&FOLDERID_Pictures, KF_FLAG_CREATE, NULL, &pictures)) ||
++            !WideCharToMultiByte(CP_ACP, 0, pictures, -1, base, sizeof(base), NULL, NULL)) {
++            CoTaskMemFree(pictures);
++            return 0;
++        }
++        CoTaskMemFree(pictures);
++        snprintf(dir, sizeof(dir), "%s\\BLACK", base);
++    }
++    CreateDirectoryA(dir, NULL);
++    GetLocalTime(&t);
++    for (i = 1; i < 100; i++) {
++        if (i == 1) snprintf(name, name_cap, "BLACK_%04u-%02u-%02u_%02u-%02u-%02u.png", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
++        else snprintf(name, name_cap, "BLACK_%04u-%02u-%02u_%02u-%02u-%02u_%d.png", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, i);
++        snprintf(out, cap, "%s\\%s", dir, name);
++        if (GetFileAttributesA(out) == INVALID_FILE_ATTRIBUTES) return 1;
++    }
++    return 0;
++}
++
++static void shoot(void)
++{
++    char path[MAX_PATH + 64], name[64];
++    if (!s_host || !s_host->capture) return;
++    if (!photo_path(path, sizeof(path), name, sizeof(name))) {
++        snprintf(s_status, sizeof(s_status), "THE PHOTO COULD NOT BE SAVED.");
++        s_status_at = now_ms();
++        return;
++    }
++    s_host->capture(path);
++    snprintf(s_status, sizeof(s_status), "PHOTO SAVED TO PICTURES\\BLACK: %s", name);
++    s_status_at = now_ms();
++    s_waiting_result = 1;
++    InterlockedExchange(&s_shutter, 1);
++    fprintf(stderr, "[PHOTO] photo %s\n", path);
++}
++
++/* ---- the camera ---- */
++
++static void cross3(const double a[3], const double b[3], double out[3])
++{
++    out[0] = a[1] * b[2] - a[2] * b[1];
++    out[1] = a[2] * b[0] - a[0] * b[2];
++    out[2] = a[0] * b[1] - a[1] * b[0];
++}
++
++static double dot3(const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
++
++static int norm3(double v[3])
++{
++    const double l = sqrt(dot3(v, v));
++    if (!(l > 1e-9)) return 0;
++    v[0] /= l; v[1] /= l; v[2] /= l;
++    return 1;
++}
++
++/* The camera's frame from yaw and pitch (world Y is up): forward, and right / up before roll. */
++static void basis(double yaw, double pitch, double f[3], double r[3], double u[3])
++{
++    static const double world_up[3] = { 0, 1, 0 };
++    f[0] = cos(pitch) * sin(yaw); f[1] = sin(pitch); f[2] = cos(pitch) * cos(yaw);
++    cross3(world_up, f, r);
++    if (!norm3(r)) { r[0] = cos(yaw); r[1] = 0; r[2] = -sin(yaw); }
++    r[0] *= s_hand; r[1] *= s_hand; r[2] *= s_hand;
++    cross3(f, r, u);
++    norm3(u);
++    u[0] *= s_up_sign; u[1] *= s_up_sign; u[2] *= s_up_sign;
++}
++
++static void start(const float m[4][3])
++{
++    double f[3] = { m[2][0], m[2][1], m[2][2] }, r[3], u[3], gr[3] = { m[0][0], m[0][1], m[0][2] }, gu[3] = { m[1][0], m[1][1], m[1][2] };
++    int k;
++    if (!norm3(f)) { f[0] = 0; f[1] = 0; f[2] = 1; }
++    s_yaw = atan2(f[0], f[2]);
++    s_pitch = asin(clampd(f[1], -1.0, 1.0));
++    s_hand = 1.0; s_up_sign = 1.0;
++    basis(s_yaw, s_pitch, f, r, u);
++    if (dot3(r, gr) < 0) s_hand = -1.0;            /* the game's right is the other cross product */
++    basis(s_yaw, s_pitch, f, r, u);
++    if (dot3(u, gu) < 0) s_up_sign = -1.0;
++    s_roll = 0;
++    for (k = 0; k < 3; k++) s_pos[k] = s_anchor[k] = m[3][k];
++    s_started = 1;
++    fprintf(stderr, "[PHOTO] camera from the game's at %.2f %.2f %.2f, yaw %.1f pitch %.1f (hand %+.0f, up %+.0f, game up y %.2f)\n",
++            s_pos[0], s_pos[1], s_pos[2], s_yaw / PCP_DEG, s_pitch / PCP_DEG, s_hand, s_up_sign, (double)m[1][1]);
++}
++
++static double axis(LONG v) { return v / 32767.0; }
++
++int pc_photo_camera(float m[4][3], float half_y)
++{
++    LARGE_INTEGER q, freq;
++    double dt, f[3], r[3], u[3], move[3] = { 0, 0, 0 }, speed, rr[3], ru[3], dx, dz, dist;
++    LONG keys, mdx, mdy, wheel;
++    int k;
++    if (!pc_photo_active()) return 0;
++    QueryPerformanceCounter(&q);
++    QueryPerformanceFrequency(&freq);
++    AcquireSRWLockExclusive(&s_lock);
++    s_half_y = half_y;
++    if (!s_started) { start(m); s_last_qpc = q.QuadPart; }
++    dt = clampd((double)(q.QuadPart - s_last_qpc) / (double)freq.QuadPart, 0.0, 0.1);
++    s_last_qpc = q.QuadPart;
++    if (InterlockedExchange(&s_panel_toggle, 0)) s_panel_hidden = !s_panel_hidden;
++
++    /* looking: the mouse in counts, the right stick in degrees a second */
++    keys = InterlockedCompareExchange(&s_keys, 0, 0);
++    mdx = InterlockedExchange(&s_mouse_dx, 0);
++    mdy = InterlockedExchange(&s_mouse_dy, 0);
++    s_yaw += s_hand * (mdx * PCP_MOUSE_DEG * PCP_DEG + axis(s_pad[2]) * PCP_STICK_DEG * PCP_DEG * dt);
++    s_pitch += -mdy * PCP_MOUSE_DEG * PCP_DEG + axis(s_pad[3]) * PCP_STICK_DEG * PCP_DEG * dt;
++    s_pitch = clampd(s_pitch, -89.0 * PCP_DEG, 89.0 * PCP_DEG);
++    s_yaw = fmod(s_yaw, 2.0 * PCP_PI);
++    if (keys & K_Z) s_roll -= PCP_ROLL_DEG * PCP_DEG * dt;
++    if (keys & K_C) s_roll += PCP_ROLL_DEG * PCP_DEG * dt;
++    s_roll = clampd(s_roll, -90.0 * PCP_DEG, 90.0 * PCP_DEG);
++
++    /* zoom: wheel notches, White / Black held */
++    wheel = InterlockedExchange(&s_wheel, 0);
++    s_zoom *= pow(1.08, -wheel);
++    s_zoom *= exp(((s_pad[6] - s_pad[7]) / 255.0) * 0.9 * dt);
++    s_zoom = clampd(s_zoom, PCP_ZOOM_MIN, PCP_ZOOM_MAX);
++
++    /* moving: along where the camera looks, sideways level with the ground, straight up and down */
++    basis(s_yaw, s_pitch, f, r, u);
++    {
++        const double fwd = ((keys & K_W) ? 1 : 0) - ((keys & K_S) ? 1 : 0) + axis(s_pad[1]);
++        const double side = ((keys & K_D) ? 1 : 0) - ((keys & K_A) ? 1 : 0) + axis(s_pad[0]);
++        const double vert = ((keys & K_E) ? 1 : 0) - ((keys & K_Q) ? 1 : 0) + (s_pad[5] - s_pad[4]) / 255.0;
++        double flat[3] = { r[0], 0, r[2] };
++        if (!norm3(flat)) { flat[0] = r[0]; flat[2] = r[2]; }
++        for (k = 0; k < 3; k++) move[k] = f[k] * fwd + flat[k] * side;
++        move[1] += vert;
++    }
++    speed = k_speeds[s_speed] * ((keys & K_FAST) ? 3.0 : 1.0) * ((keys & K_SLOW) ? 0.25 : 1.0);
++    for (k = 0; k < 3; k++) s_pos[k] += clampd(move[k], -1.5, 1.5) * speed * dt;
++
++    /* stay near where photo mode started: the level has no outside */
++    dx = s_pos[0] - s_anchor[0]; dz = s_pos[2] - s_anchor[2];
++    dist = sqrt(dx * dx + dz * dz);
++    if (dist > k_ranges[s_range]) {
++        s_pos[0] = s_anchor[0] + dx * k_ranges[s_range] / dist;
++        s_pos[2] = s_anchor[2] + dz * k_ranges[s_range] / dist;
++    }
++    s_pos[1] = clampd(s_pos[1], s_anchor[1] - PCP_BELOW, s_anchor[1] + k_ranges[s_range] * 0.5);
++
++    if (InterlockedExchange(&s_shot_request, 0)) shoot();
++
++    /* roll turns right and up about forward */
++    for (k = 0; k < 3; k++) {
++        rr[k] = r[k] * cos(s_roll) + u[k] * sin(s_roll);
++        ru[k] = u[k] * cos(s_roll) - r[k] * sin(s_roll);
++    }
++    for (k = 0; k < 3; k++) {
++        m[0][k] = (float)rr[k]; m[1][k] = (float)ru[k]; m[2][k] = (float)f[k]; m[3][k] = (float)s_pos[k];
++    }
++    ReleaseSRWLockExclusive(&s_lock);
++    return 1;
++}
++
++int pc_photo_weapon_hidden(void)
++{
++    int hidden;
++    if (!pc_photo_active()) return 0;
++    AcquireSRWLockShared(&s_lock);
++    hidden = !s_show_weapon;
++    ReleaseSRWLockShared(&s_lock);
++    return hidden;
++}
++
++float pc_photo_zoom(void)
++{
++    double z;
++    if (!pc_photo_active()) return 1.0f;
++    AcquireSRWLockShared(&s_lock);
++    z = s_zoom;
++    ReleaseSRWLockShared(&s_lock);
++    return (float)z;
++}
++
++int pc_photo_shutter(void) { return InterlockedExchange(&s_shutter, 0) != 0; }
++
++#else
++void pc_photo_set_host(const PcPhotoHost *host) { (void)host; }
++void pc_photo_install(void) {}
++int pc_photo_allowed(void) { return 0; }
++void pc_photo_set_shown(int shown) { (void)shown; }
++int pc_photo_active(void) { return 0; }
++int pc_photo_panel_hidden(void) { return 0; }
++const char *pc_photo_row_label(int row) { (void)row; return ""; }
++size_t pc_photo_row_value(int row, char *out, size_t cap) { (void)row; if (out && cap) out[0] = 0; return 0; }
++int pc_photo_row_change(int row, int dir) { (void)row; (void)dir; return 0; }
++int pc_photo_take(void) { return 0; }
++void pc_photo_hide_panel(void) {}
++int pc_photo_panel_put_away(void) { return 0; }
++void pc_photo_show_panel(void) {}
++void pc_photo_reset(void) {}
++const char *pc_photo_help(void) { return ""; }
++int pc_photo_camera(float m[4][3], float half_y) { (void)m; (void)half_y; return 0; }
++float pc_photo_zoom(void) { return 1.0f; }
++int pc_photo_weapon_hidden(void) { return 0; }
++int pc_photo_shutter(void) { return 0; }
++#endif
+diff --git a/src/video/pc_photo.h b/src/video/pc_photo.h
+new file mode 100644
+index 0000000..2fdeaa4
+--- /dev/null
++++ b/src/video/pc_photo.h
+@@ -0,0 +1,84 @@
++/*
++ * pc_photo.h -- photo mode: a free camera over the paused game, and photos of it.
++ *
++ * The native menus show a page marked `photo` (PhotoMode, opened from the pause menu) as a small panel over the
++ * game picture instead of a full page, and photo mode is on while it is shown. Photo mode then takes the camera
++ * controls ahead of the menus -- the panel keeps the arrows, Enter and Escape, the d-pad, A and B:
++ *
++ *   keyboard and mouse   WASD move, mouse look, Q / E down / up, Shift faster, Ctrl slower, wheel field of view,
++ *                        Z / C roll, F12 takes a photo, H hides the panel
++ *   controller           left stick move, right stick look, triggers down / up, White / Black field of view,
++ *                        Y takes a photo, X hides the panel
++ *
++ * The camera starts where the game's camera is and stays within a radius of that point and a band of heights
++ * around it, so it cannot leave the built level. The game project owns guest memory: it asks pc_photo_camera for
++ * the camera matrix every world-camera update and draws with it, scales its view window by pc_photo_zoom, and
++ * writes the photos (PcPhotoHost).
++ *
++ * Threads: input filters on the input threads, pc_photo_camera on the game thread, the menu services on the game
++ * thread. Shared state is a lock and interlocked words.
++ */
++#ifndef XBOXRECOMP_PC_PHOTO_H
++#define XBOXRECOMP_PC_PHOTO_H
++
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct PcPhotoHost {
++    /* Photo mode may start now (a paused mission, no scripted camera). */
++    int (*can_start)(void);
++    /* Write the next finished frame to this file (.png). */
++    void (*capture)(const char *path);
++    /* The last capture: 1 written, 0 still pending, -1 failed. */
++    int (*capture_result)(void);
++} PcPhotoHost;
++
++void pc_photo_set_host(const PcPhotoHost *host);
++/* Registers the input filter and the pointer capture with pc_input. Once, by the presenter. */
++void pc_photo_install(void);
++
++/* ---- the menus (game thread) ---- */
++
++int pc_photo_allowed(void);
++/* The photo page is shown (1) or not (0): photo mode follows it. */
++void pc_photo_set_shown(int shown);
++int pc_photo_active(void);
++/* The panel is not drawn: the player put it away (H, X, HIDE PANEL) or is moving the camera. */
++int pc_photo_panel_hidden(void);
++/* Put away by the player, and brought back. */
++void pc_photo_hide_panel(void);
++int pc_photo_panel_put_away(void);
++void pc_photo_show_panel(void);
++
++/* The panel's rows. Values are short UTF-8; change applies dir -1 / +1 and returns 1 when something changed. */
++enum { PCP_ROW_FOV, PCP_ROW_ROLL, PCP_ROW_WEAPON, PCP_ROW_SPEED, PCP_ROW_LIMIT, PCP_ROW_COUNT };
++const char *pc_photo_row_label(int row);
++size_t pc_photo_row_value(int row, char *out, size_t cap);
++int pc_photo_row_change(int row, int dir);
++/* Panel actions: take a photo; put the camera back where the game had it. */
++int pc_photo_take(void);
++void pc_photo_reset(void);
++/* What the panel says under its rows: the controls, or what the last photo did. */
++const char *pc_photo_help(void);
++/* 1 once after each photo (the menu plays its sound for it). */
++int pc_photo_shutter(void);
++
++/* ---- the game (game thread) ---- */
++
++/* The world camera as the game produced it this update: rows right, up, at (forward), position. While photo mode
++ * is on, replaces them with the photo camera and returns 1. `half_y` is the camera's tan(vertical FOV / 2) after
++ * pc_photo_zoom was applied, for the panel. */
++int pc_photo_camera(float m[4][3], float half_y);
++/* The first-person weapon is left out of the picture (the WEAPON row; hidden unless the player shows it). */
++int pc_photo_weapon_hidden(void);
++/* The view-window multiplier for the field of view: 1 = the game's, less is narrower. */
++float pc_photo_zoom(void);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* XBOXRECOMP_PC_PHOTO_H */
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
 index 0000000..b7b77eb

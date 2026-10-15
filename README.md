@@ -155,6 +155,13 @@ and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 game and back up all three data directories before moving or removing the
 project folder if you want to keep your progress.
 
+**Pause > PHOTO MODE** freezes the mission and gives a free camera with a small panel in the
+game's menu style: move with WASD or the left stick, look with the mouse or right stick, zoom, roll,
+and take photos with F12 or Y. Photos are PNG files in `Pictures\BLACK` at the internal resolution,
+without the HUD, menus or (unless shown) the weapon. The camera stays within a chosen range of where
+photo mode started, so it cannot leave the built level. See [Photo mode](docs/photo-mode.md) and the
+[photo tests](tests/photo/README.md).
+
 The launcher's **Game > Menu language** setting chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
