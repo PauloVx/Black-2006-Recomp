@@ -267,6 +267,8 @@
   "More samples and a wider radius for ambient occlusion, at more GPU cost.": "Mais amostras e um raio maior para a oclusão, com mais custo de GPU.",
   "REFLECTIONS": "REFLEXOS",
   "Reflects the scene on weapons and glass instead of BLACK's low-resolution maps. Original keeps the maps.": "Reflete a cena em armas e vidros no lugar dos mapas de baixa resolução do BLACK. Original mantém os mapas.",
+  "RAY TRACING (EXPERIMENTAL)": "RAY TRACING (EXPERIMENTAL)",
+  "Shadows from characters and props, ambient occlusion, bounce light and reflections on the GPU's ray tracing cores. Needs a graphics card with DirectX Raytracing; the reflections need Reflections above Original.": "Sombras de personagens e objetos, oclusão de ambiente, luz rebatida e reflexos nos núcleos de ray tracing da GPU. Exige uma placa de vídeo com DirectX Raytracing; os reflexos exigem Reflexos acima de Original.",
   "KEY BINDINGS": "ATALHOS DE TECLAS",
   "The keys and mouse buttons for each action.": "As teclas e botões do mouse de cada ação.",
   "DEVICES": "DISPOSITIVOS",

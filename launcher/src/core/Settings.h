@@ -52,6 +52,7 @@ struct Settings {
     std::string aoMethod = "off";
     std::string aoQuality = "high";
     std::string reflections = "high";
+    std::string rayTracing = "off";  // experimental; the game checks the GPU
 
     // Input
     std::string inputMode = "auto";
@@ -78,6 +79,7 @@ inline constexpr std::array<std::string_view, 4> kSteps = {"off", "low", "medium
 inline constexpr std::array<std::string_view, 5> kAoMethods = {"off", "ssao", "hbao", "hbao_plus", "gtao"};
 inline constexpr std::array<std::string_view, 4> kAoQualities = {"low", "medium", "high", "ultra"};
 inline constexpr std::array<std::string_view, 5> kReflections = {"original", "low", "medium", "high", "ultra"};
+inline constexpr std::array<std::string_view, 2> kOnOff = {"off", "on"};
 inline constexpr std::array<std::string_view, 3> kSilverWeapons = {"native", "force-on", "force-off"};
 inline constexpr std::array<std::string_view, 3> kInputModes = {"auto", "keyboard_mouse", "controller"};
 inline constexpr std::array<std::string_view, 6> kLanguages = {"en-US", "pt-BR", "es", "fr", "de", "it"};

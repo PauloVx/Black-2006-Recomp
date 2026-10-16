@@ -270,6 +270,13 @@ std::vector<SettingsFlow::Option> SettingsFlow::graphicsOptions() {
                          {"medium", tr("MEDIUM")},
                          {"high", tr("HIGH")},
                          {"ultra", tr("ULTRA")}}));
+#if defined(_WIN32)
+    rows.push_back(pick(tr("RAY TRACING (EXPERIMENTAL)"),
+                        tr("Shadows from characters and props, ambient occlusion, bounce light and reflections on the "
+                           "GPU's ray tracing cores. Needs a graphics card with DirectX Raytracing; the reflections "
+                           "need Reflections above Original."),
+                        s.rayTracing, {{"off", tr("OFF")}, {"on", tr("ON")}}));
+#endif
     return rows;
 }
 
