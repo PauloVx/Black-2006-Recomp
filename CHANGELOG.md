@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**Debug overlay.** Insert shows a panel in the pause menu's style over the top-left corner: frame rate, frame times
+(average and worst), the game's own frame rate, GPU time and draws, latency (from the game starting a frame to the
+screen), the resolution drawn and shown, anti-aliasing, ray tracing, CPU, memory and graphics memory, and the
+player's position and speed. Insert again hides it; `RECOMP_DEBUG_OVERLAY=1` shows it from the start.
+
 ## 0.1.0-alpha.3 — 2026-10-16
 
 **DLSS and DLAA.** On an NVIDIA RTX graphics card, anti-aliasing gains DLAA (DLSS at the internal resolution) and

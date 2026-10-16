@@ -2871,6 +2871,7 @@ static void black_mouse_look(uint32_t camera)
  * out of their hands). Any of them within two seconds of the player firing is the player's: a kill, or a hit.
  */
 #include "pc_crosshair.h"
+#include "pc_debug.h"
 
 #define BLACK_SOLDIER_VTABLE 0x0028C1E8u
 #define BLACK_SOLDIERS 96u
@@ -2933,6 +2934,8 @@ static void black_crosshair_tick(uint32_t camera)
             speed = (float)(sqrt((double)dx * dx + 0.5 * (double)dy * dy + (double)dz * dz) / dt);
         }
         lx = x; ly = y; lz = z; last = now; have_last = 1;
+        pc_debug_game_row(0, "POSITION", "%.1f   %.1f   %.1f", x, y, z);
+        pc_debug_game_row(1, "SPEED", "%.1f", speed);
     }
     if (black_pc_ram_span(0x002D12CCu, 4u) && black_pc_ram_span(stats_ptr = GUEST32(0x002D12CCu), 4u) &&
         black_pc_ram_span(GUEST32(stats_ptr), 0x4Au))

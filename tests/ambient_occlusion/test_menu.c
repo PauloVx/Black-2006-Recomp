@@ -1317,6 +1317,35 @@ static int cmd_render(int argc, char **argv)
     return 0;
 }
 
+/* The debug overlay's panel: sized by its rows, drawn opaque enough to read, nothing without a font. With no game files
+ * a plain font (every printable character a filled 6 x 8 cell) stands in. */
+static void test_panel(void)
+{
+    static const char *const labels[] = { "FPS", "ANTI-ALIASING" }, *const values[] = { "60", "DLSS QUALITY" };
+    const uint32_t *pixels = NULL;
+    unsigned w = 0, h = 0, w1 = 0, h1 = 0, x, opaque = 0;
+    if (!g_have_files) {
+        static uint32_t atlas[8 * 8];
+        static PcMenuGlyph glyphs[95];
+        PcMenuFont f;
+        for (x = 0; x < 64; x++) atlas[x] = 0xFFFFFFFFu;
+        for (x = 0; x < 95; x++) {
+            glyphs[x].code = (uint16_t)(32 + x); glyphs[x].u = 0; glyphs[x].v = 0;
+            glyphs[x].w = x ? 6.0f : 0.0f; glyphs[x].h = 8.0f; glyphs[x].advance = 7.0f;
+        }
+        f.pixels = atlas; f.width = 8; f.height = 8; f.nominal = 8.0f; f.glyphs = glyphs; f.count = 95;
+        CHECK(pc_menu_set_font(PCM_FONT_SMALL, &f), "a plain font registers");
+    }
+    CHECK(pc_menu_panel("DEBUG", labels, values, 1, 1.0f, &pixels, &w1, &h1) && pixels && w1 >= 180 && h1 > 20,
+          "a one-row panel: %ux%u", w1, h1);
+    CHECK(pc_menu_panel("DEBUG", labels, values, 2, 1.0f, &pixels, &w, &h) && h > h1 && w >= w1,
+          "a longer value and another row make it wider and taller: %ux%u", w, h);
+    for (x = 0; pixels && x < w * h; x++) opaque += (pixels[x] >> 24) >= 0xC0u;
+    CHECK(opaque > w * h / 2, "the box is mostly opaque: %u of %u", opaque, w * h);
+    CHECK(pc_menu_panel("DEBUG", labels, values, 2, 2.0f, &pixels, &w1, &h1) && w1 >= 2 * w - 2 && h1 >= 2 * h - 2,
+          "scale 2 doubles it: %ux%u", w1, h1);
+}
+
 int main(int argc, char **argv)
 {
     unsigned i, k;
@@ -1355,6 +1384,7 @@ int main(int argc, char **argv)
     if (g_have_files) test_objectives();
     if (g_have_files) test_render();
     if (g_have_files) test_incremental();
+    test_panel();
     if (g_video_ini[0]) DeleteFileA(g_video_ini);
     printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
