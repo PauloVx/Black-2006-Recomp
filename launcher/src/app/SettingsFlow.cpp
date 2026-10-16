@@ -215,6 +215,13 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                     {}});
     rows.push_back(pick(tr("MOTION BLUR"), tr("Original keeps BLACK's motion blur; off removes only that effect."),
                         s.motionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
+    rows.push_back(pick(tr("CROSSHAIR"),
+                        tr("A crosshair around the game's dot that opens as you move and fire. Original keeps the dot "
+                           "alone."),
+                        s.crosshair,
+                        {{"original", tr("ORIGINAL")}, {"cross", tr("CROSS")}, {"t", tr("T-SHAPE")}, {"circle", tr("CIRCLE")}}));
+    rows.push_back(pick(tr("HIT MARKERS"), tr("A mark on the crosshair when a shot of yours kills an enemy."), s.hitmarkers,
+                        {{"off", tr("OFF")}, {"on", tr("ON")}}));
     return rows;
 }
 

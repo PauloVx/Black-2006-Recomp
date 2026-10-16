@@ -13,11 +13,12 @@ set(runtime_post "${XBOXRECOMP_DIR}/src/nv2a/kelvin/kelvin_gpu_post.inc")
 
 add_executable(ao-video-test test_video.c
     "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c")
+add_executable(ao-crosshair-test test_crosshair.c "${runtime_video}/pc_crosshair.c" "${runtime_video}/pc_video.c")
 add_executable(ao-menu-test test_menu.c
     "${runtime_video}/pc_menu.c" "${runtime_video}/pc_menu_assets.c"
     "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c"
     "${runtime_input}/pc_controls.c" "${runtime_video}/pc_photo.c")
-foreach(target ao-video-test ao-menu-test)
+foreach(target ao-video-test ao-menu-test ao-crosshair-test)
     target_include_directories(${target} PRIVATE "${runtime_video}" "${runtime_input}")
     target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)
     target_link_libraries(${target} PRIVATE gdi32 user32 shell32 ole32)
@@ -76,6 +77,7 @@ set_property(TARGET ao-focus-gap-test PROPERTY C_STANDARD_REQUIRED ON)
 enable_testing()
 add_test(NAME ao-video COMMAND ao-video-test)
 add_test(NAME ao-menu COMMAND ao-menu-test)
+add_test(NAME ao-crosshair COMMAND ao-crosshair-test)
 add_test(NAME ao-warp COMMAND ao-warp-test "${runtime_post}")
 add_test(NAME ao-post-order COMMAND ao-post-order-test)
 add_test(NAME ao-scene-retry COMMAND ao-scene-retry-test)

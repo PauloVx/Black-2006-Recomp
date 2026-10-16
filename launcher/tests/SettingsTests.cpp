@@ -62,9 +62,11 @@ TEST_CASE("video.ini round-trips and skips what the game would skip") {
     settings.verticalFov = 87.5;
     settings.reflections = "ultra";
     settings.rayTracing = "on";
+    settings.crosshair = "circle";
+    settings.hitmarkers = "off";
     settings.vsync = false;
     Settings read;
-    CHECK(applyVideoIni(read, videoIni(settings)) == 19);
+    CHECK(applyVideoIni(read, videoIni(settings)) == 21);
     CHECK(videoIni(read) == videoIni(settings));
 
     Settings legacy;

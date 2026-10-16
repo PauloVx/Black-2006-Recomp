@@ -235,6 +235,8 @@ std::string videoIni(const Settings& s) {
     line("ao_quality", s.aoQuality);
     line("reflections", s.reflections);
     line("ray_tracing", s.rayTracing);
+    line("crosshair", s.crosshair);
+    line("hitmarkers", s.hitmarkers);
     return text;
 }
 
@@ -321,6 +323,10 @@ int applyVideoIni(Settings& s, std::string_view text) {
             pick(choices::kReflections, s.reflections);
         } else if (key == "ray_tracing") {
             pick(choices::kOnOff, s.rayTracing);
+        } else if (key == "crosshair") {
+            pick(choices::kCrosshairs, s.crosshair);
+        } else if (key == "hitmarkers") {
+            pick(choices::kOnOff, s.hitmarkers);
         } else if (key == "ssao") {  // the old single setting: method SSAO at a quality, or off
             if (value == "off") {
                 s.aoMethod = "off";
@@ -362,6 +368,8 @@ std::string settingsJson(const Settings& s) {
     json["AoQuality"] = s.aoQuality;
     json["Reflections"] = s.reflections;
     json["RayTracing"] = s.rayTracing;
+    json["Crosshair"] = s.crosshair;
+    json["HitMarkers"] = s.hitmarkers;
     json["WindowMode"] = s.windowMode;
     json["ScaleMode"] = s.scaleMode;
     json["PresentFilter"] = s.presentFilter;
@@ -418,6 +426,8 @@ Settings settingsFromJson(std::string_view text) {
     readField(json, "AoQuality", s.aoQuality, among(choices::kAoQualities));
     readField(json, "Reflections", s.reflections, among(choices::kReflections));
     readField(json, "RayTracing", s.rayTracing, among(choices::kOnOff));
+    readField(json, "Crosshair", s.crosshair, among(choices::kCrosshairs));
+    readField(json, "HitMarkers", s.hitmarkers, among(choices::kOnOff));
     readField(json, "WindowMode", s.windowMode, among(choices::kWindowModes));
     readField(json, "ScaleMode", s.scaleMode, among(choices::kScaleModes));
     readField(json, "PresentFilter", s.presentFilter, among(choices::kFilters));
