@@ -993,19 +993,22 @@ static void black_photo_camera(uint32_t camera)
 /* BEGIN BLACK_SPLITSCREEN
  * Split-screen, first step (RECOMP_SPLITSCREEN=1, docs/plans/split-screen-coop.md): the world is drawn twice a
  * frame. 1EE820(player) draws it through the world camera renderer[2D67F4]+D450 (camera begin 1762B0 with index 1,
- * end 1732A0); its callers then draw the HUD through the 2D camera. Player one's world goes into the top half. D2F40
- * then runs again with player two's free camera (pc_split.c) in place of the frame matrices, as photo mode does, at
- * the native lens so player one's aim zoom stays theirs, and the world is drawn into the bottom half. A last D2F40
- * puts player one's camera back for the rest of the frame. Each view begins at a mark on the D3D device's push
- * pointer ([27BFF8]+0), so the GPU switches at that command (kelvin_mark_view). Views keep the picture's width and
- * show the middle of its height; the HUD and player one's weapon are scaled into player one's half, and player two
- * sees no weapon. A scripted camera (BLACK_PC_FOV) is drawn whole. */
+ * end 1732A0), the game's own effects included; its callers clear first (268880) and draw the HUD through the 2D
+ * camera after. Each world is a whole frame of its own: the GPU draws it on surfaces of that view's, at its share of
+ * the screen, runs the PC's effects on it with that view's history and copies it into its half (kelvin_mark_view,
+ * at the D3D device's push pointer [27BFF8]+0, so the switch lands at that command). The camera's aspect (+74) is
+ * doubled for D2F40, so a view keeps the horizontal field of view and shows half the vertical. Player one's world
+ * comes first; D2F40 then runs again with player two's free camera (pc_split.c) in place of the frame matrices, as
+ * photo mode does, at the native lens so player one's aim zoom stays theirs, and a last D2F40 puts player one's
+ * camera back. The HUD and player one's weapon are scaled into player one's half; player two sees no weapon. The
+ * camera-motion blur keeps one camera history, so it is off. A scripted camera (BLACK_PC_FOV) is drawn whole. */
 #include "pc_split.h"
 extern void sub_001EE820_gen(void);
-extern int kelvin_mark_view(uint32_t va, int mode, int x0, int y0, int x1, int y1);
+extern int kelvin_mark_view(uint32_t va, int mode, int slot, int x0, int y0, int x1, int y1);
+extern void sub_00268880(void);
 extern uint32_t xbox_PhysicalAddressOf(uint32_t va);
 extern RECOMP_TLS uint32_t g_ebp, g_seh_ebp;
-enum { BLACK_VIEW_CROP = 1, BLACK_VIEW_FIT = 2 };     /* KG_VIEW_* (kelvin_gpu.h) */
+enum { BLACK_VIEW_FRAME = 1, BLACK_VIEW_FIT = 2 };    /* KG_VIEW_* (kelvin_gpu.h) */
 
 static int black_split_pass;                          /* 2 while player two's camera and world are produced */
 
@@ -1060,7 +1063,7 @@ void sub_000D2F40(void)
     const uint32_t camera = g_edi;
     const unsigned caller_csr = _mm_getcsr();
     fenv_t caller_environment;
-    uint32_t saved_window = 0, new_window = 0;
+    uint32_t saved_window = 0, new_window = 0, split_aspect = 0, split_aspect_doubled = 0;
     int adjusted = 0;
     /* Host parsing/math/logging uses a masked nearest environment, then puts
      * every caller control/status bit back before entering the guest producer.
@@ -1124,11 +1127,22 @@ void sub_000D2F40(void)
         memcpy(&scale, &black_vm_scale_bits, 4);
         scale = black_split_pass == 2 ? 0.0f : scale * 0.5f;
         memcpy(&black_vm_scale_bits, &scale, 4);
+        split_aspect = GUEST32(camera + 0x74u);
+        if (split_aspect > 0u && split_aspect < 0x7F000000u) {
+            float aspect;
+            memcpy(&aspect, &split_aspect, 4);
+            aspect *= 2.0f;
+            memcpy(&split_aspect_doubled, &aspect, 4);
+        } else {
+            split_aspect = 0u;
+        }
     }
     fesetenv(&caller_environment);
     _mm_setcsr(caller_csr);
     if (adjusted) GUEST32(camera + 0x70u) = new_window;
+    if (split_aspect) GUEST32(camera + 0x74u) = split_aspect_doubled;
     sub_000D2F40_gen();
+    if (split_aspect) GUEST32(camera + 0x74u) = split_aspect;
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
     black_ao_camera_publish(camera);
     black_photo_camera(camera);
@@ -1137,7 +1151,7 @@ void sub_000D2F40(void)
 /* END BLACK_PC_FOV */
 
 /* BEGIN BLACK_SPLITSCREEN (the passes) */
-static void black_split_mark(int view, int mode)
+static void black_split_mark(int view, int mode, int slot)
 {
     uint32_t device, physical;
     int r[4];
@@ -1147,7 +1161,26 @@ static void black_split_mark(int view, int mode)
     physical = xbox_PhysicalAddressOf(GUEST32(device));
     if (physical >= 0x08000000u) return;
     pc_split_rect(view, r);
-    kelvin_mark_view(0x80000000u + physical, mode, r[0], r[1], r[2], r[3]);
+    kelvin_mark_view(0x80000000u + physical, mode, slot, r[0], r[1], r[2], r[3]);
+}
+
+/* The clear 20BAC0 makes before the world, for a view's own frame: Clear(0, NULL, 0xF3, 0, 1.0f, 0). */
+static void black_split_clear(void)
+{
+    static const uint32_t args[6] = { 0u, 0u, 0xF3u, 0u, 0x3F800000u, 0u };
+    const uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebx = g_ebx, s_esi = g_esi, s_edi = g_edi;
+    const uint32_t s_esp = g_esp, s_ebp = g_ebp, s_seh = g_seh_ebp;
+    const unsigned csr = _mm_getcsr();
+    uint32_t sp = (s_esp - 0x200u) & ~15u;
+    int i;
+    if (s_esp < 0x20000u || !black_pc_ram_span(sp - 0x1Cu, 0x21Cu)) return;
+    for (i = 5; i >= 0; --i) { sp -= 4u; GUEST32(sp) = args[i]; }
+    sp -= 4u; GUEST32(sp) = 0x0020BADFu;
+    g_esp = sp;
+    sub_00268880();
+    g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebx = s_ebx; g_esi = s_esi; g_edi = s_edi;
+    g_esp = s_esp; g_ebp = s_ebp; g_seh_ebp = s_seh;
+    _mm_setcsr(csr);
 }
 
 /* D2F40 for the world camera, called the way 2033A0 calls it; player two's at the native lens (2888C8). */
@@ -1182,16 +1215,18 @@ void sub_001EE820(void)
     }
     ret = GUEST32(esp);
     player = GUEST32(esp + 4u);
-    black_split_mark(PCS_VIEW_P1, BLACK_VIEW_CROP);
+    black_split_mark(PCS_VIEW_P1, BLACK_VIEW_FRAME, 1);
+    black_split_clear();
     sub_001EE820_gen();
     g_esp = esp; GUEST32(esp) = ret; GUEST32(esp + 4u) = player;
     g_ebx = ebx; g_esi = esi; g_edi = edi; g_ebp = ebp; g_seh_ebp = seh;
     _mm_setcsr(csr);
     black_split_produce(camera, 2);
-    black_split_mark(PCS_VIEW_P2, BLACK_VIEW_CROP);
+    black_split_mark(PCS_VIEW_P2, BLACK_VIEW_FRAME, 2);
+    black_split_clear();
     sub_001EE820_gen();
     black_split_produce(camera, 1);
-    black_split_mark(PCS_VIEW_HUD, BLACK_VIEW_FIT);
+    black_split_mark(PCS_VIEW_HUD, BLACK_VIEW_FIT, 0);
 }
 /* END BLACK_SPLITSCREEN */
 
@@ -1578,8 +1613,9 @@ void sub_00168A30(void)
      * producer's controls or sticky flags, including the first call. */
     _mm_setcsr(caller_csr);
     sub_00168A30_gen();
-    /* photo mode keeps photos sharp: the camera it turns is not a fast look */
-    if (black_motion_blur_off || pc_photo_active())
+    /* photo mode keeps photos sharp: the camera it turns is not a fast look; split-screen's two cameras would each
+     * blur against the other's (BLACK_SPLITSCREEN) */
+    if (black_motion_blur_off || pc_photo_active() || pc_split_enabled())
         GUEST32(effect + 0x20u) = 0u;
 }
 /* END BLACK_PC_MOTION_BLUR */
