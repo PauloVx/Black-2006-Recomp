@@ -990,6 +990,49 @@ static void black_photo_camera(uint32_t camera)
 }
 /* END BLACK_PHOTO_MODE */
 
+/* BEGIN BLACK_SPLITSCREEN
+ * Split-screen, first step (RECOMP_SPLITSCREEN=1, docs/plans/split-screen-coop.md): the world is drawn twice a
+ * frame. 1EE820(player) draws it through the world camera renderer[2D67F4]+D450 (camera begin 1762B0 with index 1,
+ * end 1732A0); its callers then draw the HUD through the 2D camera. Player one's world goes into the top half. D2F40
+ * then runs again with player two's free camera (pc_split.c) in place of the frame matrices, as photo mode does, at
+ * the native lens so player one's aim zoom stays theirs, and the world is drawn into the bottom half. A last D2F40
+ * puts player one's camera back for the rest of the frame. Each view begins at a mark on the D3D device's push
+ * pointer ([27BFF8]+0), so the GPU switches at that command (kelvin_mark_view). Views keep the picture's width and
+ * show the middle of its height; the HUD and player one's weapon are scaled into player one's half, and player two
+ * sees no weapon. A scripted camera (BLACK_PC_FOV) is drawn whole. */
+#include "pc_split.h"
+extern void sub_001EE820_gen(void);
+extern int kelvin_mark_view(uint32_t va, int mode, int x0, int y0, int x1, int y1);
+extern uint32_t xbox_PhysicalAddressOf(uint32_t va);
+extern RECOMP_TLS uint32_t g_ebp, g_seh_ebp;
+enum { BLACK_VIEW_CROP = 1, BLACK_VIEW_FIT = 2 };     /* KG_VIEW_* (kelvin_gpu.h) */
+
+static int black_split_pass;                          /* 2 while player two's camera and world are produced */
+
+/* After D2F40 in player two's pass: player two's camera replaces both of the RwCamera frame's matrices. */
+static void black_split_camera(uint32_t camera)
+{
+    const unsigned caller_csr = _mm_getcsr();
+    uint32_t rwcam, frame, row;
+    float p1[4][3], m[4][3];
+    int k;
+    rwcam = GUEST32(camera + 0x58u);
+    if (!black_pc_ram_span(rwcam, 8u)) return;
+    frame = GUEST32(rwcam + 4u);
+    if (!black_pc_ram_span(frame, 0x90u)) return;
+    _mm_setcsr(0x1F80u);
+    for (row = 0; row < 4; row++)
+        for (k = 0; k < 3; k++) p1[row][k] = black_photo_f32(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u);
+    pc_split_camera(m, p1);
+    for (row = 0; row < 4; row++)
+        for (k = 0; k < 3; k++) {
+            black_photo_put(frame + 0x10u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);
+            black_photo_put(frame + 0x50u + row * 0x10u + (uint32_t)k * 4u, m[row][k]);
+        }
+    _mm_setcsr(caller_csr);
+}
+/* END BLACK_SPLITSCREEN */
+
 /* The gameplay FOV is a video setting too (pc_video.c): the Video Settings page changes it while the game runs. */
 static void black_fov_refresh(void)
 {
@@ -1076,6 +1119,12 @@ void sub_000D2F40(void)
     }
     /* photo mode leaves the first-person weapon out: its draws (BLACK_VIEWMODEL_OWNER) scale to nothing */
     if (pc_photo_weapon_hidden() && camera == black_photo_world_camera()) black_vm_scale_bits = 0u;
+    if (pc_split_enabled() && camera == black_photo_world_camera()) {
+        float scale;
+        memcpy(&scale, &black_vm_scale_bits, 4);
+        scale = black_split_pass == 2 ? 0.0f : scale * 0.5f;
+        memcpy(&black_vm_scale_bits, &scale, 4);
+    }
     fesetenv(&caller_environment);
     _mm_setcsr(caller_csr);
     if (adjusted) GUEST32(camera + 0x70u) = new_window;
@@ -1083,8 +1132,68 @@ void sub_000D2F40(void)
     if (adjusted) GUEST32(camera + 0x70u) = saved_window;
     black_ao_camera_publish(camera);
     black_photo_camera(camera);
+    if (black_split_pass == 2 && camera == black_photo_world_camera()) black_split_camera(camera);
 }
 /* END BLACK_PC_FOV */
+
+/* BEGIN BLACK_SPLITSCREEN (the passes) */
+static void black_split_mark(int view, int mode)
+{
+    uint32_t device, physical;
+    int r[4];
+    if (!black_pc_ram_span(0x0027BFF8u, 4u)) return;
+    device = GUEST32(0x0027BFF8u);
+    if (!black_pc_ram_span(device, 4u)) return;
+    physical = xbox_PhysicalAddressOf(GUEST32(device));
+    if (physical >= 0x08000000u) return;
+    pc_split_rect(view, r);
+    kelvin_mark_view(0x80000000u + physical, mode, r[0], r[1], r[2], r[3]);
+}
+
+/* D2F40 for the world camera, called the way 2033A0 calls it; player two's at the native lens (2888C8). */
+static void black_split_produce(uint32_t camera, int pass)
+{
+    const uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebx = g_ebx, s_esi = g_esi, s_edi = g_edi;
+    const uint32_t s_esp = g_esp, s_ebp = g_ebp, s_seh = g_seh_ebp;
+    const unsigned csr = _mm_getcsr();
+    const uint32_t owner = GUEST32(0x002D12B8u), lens = GUEST32(owner + 0x750u);
+    uint32_t sp = (s_esp - 0x200u) & ~15u;
+    if (s_esp < 0x20000u || !black_pc_ram_span(sp - 4u, 0x204u)) return;
+    if (pass == 2) GUEST32(owner + 0x750u) = GUEST32(0x002888C8u);
+    black_split_pass = pass;
+    sp -= 4u; GUEST32(sp) = 0x0020359Fu;
+    g_esp = sp; g_edi = camera;
+    sub_000D2F40();
+    black_split_pass = 0;
+    GUEST32(owner + 0x750u) = lens;
+    g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebx = s_ebx; g_esi = s_esi; g_edi = s_edi;
+    g_esp = s_esp; g_ebp = s_ebp; g_seh_ebp = s_seh;
+    _mm_setcsr(csr);
+}
+
+void sub_001EE820(void)
+{
+    const uint32_t esp = g_esp, ebx = g_ebx, esi = g_esi, edi = g_edi, ebp = g_ebp, seh = g_seh_ebp;
+    const unsigned csr = _mm_getcsr();
+    uint32_t camera, ret, player;
+    if (!pc_split_enabled() || !(camera = black_photo_world_camera()) || !black_pc_ram_span(esp, 8u)) {
+        sub_001EE820_gen();
+        return;
+    }
+    ret = GUEST32(esp);
+    player = GUEST32(esp + 4u);
+    black_split_mark(PCS_VIEW_P1, BLACK_VIEW_CROP);
+    sub_001EE820_gen();
+    g_esp = esp; GUEST32(esp) = ret; GUEST32(esp + 4u) = player;
+    g_ebx = ebx; g_esi = esi; g_edi = edi; g_ebp = ebp; g_seh_ebp = seh;
+    _mm_setcsr(csr);
+    black_split_produce(camera, 2);
+    black_split_mark(PCS_VIEW_P2, BLACK_VIEW_CROP);
+    sub_001EE820_gen();
+    black_split_produce(camera, 1);
+    black_split_mark(PCS_VIEW_HUD, BLACK_VIEW_FIT);
+}
+/* END BLACK_SPLITSCREEN */
 
 /* BEGIN BLACK_WEAPON_TRACE
  * Native death/drop observations only. The title's actor policy, remaining
