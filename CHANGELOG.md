@@ -8,10 +8,10 @@ rebuild the internal resolution before the HUD, which stays sharp. With ray trac
 the smaller size too. `scripts\fetch-dlss.ps1` (run by `setup.ps1`) fetches NVIDIA's runtime and headers into
 `third_party\dlss`; without them, or without an RTX card, these modes fall back to FXAA.
 
-**Crosshair and hit markers.** A crosshair around the game's dot (a cross, a T or a circle, on the Display page) opens
-with every shot and as you move, and closes again when you stop; aiming down the sights hides it. A red mark flashes
-when one of your shots kills an enemy, and a white one when it knocks the weapon out of their hands. Neither is ever
-in a photo.
+**Crosshair and hit markers.** A crosshair in place of the game's dot (a cross, a T or a circle, on the Display page)
+opens with every shot and as you move, and closes again when you stop; aiming down the sights hides it and brings the
+dot back. A white mark flashes on every shot that wounds an enemy or knocks the weapon out of their hands, and a red
+one when it kills. Neither is ever in a photo.
 
 **Ray tracing (experimental).** With a graphics card that has DirectX Raytracing (NVIDIA RTX, AMD RX 6000 or newer),
 **Ray tracing** in the Graphics settings (in game and in the launcher) uses the GPU's ray tracing cores for shadows

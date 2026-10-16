@@ -83,10 +83,13 @@ int main(void)
     /* aiming down the sights hides it; the player not in control, or no ticks, hide it */
     CHECK(!run(0.3, 1, 0.0f, 0, 0.5f, &d));
     CHECK(run(0.3, 1, 0.0f, 0, 1.0f, &d));
-    CHECK(!run(0.3, 0, 0.0f, 0, 1.0f, &d));
+    CHECK(pc_crosshair_replaces_dot());
+    CHECK(!run(0.3, 0, 0.0f, 0, 1.0f, &d) && !pc_crosshair_replaces_dot());
+    run(0.3, 1, 0.0f, 0, 0.5f, &d);
+    CHECK(!pc_crosshair_replaces_dot());
     run(0.3, 1, 0.0f, 0, 1.0f, &d);
     s_now += 0.5;
-    CHECK(!pc_crosshair_frame(&d));
+    CHECK(!pc_crosshair_frame(&d) && !pc_crosshair_replaces_dot());
 
     /* a kill flashes a marker that fades; a hit is shorter and does not cut a kill short */
     run(0.1, 1, 0.0f, 0, 1.0f, &d);
@@ -102,7 +105,7 @@ int main(void)
 
     /* the game's dot alone: nothing drawn, except a marker; markers off: no marker */
     settings(PCX_ORIGINAL, 1);
-    CHECK(!run(0.2, 1, 0.0f, 0, 1.0f, &d));
+    CHECK(!run(0.2, 1, 0.0f, 0, 1.0f, &d) && !pc_crosshair_replaces_dot());
     pc_crosshair_hit(PCX_MARK_KILL);
     CHECK(pc_crosshair_frame(&d) && d.alpha == 0.0f && d.marker_alpha > 0.9f);
     settings(PCX_CIRCLE, 0);
