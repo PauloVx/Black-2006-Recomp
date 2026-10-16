@@ -1245,26 +1245,21 @@ static void black_p2_find_links(void)
 }
 
 /* The first-person weapon (the viewmodel set [2D12C8]: a slot of 0x240 bytes at +470 per inventory index, the
- * actor's +328) is one per game, its state written by whichever player updates: player two keeps its own copy of each
- * slot and of what the slot points at that both players share (the pose matrices at +30..+4C, 0xA0 bytes each, and the
- * animation controller at +54, 0x9D0 bytes, 17EAE0), exchanged with the actor. */
+ * actor's +328) is one per game, its state written by whichever player updates. Player two keeps its own copy of each
+ * slot, exchanged with the actor, pointing at buffers of its own: the pose matrices at +30..+4C (0xA0 bytes each) and
+ * the animation controller at +54 (0x9D0 bytes), as 17EAE0 makes them. A slot the game remakes for one player (a
+ * weapon picked up) leaves the other's alone. */
 #define BLACK_VM_SLOTS 2u
 #define BLACK_VM_SLOT_BYTES 0x240u
 #define BLACK_VM_PARTS 9u
 static uint8_t black_p2_vm_slot[BLACK_VM_SLOTS][BLACK_VM_SLOT_BYTES];
-static uint8_t black_p2_vm_part[BLACK_VM_SLOTS][BLACK_VM_PARTS][0x9D0];
+static uint32_t black_p2_vm_part[BLACK_VM_SLOTS][BLACK_VM_PARTS];
 static uint32_t black_p2_vm_set;
 
 static uint32_t black_vm_part_at(unsigned i) { return i < 8u ? 0x30u + i * 4u : 0x54u; }
 static uint32_t black_vm_part_bytes(unsigned i) { return i < 8u ? 0xA0u : 0x9D0u; }
 
-static void black_vm_exchange(uint8_t *a, uint8_t *b, uint32_t bytes)
-{
-    uint8_t held[0x9D0];
-    memcpy(held, a, bytes); memcpy(a, b, bytes); memcpy(b, held, bytes);
-}
-
-/* Copies (start) or exchanges (swap) player two's viewmodel state with the set's. */
+/* Player two's copy of the set's slots (start), or the slots exchanged with it (swap). */
 static void black_p2_vm(int start)
 {
     uint8_t *const m = (uint8_t *)(uintptr_t)g_xbox_mem_offset;
@@ -1274,15 +1269,23 @@ static void black_p2_vm(int start)
     if (!black_p2_vm_set || set != black_p2_vm_set) return;
     for (k = 0; k < BLACK_VM_SLOTS; k++) {
         const uint32_t slot = set + 0x470u + k * BLACK_VM_SLOT_BYTES;
-        if (start) memcpy(black_p2_vm_slot[k], m + slot, BLACK_VM_SLOT_BYTES);
-        else black_vm_exchange(m + slot, black_p2_vm_slot[k], BLACK_VM_SLOT_BYTES);
+        if (!start) {
+            uint8_t held[BLACK_VM_SLOT_BYTES];
+            memcpy(held, m + slot, BLACK_VM_SLOT_BYTES);
+            memcpy(m + slot, black_p2_vm_slot[k], BLACK_VM_SLOT_BYTES);
+            memcpy(black_p2_vm_slot[k], held, BLACK_VM_SLOT_BYTES);
+            continue;
+        }
+        memcpy(black_p2_vm_slot[k], m + slot, BLACK_VM_SLOT_BYTES);
         for (i = 0; i < BLACK_VM_PARTS; i++) {
             const uint32_t at = black_vm_part_at(i), bytes = black_vm_part_bytes(i), part = GUEST32(slot + at);
-            uint32_t mine;
-            memcpy(&mine, black_p2_vm_slot[k] + at, 4);
-            if (!part || part != mine || !black_pc_ram_span(part, bytes)) continue;
-            if (start) memcpy(black_p2_vm_part[k][i], m + part, bytes);
-            else black_vm_exchange(m + part, black_p2_vm_part[k][i], bytes);
+            uint32_t mine = black_p2_vm_part[k][i], off;
+            if (!part || !black_pc_ram_span(part, bytes)) continue;
+            if (!mine && !(mine = black_p2_vm_part[k][i] = xbox_HeapAlloc(bytes, 16u))) continue;
+            memcpy(m + mine, m + part, bytes);
+            for (off = 0; off < bytes; off += 4u)
+                if (GUEST32(mine + off) - part < bytes) GUEST32(mine + off) += mine - part;
+            memcpy(black_p2_vm_slot[k] + at, &mine, 4);
         }
     }
 }
@@ -1794,27 +1797,85 @@ extern void sub_0013C050(void);
 extern void sub_00121E60(void);
 extern void sub_0012C3A0(void);
 
-/* The HUD's elements take the player's values in their update (12C3A0 on [2D12E4], as 1F1080 does each frame): again
- * for whichever player is in, with no time passing. */
-static void black_hud_refresh(void)
+/* The HUD's elements ([2D12E4]: lists at +A0, 0xA8 apart, +23C of them, linked at +8) take the player's values in
+ * their update (12C3A0, as 1F1080 does each frame) and animate what changed. Player two's HUD keeps its elements'
+ * state of its own: put in for its update (with no time passing) and its draw, kept afterwards, and player one's put
+ * back as it was. An element's state is taken as reaching the next element in memory (0x400 at most). */
+#define BLACK_HUD_ELEMENTS 128u
+#define BLACK_HUD_ELEMENT_BYTES 0x400u
+static uint32_t black_hud_at[BLACK_HUD_ELEMENTS], black_hud_bytes[BLACK_HUD_ELEMENTS];
+static uint8_t black_hud_p2[BLACK_HUD_ELEMENTS][BLACK_HUD_ELEMENT_BYTES], black_hud_p1[BLACK_HUD_ELEMENTS][BLACK_HUD_ELEMENT_BYTES];
+static unsigned black_hud_count;
+static int black_hud_p2_kept;
+
+static int black_hud_order(const void *a, const void *b)
+{
+    const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The elements in memory order, each with the bytes up to the next; nonzero when they are the ones last seen. */
+static int black_hud_elements(void)
+{
+    const uint32_t hud = GUEST32(0x002D12E4u);
+    uint32_t at[BLACK_HUD_ELEMENTS], layer, e;
+    unsigned n = 0, i, layers;
+    int same;
+    if (!black_pc_ram_span(hud, 0x240u)) return -1;
+    layers = GUEST8(hud + 0x23Cu);
+    for (layer = 0; layer < layers && layer < 3u; layer++)
+        for (e = GUEST32(hud + 0xA0u + layer * 0xA8u); e && n < BLACK_HUD_ELEMENTS && black_pc_ram_span(e, 0x10u); e = GUEST32(e + 8u))
+            at[n++] = e;
+    qsort(at, n, sizeof(at[0]), black_hud_order);
+    same = n == black_hud_count;
+    for (i = 0; i < n; i++) {
+        uint32_t bytes = i + 1u < n ? at[i + 1u] - at[i] : 0x100u;
+        if (bytes > BLACK_HUD_ELEMENT_BYTES) bytes = BLACK_HUD_ELEMENT_BYTES;
+        if (!black_pc_ram_span(at[i], bytes)) bytes = 0;
+        same = same && black_hud_at[i] == at[i];
+        black_hud_at[i] = at[i];
+        black_hud_bytes[i] = bytes;
+    }
+    black_hud_count = n;
+    return same;
+}
+
+static void black_hud_copy(uint8_t (*to)[BLACK_HUD_ELEMENT_BYTES], int from_game)
+{
+    uint8_t *const m = (uint8_t *)(uintptr_t)g_xbox_mem_offset;
+    unsigned i;
+    for (i = 0; i < black_hud_count; i++) {
+        if (from_game) memcpy(to[i], m + black_hud_at[i], black_hud_bytes[i]);
+        else memcpy(m + black_hud_at[i], to[i], black_hud_bytes[i]);
+    }
+}
+
+static void black_hud_update(void)
 {
     uint32_t args[2];
     args[0] = GUEST32(0x002D12E4u);
     args[1] = 0;
-    if (black_pc_ram_span(args[0], 0x240u)) black_split_call(sub_0012C3A0, g_eax, g_esi, g_edi, args, 2, 0x001F12FEu);
+    black_split_call(sub_0012C3A0, g_eax, g_esi, g_edi, args, 2, 0x001F12FEu);
 }
 
 void sub_00129340(void)
 {
     static const uint32_t below = 0u, above = 1u;
     const int hud = black_split_hud;
+    int own = 0;
     black_split_hud = 0;
     sub_00129340_gen();
     if (!hud || !pc_split_enabled()) return;
     black_split_mark(1, BLACK_VIEW_FIT, 0);
     if (black_p2_playing()) {
+        const int same = black_hud_elements();
+        own = same >= 0;
+        if (own) {
+            black_hud_copy(black_hud_p1, 1);
+            if (same && black_hud_p2_kept) black_hud_copy(black_hud_p2, 0);
+        }
         black_p2_enter();
-        black_hud_refresh();
+        if (own) black_hud_update();
     }
     black_split_call(sub_0013C050, g_eax, GUEST32(0x002D12E4u), g_edi, &below, 1, 0x0020BB04u);
     black_split_call(sub_00121E60, g_eax, g_esi, GUEST32(0x002D199Cu), NULL, 0, 0x0020BB0Fu);
@@ -1822,7 +1883,11 @@ void sub_00129340(void)
     black_split_call(sub_00129340_gen, GUEST32(0x002D19A4u), g_esi, g_edi, NULL, 0, 0x0020BB26u);
     if (black_p2_playing()) {
         black_p2_leave();
-        black_hud_refresh();
+        if (own) {
+            black_hud_copy(black_hud_p2, 1);
+            black_hud_p2_kept = 1;
+            black_hud_copy(black_hud_p1, 0);
+        }
     }
 }
 /* END BLACK_SPLITSCREEN */
