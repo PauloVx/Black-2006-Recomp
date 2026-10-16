@@ -25,7 +25,7 @@ Extract the complete release onto a writable, case-sensitive Linux filesystem,
 then open **Build BLACK.sh**, or run:
 
 ```bash
-cd '/path/to/BLACK-0.1.0-alpha.2'
+cd '/path/to/BLACK-0.1.0-alpha.3'
 bash './Build BLACK.sh'
 ```
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.3 — 2026-10-16
 
 **DLSS and DLAA.** On an NVIDIA RTX graphics card, anti-aliasing gains DLAA (DLSS at the internal resolution) and
 DLSS Quality, Balanced and Performance, which draw the world at 2/3, 0.58 or half the width and height and have DLSS
