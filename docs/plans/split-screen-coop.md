@@ -67,9 +67,29 @@ player context. Layout: top and bottom (side by side later).
 
 ### Input
 
-Player 2 reads the second XInput controller directly on the host. Adding it as a second USB pad would let a
-single-player game read it as player 1 too. During P2's context the emulated pad report becomes P2's, so the game's
-own input code moves P2. Player 1 keeps the keyboard and mouse, or the first controller.
+Player 2 is a second emulated USB pad, plugged in once the first is configured. Its report comes from the second
+XInput controller, or from player 2's keys (arrows for the left stick, the numpad for the rest), and the game decodes
+it into input component 1 of `[2D45E8]`. Player 2's controller reads that component. Player 1 keeps the keyboard and
+mouse, or the first controller.
+
+### Player 2
+
+The mission core `[2D45D4]` (0x5CC0 bytes) holds exactly one player actor at core+0x30 (0x900 bytes). The engine has
+a cut two-player mode (`sub_001F4540` sets two players, and the player loops step by 0x900), but the core has no room
+for a second actor. So player 2 is swapped into core+0x30 whenever its code runs, and swapped out afterwards:
+
+- **Out of the core**, player 2's actor lives in guest memory (the shadow). It owns player 2's physics proxy (DF400,
+  one of the world's 20 character proxies), so the world's step and contacts reach player 2's own data.
+- **Kept with the core**: the actor's world-grid node (+0x20..+0x57) and any field whose list neighbour points back
+  at it. The draw does not use the node for the players: each view draws its own player after the grid walk.
+- **Swapped with the actor**: the camera owner `[2D12B8]`, and player 2's copy of the first-person weapon state (the
+  viewmodel set `[2D12C8]`: two slots of 0x240 bytes, their pose matrices and animation controllers).
+- **Per frame**: player 2's controller, actor update, and the post-physics update (actor vtable +0x10, which sets
+  the eye matrix the camera follows) run after player 1's. Player 2's HUD elements refresh with player 2 in, before
+  its HUD is drawn.
+- **Own weapons**: player 2 starts with an empty weapon array of its own, so its load takes its own weapons.
+- **Seen by the other player**: each player has a puppet, a copy of a level soldier in a free character slot, kept
+  at that player's position, posed each frame (standing or moving clip), and drawn only in the other player's view.
 
 ### Later: PvP
 
@@ -83,7 +103,7 @@ waiting for `pc_debug_note_ping`.
 | --- | --- | --- |
 | 0 | Debug overlay (Insert) | Done: frame times, latency and render numbers to measure the cost of a second view. |
 | 1 | **Second view** (done: 69–72 FPS at 1440p with DLAA, GTAO, SSR and RT on; one view 69–88) | The world is drawn twice per frame, the second time from a free camera on the second controller (photo-mode style), into the bottom half. P1 plays normally in the top half. HUD in P1's half only. Frame rate stays at least 60 at 1440p on an RTX 3060 Ti. |
-| 2 | **Player 2 joins** | START on the second controller spawns a second player character near P1, through the game's own spawn path (`sub_0020BC40` and the two others). P2 moves, aims and shoots with its own camera and view. |
+| 2 | **Player 2 joins** (done: chosen before the difficulty; P2 joins beside P1 when the mission starts) | P2 moves, aims and shoots with its own camera, view, weapons and HUD, and each player sees the other as a soldier. |
 | 3 | **Playing together** | Enemies target the nearer player. Damage, death (a downed P2 respawns at P1 after a few seconds), pickups, objectives and mission end work for both. Checkpoints and saves stay P1's. |
 | 4 | **Polish** | A HUD, crosshair and hit markers per view. Audio from P1's camera, or the nearer one. Split-screen settings in game and in the launcher (layout, P2's controls). Leaving with START > Quit. |
 | 5 | PvP groundwork | Contexts filled from the network, a lobby, snapshots and prediction, and the PING row. |
