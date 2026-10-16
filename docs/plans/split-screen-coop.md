@@ -30,8 +30,11 @@ BLACK is a single-player game, and the code shows it:
 4. **Show**: `sub_0002DD10(renderer+0xD408, 0, 1)` (one present per frame), then `sub_0020D400`.
 
 Everything is drawn before a single present, so drawing the world twice in one frame is possible in principle.
-Which of the step 3 calls draws the world (rather than the debug lines and the HUD) still has to be measured. Draw
-counts between hooks in the GPU renderer will tell.
+The world is `sub_001EE820(player)` (stdcall, one argument), reached through `[esi+0x21070]->vtbl[2]` →
+`sub_0020BAC0` (or `20BB40` / `20BBC0`). That caller clears (`sub_00268880(0, NULL, 0xF3, 0, 1.0f, 0)`), draws the world,
+then draws the HUD through the 2D camera. `sub_001762B0` begins a camera by index in eax: 0 is renderer+0xD3B0 (2D),
+1 is renderer+0xD450 (the world), 2 is renderer+0xD4F0. `sub_000D2F40` takes only edi (the camera). The D3D device is
+`[0x27BFF8]`, and its first dword is the push pointer.
 
 ## Approach: player contexts
 
@@ -52,11 +55,15 @@ manual functions.
 
 ### Views
 
-The GPU renderer (`kelvin`) takes a **view region** for the draws that follow: a viewport and a scissor rectangle
-in the full raster. Clears are scissored to the region. The game's own full-screen effects (motion blur, depth of
-field) and the PC's passes (AO, SSR, ray tracing, DLSS) assume one view. They stay off in split-screen at first, then
-run per region. Layouts: top and bottom (default) or side by side. Each view keeps the window's aspect ratio by
-changing its field of view, as the aspect-ratio work already does.
+Each view is a **whole frame of its own** (`kelvin_mark_view`, a mark at the D3D push pointer so the GPU switches at
+that command). The game draws it as a full 640x480 frame with the camera's aspect doubled: the horizontal field of
+view stays and the vertical halves. The GPU draws it on main-size surfaces of that view's, at its share of the raster.
+When the view ends, its ray tracing, AO, reflections and DLSS/DLAA run as at the end of a frame, with that view's own
+history (one NGX feature per view, RT history copied in and out), and the view is copied into its half. The game's
+own effects (glow, action blur) work per view as a result. A first attempt drew both views into one frame through a
+cropping viewport. Every full-screen pass then saw both cameras at once, and the result was a ghost of the other
+view. The game's camera-motion blur stays off in split-screen: it keeps one camera history, which belongs in the
+player context. Layout: top and bottom (side by side later).
 
 ### Input
 
@@ -75,7 +82,7 @@ waiting for `pc_debug_note_ping`.
 | # | Milestone | Done when |
 | --- | --- | --- |
 | 0 | Debug overlay (Insert) | Done: frame times, latency and render numbers to measure the cost of a second view. |
-| 1 | **Second view** | The world is drawn twice per frame, the second time from a free camera on the second controller (photo-mode style), into the bottom half. P1 plays normally in the top half. HUD in P1's half only. Frame rate stays at least 60 at 1440p on an RTX 3060 Ti. |
+| 1 | **Second view** (done: 69–72 FPS at 1440p with DLAA, GTAO, SSR and RT on; one view 69–88) | The world is drawn twice per frame, the second time from a free camera on the second controller (photo-mode style), into the bottom half. P1 plays normally in the top half. HUD in P1's half only. Frame rate stays at least 60 at 1440p on an RTX 3060 Ti. |
 | 2 | **Player 2 joins** | START on the second controller spawns a second player character near P1, through the game's own spawn path (`sub_0020BC40` and the two others). P2 moves, aims and shoots with its own camera and view. |
 | 3 | **Playing together** | Enemies target the nearer player. Damage, death (a downed P2 respawns at P1 after a few seconds), pickups, objectives and mission end work for both. Checkpoints and saves stay P1's. |
 | 4 | **Polish** | A HUD, crosshair and hit markers per view. Audio from P1's camera, or the nearer one. Split-screen settings in game and in the launcher (layout, P2's controls). Leaving with START > Quit. |
