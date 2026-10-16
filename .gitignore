@@ -38,3 +38,4 @@ desktop.ini
 
 # Logs written by tools run from the project folder
 /logs/
+/third_party/dlss/

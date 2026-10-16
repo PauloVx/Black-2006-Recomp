@@ -990,6 +990,9 @@ static void test_effect_rows(void)
     for (i = 0; i < PCV_ROW_AA; i++) pc_video_menu_test_action(1);
     CHECK(pc_video_menu_test_selected() == PCV_ROW_AA);
     pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_SSAA);
+    pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_DLAA);
+    pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_DLSS_QUALITY);
+    pc_video_menu_test_action(3); pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_DLSS_PERFORMANCE);
     pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_OFF);
     pc_video_menu_test_action(3); pc_video_get(&s); CHECK(s.aa == PCV_AA_FXAA);
     pc_video_menu_test_action(2); pc_video_get(&s); CHECK(s.aa == PCV_AA_OFF);
@@ -1184,6 +1187,27 @@ static void test_native_opener(void)
     pc_video_menu_hide_hint(0);
 }
 
+/* DLSS: the world rasterised smaller (2/3, 0.58, 1/2), never under 640 x 480; DLAA at the internal size. */
+static void test_dlss_sizes(void)
+{
+    PcVideoSettings s;
+    unsigned w, h;
+    char text[2048];
+    pc_video_defaults(&s);
+    s.internal_height = 1440; s.aspect = PCV_ASPECT_16_9;
+    s.aa = PCV_AA_DLSS_QUALITY; pc_video_raster_size_for(&s, &w, &h); CHECK(w == 1708 && h == 960);
+    s.aa = PCV_AA_DLSS_PERFORMANCE; pc_video_raster_size_for(&s, &w, &h); CHECK(w == 1280 && h == 720);
+    s.aa = PCV_AA_DLAA; pc_video_raster_size_for(&s, &w, &h); CHECK(w == 2560 && h == 1440);
+    s.internal_height = 720; s.aa = PCV_AA_DLSS_PERFORMANCE; pc_video_raster_size_for(&s, &w, &h);
+    CHECK(h == 480 && w >= 640);
+    s.internal_height = 480; s.aa = PCV_AA_DLSS_BALANCED; pc_video_raster_size_for(&s, &w, &h); CHECK(h == 480);
+    s.aa = PCV_AA_DLSS_BALANCED;
+    CHECK(pc_video_format(&s, text, sizeof(text)) > 0 && strstr(text, "aa=dlss_balanced\n"));
+    pc_video_defaults(&s);
+    CHECK(pc_video_parse("aa=dlaa\n", &s) == 1 && s.aa == PCV_AA_DLAA);
+    CHECK(pc_video_parse("aa=dlss_performance\n", &s) == 1 && s.aa == PCV_AA_DLSS_PERFORMANCE);
+}
+
 int main(void)
 {
     DWORD n = GetTempPathA(MAX_PATH, ini_path);
@@ -1198,6 +1222,7 @@ int main(void)
     test_environment_locks_in_menu();
     test_effect_rows();
     test_sizes_and_cycling();
+    test_dlss_sizes();
     test_native_row_services();
     test_native_opener();
     DeleteFileA(ini_path);

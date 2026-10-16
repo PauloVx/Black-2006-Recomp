@@ -238,8 +238,16 @@ std::vector<SettingsFlow::Option> SettingsFlow::graphicsOptions() {
     rows.push_back(
         pick(tr("ANTI-ALIASING"),
              tr("FXAA smooths jagged edges at almost no cost. SSAA draws four times the pixels: the cleanest "
-                "and the heaviest."),
-             s.antiAliasing, {{"off", tr("OFF")}, {"fxaa", tr("FXAA")}, {"ssaa", tr("SSAA 4X")}}));
+                "and the heaviest. DLAA is NVIDIA DLSS anti-aliasing; the DLSS modes draw fewer pixels and let DLSS "
+                "rebuild the rest. Both need an RTX graphics card."),
+             s.antiAliasing,
+             {{"off", tr("OFF")},
+              {"fxaa", tr("FXAA")},
+              {"ssaa", tr("SSAA 4X")},
+              {"dlaa", tr("DLAA")},
+              {"dlss_quality", tr("DLSS QUALITY")},
+              {"dlss_balanced", tr("DLSS BALANCED")},
+              {"dlss_performance", tr("DLSS PERFORMANCE")}}));
     rows.push_back({tr("ANISOTROPIC FILTERING"),
                     tr("Keeps floors and walls seen at a slant sharp. Costs almost nothing."),
                     [&s] { return s.anisotropy == 1 ? std::string(tr("OFF")) : std::to_string(s.anisotropy) + "X"; },
