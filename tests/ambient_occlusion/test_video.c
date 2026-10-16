@@ -427,6 +427,8 @@ static char ini_path[MAX_PATH + 32];
 static unsigned hook_calls, hook_w, hook_h, hook_ow, hook_oh;
 static void hook(unsigned w, unsigned h, unsigned ow, unsigned oh) { hook_calls++; hook_w = w; hook_h = h; hook_ow = ow; hook_oh = oh; }
 
+static int rt_after_restart(void) { return PCV_RT_RESTART; }
+
 /* Compare values rather than padding bytes, which an optimized structure assignment may leave unspecified. */
 static int same_settings(const PcVideoSettings *a, const PcVideoSettings *b)
 {
@@ -435,6 +437,7 @@ static int same_settings(const PcVideoSettings *a, const PcVideoSettings *b)
            a->fps_limit == b->fps_limit && a->aspect == b->aspect && a->fov == b->fov && a->motion_blur_off == b->motion_blur_off &&
            a->aa == b->aa && a->af == b->af && a->dof == b->dof && a->sharpen == b->sharpen &&
            a->ao_method == b->ao_method && a->ao_quality == b->ao_quality && a->reflections == b->reflections &&
+           a->ray_tracing == b->ray_tracing &&
            a->render_override_w == b->render_override_w && a->render_override_h == b->render_override_h;
 }
 
@@ -445,7 +448,7 @@ static void clear_env(void)
         "RECOMP_SCALE_MODE", "RECOMP_PRESENT_FILTER", "RECOMP_VSYNC", "RECOMP_FPS_LIMIT", "RECOMP_BLACK_ASPECT",
         "RECOMP_BLACK_FOV", "RECOMP_BLACK_MOTION_BLUR", "RECOMP_INTERNAL_HEIGHT", "RECOMP_VIDEO_INI",
         "RECOMP_AA", "RECOMP_AF", "RECOMP_DOF", "RECOMP_SHARPEN", "RECOMP_SSAO", "RECOMP_AO_METHOD", "RECOMP_AO_QUALITY",
-        "RECOMP_REFLECTIONS"
+        "RECOMP_REFLECTIONS", "RECOMP_KGPU_RT"
     };
     unsigned i;
     for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) _putenv_s(names[i], "");
@@ -522,11 +525,12 @@ static void test_model(void)
     s.internal_height = 1080; s.window_width = 3440; s.window_height = 1440; s.borderless = 1; s.scale = PCV_SCALE_INTEGER;
     s.nearest = 1; s.vsync = 0; s.fps_limit = 144; s.aspect = PCV_ASPECT_21_9; s.fov = 90; s.motion_blur_off = 1;
     s.aa = PCV_AA_SSAA; s.af = 4; s.dof = PCV_STEP_MEDIUM; s.sharpen = PCV_STEP_HIGH; s.reflections = PCV_REFL_LOW;
+    s.ray_tracing = 1;
     CHECK(pc_video_format(&s, text, sizeof(text)) > 0);
     pc_video_defaults(&t);
     CHECK(strstr(text, "aa=ssaa\n") && strstr(text, "af=4\n") && strstr(text, "dof=medium\n") && strstr(text, "sharpen=high\n"));
-    CHECK(strstr(text, "reflections=low\n"));
-    CHECK(pc_video_parse(text, &t) == 18);
+    CHECK(strstr(text, "reflections=low\n") && strstr(text, "ray_tracing=on\n"));
+    CHECK(pc_video_parse(text, &t) == 19);
     CHECK(same_settings(&s, &t));
     pc_video_defaults(&t);
     CHECK(pc_video_parse("[video]\r\n; comment\r\ninternal_height=999\r\nwindow_width=1600\r\nbogus=1\r\nfov=500\r\nfov=72.5\r\n"
@@ -553,7 +557,7 @@ static void test_ambient_occlusion(void)
             CHECK(s.ao_method == method && s.ao_quality == quality);
             CHECK(pc_video_format(&s, text, sizeof(text)) < sizeof(text));
             pc_video_defaults(&t);
-            CHECK(pc_video_parse(text, &t) == 18 && same_settings(&s, &t));
+            CHECK(pc_video_parse(text, &t) == 19 && same_settings(&s, &t));
         }
     }
     CHECK(pc_video_parse("ao_method=GTAO\nao_quality=ULTRA\n", &s) == 2);
@@ -652,6 +656,17 @@ static void test_ambient_occlusion(void)
     CHECK(t.reflections == PCV_REFL_MEDIUM && (pc_video_locked() & PCV_LOCK_REFLECTIONS) && pc_video_menu_row_locked(PCV_ROW_REFLECTIONS));
     t.reflections = PCV_REFL_ULTRA; CHECK(pc_video_set(&t)); pc_video_get(&t);
     CHECK(t.reflections == PCV_REFL_MEDIUM);
+    /* ray tracing: unavailable (and fixed) until a renderer says it can; then a switch that RECOMP_KGPU_RT can hold */
+    clear_env(); fresh();
+    CHECK(pc_video_rt_support() == PCV_RT_UNAVAILABLE && pc_video_menu_row_locked(PCV_ROW_RAY_TRACING) &&
+          !pc_video_menu_row_change(PCV_ROW_RAY_TRACING, 1));
+    CHECK(pc_video_menu_row_value(PCV_ROW_RAY_TRACING, value, sizeof(value)) > 0 && !strcmp(value, "UNAVAILABLE"));
+    pc_video_set_rt_support(rt_after_restart);
+    CHECK(!pc_video_menu_row_locked(PCV_ROW_RAY_TRACING) && pc_video_menu_row_change(PCV_ROW_RAY_TRACING, 1));
+    pc_video_get(&t);
+    CHECK(t.ray_tracing == 1 && pc_video_menu_row_value(PCV_ROW_RAY_TRACING, value, sizeof(value)) > 0 && !strcmp(value, "ON"));
+    _putenv_s("RECOMP_KGPU_RT", "0"); pc_video_test_reset(ini_path); pc_video_get(&t);
+    CHECK(t.ray_tracing == 0 && (pc_video_locked() & PCV_LOCK_RAY_TRACING));
     clear_env(); fresh(); hook_calls = 0;
 }
 
@@ -1069,6 +1084,7 @@ static void test_native_row_services(void)
     unsigned generation;
     int row;
     fresh();
+    pc_video_set_rt_support(rt_after_restart);   /* a GPU that can trace rays: every row can change */
     pc_video_menu_set_native_opener(NULL);
     pc_video_menu_test_action(5);
     for (row = 0; row < PCV_ROW_COUNT; row++) {
@@ -1116,7 +1132,7 @@ static void test_native_row_services(void)
     _putenv_s("RECOMP_BLACK_ASPECT", "16:9"); _putenv_s("RECOMP_BLACK_FOV", "90");
     _putenv_s("RECOMP_SCALE_MODE", "stretch"); _putenv_s("RECOMP_PRESENT_FILTER", "nearest");
     _putenv_s("RECOMP_VSYNC", "0"); _putenv_s("RECOMP_FPS_LIMIT", "60");
-    _putenv_s("RECOMP_BLACK_MOTION_BLUR", "off");
+    _putenv_s("RECOMP_BLACK_MOTION_BLUR", "off"); _putenv_s("RECOMP_KGPU_RT", "1");
     pc_video_test_reset(ini_path); pc_video_get(&before);
     generation = pc_video_generation();
     for (row = 0; row < PCV_ROW_RESET; row++) {

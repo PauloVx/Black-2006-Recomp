@@ -76,14 +76,15 @@ static void test_camera(void)
     CHECK(dist > 0.4 && dist < 1.2);
     CHECK(CLOSE_TO(atan2(m[3][0] - 10.0, m[3][2] + 5.0), 30 * 3.14159265358979323846 / 180.0, 0.02));
     CHECK(CLOSE_TO(m[3][1], 2.0, 1e-4));
-    /* mouse right turns right: the forward vector moves toward the old right */
+    /* mouse right turns right: the forward vector moves away from the matrix's first row, which BLACK points to the
+     * screen's left */
     {
         const double before = m[2][0] * game[0][0] + m[2][2] * game[0][2];
         pc_input_capture_changed(1);
         pc_input_mouse_motion(300, 0);
         memcpy(m, game, sizeof(m));
         frame(m, 10);
-        CHECK(m[2][0] * game[0][0] + m[2][2] * game[0][2] > before + 0.2);
+        CHECK(m[2][0] * game[0][0] + m[2][2] * game[0][2] < before - 0.2);
     }
     /* the range: Shift and W at VERY FAST cannot leave 12 m around the start */
     CHECK(pc_photo_row_change(PCP_ROW_SPEED, 1) && pc_photo_row_change(PCP_ROW_SPEED, 1));

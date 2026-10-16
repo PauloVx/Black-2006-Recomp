@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Ray tracing (experimental).** With a graphics card that has DirectX Raytracing (NVIDIA RTX, AMD RX 6000 or newer),
+**Ray tracing** in the Graphics settings (in game and in the launcher) uses the GPU's ray tracing cores for shadows
+cast by characters and props, ambient occlusion and bounce light around them, and reflections of the whole scene,
+off screen too, on weapons and glass (with Reflections above Original). It is off by default and Windows only. It
+starts with the game, so turning it on in a session that started without it applies at the next start. About 3 ms a
+frame on an RTX 3060 Ti at 1440p.
+
 **The launcher sets up your disc.** Choose an ISO (XISO or a full Redump-style dump) or a folder, or drop
 it onto the window: the launcher reads the Xbox disc itself, checks it is the supported release before copying, and
 copies it into `game/` with a progress bar, percentage, current file, speed and time left. Copying can be stopped
