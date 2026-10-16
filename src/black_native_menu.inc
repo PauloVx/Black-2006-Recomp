@@ -492,6 +492,24 @@ static const char black_menu_definition[] =
 "item = $FE_OPTIONS | page OptionsMenuXbox\r\n"
 "item = \"EXIT GAME\" | open ExitGame\r\n"
 "\r\n"
+"; Before the game's own Difficulty page (from START MISSION and from the mission select): one player or two,\r\n"
+"; player two in the bottom half (split-screen, pc_split.h). set SplitPlayers 1 or 2 makes the choice, and then\r\n"
+"; the game's Difficulty page shows; BACK is that page's own back.\r\n"
+"[page Players]\r\n"
+"column = 00000000\r\n"
+"title = \"PLAYERS\"\r\n"
+"logo = 185.5 58\r\n"
+"title_at = 199 86\r\n"
+"rails = 47 170\r\n"
+"list = 218 147 27\r\n"
+"selector = 349\r\n"
+"text = 218 225 \"TWO PLAYERS: PLAYER TWO IN THE BOTTOM HALF, ON THE SECOND CONTROLLER OR THE ARROWS AND THE NUMPAD.\" | wrap 380 | size 12\r\n"
+"prompts_at = 218 399 28\r\n"
+"focus = 1\r\n"
+"back = gamecode DifficultyBack\r\n"
+"item = \"ONE PLAYER\" | set SplitPlayers 1\r\n"
+"item = \"TWO PLAYERS\" | set SplitPlayers 2\r\n"
+"\r\n"
 "; The main menu once a mission is done.\r\n"
 "[page blacktitlemenu]\r\n"
 "column = 00000000\r\n"
@@ -528,7 +546,7 @@ static const char black_menu_definition[] =
 static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
                                                 0xFF74A7E07CF4C7F0ull, 0x33977C1E8AC020F3ull, 0xB86AB9AC7D0F4406ull,
                                                 0xDC483F969B68C28Aull, 0x9EE07629CB313D32ull, 0xC6D3B76BDD8FC724ull,
-                                                0xCAB7BCC76B5F689Aull };
+                                                0xCAB7BCC76B5F689Aull, 0x53E79C5FCD83D531ull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 
@@ -890,6 +908,22 @@ static void bnm_load_core_images(void)
 /* ---- the update hook --------------------------------------------------------------------------------------- */
 
 static int bnm_state;                 /* 0 not started, 1 ready, -1 off */
+static int bnm_players_chosen;        /* one player or two was chosen on this visit to the Difficulty page */
+
+/* The Players page's choice (set SplitPlayers 1 or 2): the split-screen setting, then the Difficulty page. */
+static void bnm_set_var_hook(void *ctx, const char *name, const char *value)
+{
+    if (!_stricmp(name, "SplitPlayers")) {
+        PcVideoSettings v;
+        pc_video_get(&v);
+        v.split_screen = atoi(value) == 2;
+        pc_video_set(&v);
+        bnm_players_chosen = 1;
+        fprintf(stderr, "[MENU] %s\n", v.split_screen ? "two players: split-screen" : "one player");
+        return;
+    }
+    bnm_set_var(ctx, name, value);
+}
 static char bnm_hidden_page[48];
 static int bnm_hidden_frames;
 
@@ -984,7 +1018,7 @@ static void black_native_menu_tick(uint32_t ui)
     ready = GUEST32(ui + 0x381Cu) == 2u && GUEST32(ui + 0x388Cu) == 0u && GUEST32(ui + 0x3884u) == 0u;
     ctx.ui = ui;
     host.ctx = &ctx; host.gamecode = bnm_gamecode; host.page = bnm_page; host.value = bnm_value; host.text = bnm_text;
-    host.sound = bnm_sound; host.video = bnm_video; host.set_var = bnm_set_var; host.get_var = bnm_get_var;
+    host.sound = bnm_sound; host.video = bnm_video; host.set_var = bnm_set_var_hook; host.get_var = bnm_get_var;
     host.quit = bnm_quit;
     if (bnm_sound_pending[0]) {
         char prop[64];
@@ -992,7 +1026,8 @@ static void black_native_menu_tick(uint32_t ui)
         bnm_sound_pending[0] = 0;
         bnm_trace_property(ui, "sound", prop);
     }
-    active = pc_menu_tick(page, ready, &host);
+    if (_stricmp(page, "Difficulty")) bnm_players_chosen = 0;
+    active = pc_menu_tick(!_stricmp(page, "Difficulty") && !bnm_players_chosen ? "Players" : page, ready, &host);
     if (active) {
         /* Hidden once the page is loaded, and again now and then: a page the game reloads comes back visible. */
         if (_stricmp(bnm_hidden_page, page) || ++bnm_hidden_frames >= 30) {

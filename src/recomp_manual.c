@@ -1000,8 +1000,8 @@ static void black_photo_camera(uint32_t camera)
  * doubled for D2F40, so a view keeps the horizontal field of view and shows half the vertical. Player one's world
  * comes first; D2F40 then runs again with player two's free camera (pc_split.c) in place of the frame matrices, as
  * photo mode does, at the native lens so player one's aim zoom stays theirs, and a last D2F40 puts player one's
- * camera back. The HUD and player one's weapon are scaled into player one's half; player two sees no weapon. The
- * camera-motion blur keeps one camera history, so it is off. A scripted camera (BLACK_PC_FOV) is drawn whole. */
+ * camera back. Player one's weapon is scaled into its half; player two sees no weapon. Each player gets the HUD in
+ * their half, and the camera-motion blur keeps a history per player. A scripted camera (BLACK_PC_FOV) is drawn whole. */
 #include "pc_split.h"
 extern void sub_001EE820_gen(void);
 extern int kelvin_mark_view(uint32_t va, int mode, int slot, int x0, int y0, int x1, int y1);
@@ -1151,7 +1151,10 @@ void sub_000D2F40(void)
 /* END BLACK_PC_FOV */
 
 /* BEGIN BLACK_SPLITSCREEN (the passes) */
-static void black_split_mark(int view, int mode, int slot)
+static int black_split_view;                          /* 1 or 2 while that player's world is drawn */
+static int black_split_hud;                           /* player one's HUD is being drawn: player two's follows */
+
+static void black_split_mark(int player, int mode, int slot)
 {
     uint32_t device, physical;
     int r[4];
@@ -1160,48 +1163,46 @@ static void black_split_mark(int view, int mode, int slot)
     if (!black_pc_ram_span(device, 4u)) return;
     physical = xbox_PhysicalAddressOf(GUEST32(device));
     if (physical >= 0x08000000u) return;
-    pc_split_rect(view, r);
+    pc_split_rect(player, r);
     kelvin_mark_view(0x80000000u + physical, mode, slot, r[0], r[1], r[2], r[3]);
+}
+
+/* Calls a generated guest function as guest code would: `n` stack arguments below the caller's stack, the registers
+ * given, the return address `ret`; every register and the floating-point control are put back afterwards. */
+static void black_split_call(void (*fn)(void), uint32_t eax, uint32_t esi, uint32_t edi, const uint32_t *args,
+                             unsigned n, uint32_t ret)
+{
+    const uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebx = g_ebx, s_esi = g_esi, s_edi = g_edi;
+    const uint32_t s_esp = g_esp, s_ebp = g_ebp, s_seh = g_seh_ebp;
+    const unsigned csr = _mm_getcsr();
+    uint32_t sp = (s_esp - 0x200u) & ~15u;
+    unsigned i;
+    if (s_esp < 0x20000u || !black_pc_ram_span(sp - 4u * (n + 1u), 4u * (n + 1u) + 0x200u)) return;
+    for (i = n; i-- > 0;) { sp -= 4u; GUEST32(sp) = args[i]; }
+    sp -= 4u; GUEST32(sp) = ret;
+    g_esp = sp; g_eax = eax; g_esi = esi; g_edi = edi;
+    fn();
+    g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebx = s_ebx; g_esi = s_esi; g_edi = s_edi;
+    g_esp = s_esp; g_ebp = s_ebp; g_seh_ebp = s_seh;
+    _mm_setcsr(csr);
 }
 
 /* The clear 20BAC0 makes before the world, for a view's own frame: Clear(0, NULL, 0xF3, 0, 1.0f, 0). */
 static void black_split_clear(void)
 {
     static const uint32_t args[6] = { 0u, 0u, 0xF3u, 0u, 0x3F800000u, 0u };
-    const uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebx = g_ebx, s_esi = g_esi, s_edi = g_edi;
-    const uint32_t s_esp = g_esp, s_ebp = g_ebp, s_seh = g_seh_ebp;
-    const unsigned csr = _mm_getcsr();
-    uint32_t sp = (s_esp - 0x200u) & ~15u;
-    int i;
-    if (s_esp < 0x20000u || !black_pc_ram_span(sp - 0x1Cu, 0x21Cu)) return;
-    for (i = 5; i >= 0; --i) { sp -= 4u; GUEST32(sp) = args[i]; }
-    sp -= 4u; GUEST32(sp) = 0x0020BADFu;
-    g_esp = sp;
-    sub_00268880();
-    g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebx = s_ebx; g_esi = s_esi; g_edi = s_edi;
-    g_esp = s_esp; g_ebp = s_ebp; g_seh_ebp = s_seh;
-    _mm_setcsr(csr);
+    black_split_call(sub_00268880, g_eax, g_esi, g_edi, args, 6, 0x0020BADFu);
 }
 
 /* D2F40 for the world camera, called the way 2033A0 calls it; player two's at the native lens (2888C8). */
 static void black_split_produce(uint32_t camera, int pass)
 {
-    const uint32_t s_eax = g_eax, s_ecx = g_ecx, s_edx = g_edx, s_ebx = g_ebx, s_esi = g_esi, s_edi = g_edi;
-    const uint32_t s_esp = g_esp, s_ebp = g_ebp, s_seh = g_seh_ebp;
-    const unsigned csr = _mm_getcsr();
     const uint32_t owner = GUEST32(0x002D12B8u), lens = GUEST32(owner + 0x750u);
-    uint32_t sp = (s_esp - 0x200u) & ~15u;
-    if (s_esp < 0x20000u || !black_pc_ram_span(sp - 4u, 0x204u)) return;
     if (pass == 2) GUEST32(owner + 0x750u) = GUEST32(0x002888C8u);
     black_split_pass = pass;
-    sp -= 4u; GUEST32(sp) = 0x0020359Fu;
-    g_esp = sp; g_edi = camera;
-    sub_000D2F40();
+    black_split_call(sub_000D2F40, g_eax, g_esi, camera, NULL, 0, 0x0020359Fu);
     black_split_pass = 0;
     GUEST32(owner + 0x750u) = lens;
-    g_eax = s_eax; g_ecx = s_ecx; g_edx = s_edx; g_ebx = s_ebx; g_esi = s_esi; g_edi = s_edi;
-    g_esp = s_esp; g_ebp = s_ebp; g_seh_ebp = s_seh;
-    _mm_setcsr(csr);
 }
 
 void sub_001EE820(void)
@@ -1215,18 +1216,42 @@ void sub_001EE820(void)
     }
     ret = GUEST32(esp);
     player = GUEST32(esp + 4u);
-    black_split_mark(PCS_VIEW_P1, BLACK_VIEW_FRAME, 1);
+    black_split_view = 1;
+    black_split_mark(0, BLACK_VIEW_FRAME, 1);
     black_split_clear();
     sub_001EE820_gen();
     g_esp = esp; GUEST32(esp) = ret; GUEST32(esp + 4u) = player;
     g_ebx = ebx; g_esi = esi; g_edi = edi; g_ebp = ebp; g_seh_ebp = seh;
     _mm_setcsr(csr);
     black_split_produce(camera, 2);
-    black_split_mark(PCS_VIEW_P2, BLACK_VIEW_FRAME, 2);
+    black_split_view = 2;
+    black_split_mark(1, BLACK_VIEW_FRAME, 2);
     black_split_clear();
     sub_001EE820_gen();
+    black_split_view = 0;
     black_split_produce(camera, 1);
-    black_split_mark(PCS_VIEW_HUD, BLACK_VIEW_FIT, 0);
+    black_split_mark(0, BLACK_VIEW_FIT, 0);
+    black_split_hud = 1;
+}
+
+/* 129340 is the last of the HUD's three layers the world's callers draw (13C050 with 0, 121E60, 13C050 with 1, then
+ * this). After player one's, the same three go into player two's half. */
+extern void sub_00129340_gen(void);
+extern void sub_0013C050(void);
+extern void sub_00121E60(void);
+
+void sub_00129340(void)
+{
+    static const uint32_t below = 0u, above = 1u;
+    const int hud = black_split_hud;
+    black_split_hud = 0;
+    sub_00129340_gen();
+    if (!hud || !pc_split_enabled()) return;
+    black_split_mark(1, BLACK_VIEW_FIT, 0);
+    black_split_call(sub_0013C050, g_eax, GUEST32(0x002D12E4u), g_edi, &below, 1, 0x0020BB04u);
+    black_split_call(sub_00121E60, g_eax, g_esi, GUEST32(0x002D199Cu), NULL, 0, 0x0020BB0Fu);
+    black_split_call(sub_0013C050, g_eax, GUEST32(0x002D12E4u), g_edi, &above, 1, 0x0020BB1Cu);
+    black_split_call(sub_00129340_gen, GUEST32(0x002D19A4u), g_esi, g_edi, NULL, 0, 0x0020BB26u);
 }
 /* END BLACK_SPLITSCREEN */
 
@@ -1604,18 +1629,31 @@ static void black_motion_blur_refresh(void)
     fprintf(stderr, "[BLACK] motion blur %s (original guest effect)\n", off ? "off" : "original");
 }
 
+static uint32_t black_split_blur[3][5];
+static int black_split_blur_kept[3];
+
 void sub_00168A30(void)
 {
     const uint32_t effect = g_esi;
+    unsigned i;
     const unsigned int caller_csr = _mm_getcsr();
     black_motion_blur_refresh();
     /* Native environment/logging/initialization must not change the guest
      * producer's controls or sticky flags, including the first call. */
     _mm_setcsr(caller_csr);
+    /* split-screen: each player's camera blurs against its own last position (+00, the time +24) */
+    if (black_split_view && black_split_blur_kept[black_split_view]) {
+        for (i = 0; i < 4u; i++) GUEST32(effect + i * 4u) = black_split_blur[black_split_view][i];
+        GUEST32(effect + 0x24u) = black_split_blur[black_split_view][4];
+    }
     sub_00168A30_gen();
-    /* photo mode keeps photos sharp: the camera it turns is not a fast look; split-screen's two cameras would each
-     * blur against the other's (BLACK_SPLITSCREEN) */
-    if (black_motion_blur_off || pc_photo_active() || pc_split_enabled())
+    if (black_split_view) {
+        for (i = 0; i < 4u; i++) black_split_blur[black_split_view][i] = GUEST32(effect + i * 4u);
+        black_split_blur[black_split_view][4] = GUEST32(effect + 0x24u);
+        black_split_blur_kept[black_split_view] = 1;
+    }
+    /* photo mode keeps photos sharp: the camera it turns is not a fast look */
+    if (black_motion_blur_off || pc_photo_active())
         GUEST32(effect + 0x20u) = 0u;
 }
 /* END BLACK_PC_MOTION_BLUR */

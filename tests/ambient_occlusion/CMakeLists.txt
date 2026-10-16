@@ -15,7 +15,7 @@ add_executable(ao-video-test test_video.c
     "${runtime_video}/pc_video.c" "${runtime_video}/pc_video_menu.c" "${runtime_input}/pc_input.c")
 add_executable(ao-crosshair-test test_crosshair.c "${runtime_video}/pc_crosshair.c" "${runtime_video}/pc_video.c")
 add_executable(ao-debug-test test_debug.c "${runtime_video}/pc_debug.c" "${runtime_video}/pc_video.c")
-add_executable(ao-split-test test_split.c "${runtime_video}/pc_split.c")
+add_executable(ao-split-test test_split.c "${runtime_video}/pc_split.c" "${runtime_video}/pc_video.c" "${runtime_input}/pc_input.c")
 target_link_libraries(ao-split-test PRIVATE xinput)
 add_executable(ao-menu-test test_menu.c
     "${runtime_video}/pc_menu.c" "${runtime_video}/pc_menu_assets.c"

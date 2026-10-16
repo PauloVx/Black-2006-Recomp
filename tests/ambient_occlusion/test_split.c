@@ -1,8 +1,11 @@
 /* Split-screen: the views' layout, and player two's camera starting on player one's. */
 #include "pc_split.h"
+#include "pc_video.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <windows.h>
 
 static int failures;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); failures++; } } while (0)
@@ -31,14 +34,23 @@ int main(void)
 {
     static const float pos[3] = { 12.5f, -3.0f, 140.25f };
     float p1[4][3], m[4][3];
+    char path[MAX_PATH];
     int r[4];
 
-    pc_split_rect(PCS_VIEW_P1, r);
+    pc_split_rect_for(1, 0, r);
     CHECK(r[0] == 0 && r[1] == 0 && r[2] == 640 && r[3] == 240);
-    pc_split_rect(PCS_VIEW_P2, r);
+    pc_split_rect_for(1, 1, r);
     CHECK(r[0] == 0 && r[1] == 240 && r[2] == 640 && r[3] == 480);
-    pc_split_rect(PCS_VIEW_HUD, r);
-    CHECK(r[0] == 0 && r[1] == 0 && r[2] == 640 && r[3] == 240);
+    pc_split_rect_for(0, 0, r);
+    CHECK(r[0] == 0 && r[1] == 0 && r[2] == 640 && r[3] == 480);
+
+    /* RECOMP_SPLITSCREEN pins the setting */
+    GetTempPathA(sizeof(path), path);
+    strcat_s(path, sizeof(path), "black-split-test.ini");
+    DeleteFileA(path);
+    _putenv_s("RECOMP_SPLITSCREEN", "1");
+    pc_video_test_reset(path);
+    CHECK(pc_split_enabled());
 
     /* the first call takes player one's camera as it is (no second controller moves it here) */
     pose(p1, 0.7, -0.2, -1.0, pos);
