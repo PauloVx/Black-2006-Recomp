@@ -10,6 +10,10 @@
 #define DXGI_FORMAT_B8G8R8A8_UNORM 87
 #define PCV_AO_OFF 0
 #define PCV_AA_FXAA 1
+#define PCV_AA_DLAA 3
+#define PCV_AA_DLSS_QUALITY 4
+#define PCV_AA_DLSS_PERFORMANCE 6
+#define PCV_AA_COUNT 7
 typedef void ID3D11Resource;
 typedef struct KGpuSurf {
     int bpp, dxfmt;
@@ -39,6 +43,7 @@ static bool post_scene_resources(unsigned w, unsigned h) { (void)w; (void)h; ret
 static void kg_post_depth_stats(KGpuSurf *zs) { (void)zs; abort(); }
 static void kg_post_ao_scene(KGpuSurf *cs, KGpuSurf *zs) { (void)cs; (void)zs; }
 static void kg_ssr_pass(KGpuSurf *cs, KGpuSurf *zs) { (void)cs; (void)zs; }
+static bool kg_dlss_run(KGpuSurf *cs, KGpuSurf *zs) { (void)cs; (void)zs; return false; }
 static void post_dof_preset(int dof, float *taps, float *radius) { (void)dof; *taps = 16; *radius = 0.01f; }
 static void ID3D11DeviceContext_CopyResource(void *ctx, ID3D11Resource *dst, ID3D11Resource *src) { (void)ctx; (void)dst; (void)src; }
 static void post_cb(float w, float h, float taps, float radius, float alpha, float depth_scale,

@@ -53,6 +53,8 @@ struct Settings {
     std::string aoQuality = "high";
     std::string reflections = "high";
     std::string rayTracing = "off";  // experimental; the game checks the GPU
+    std::string crosshair = "cross";
+    std::string hitmarkers = "on";
 
     // Input
     std::string inputMode = "auto";
@@ -74,12 +76,14 @@ inline constexpr std::array<std::string_view, 3> kScaleModes = {"fit", "stretch"
 inline constexpr std::array<std::string_view, 2> kFilters = {"linear", "nearest"};
 inline constexpr std::array<std::string_view, 5> kAspects = {"original", "4:3", "16:9", "21:9", "32:9"};
 inline constexpr std::array<std::string_view, 2> kMotionBlur = {"original", "off"};
-inline constexpr std::array<std::string_view, 3> kAntiAliasing = {"off", "fxaa", "ssaa"};
+inline constexpr std::array<std::string_view, 7> kAntiAliasing = {"off",  "fxaa",          "ssaa",           "dlaa",
+                                                                  "dlss_quality", "dlss_balanced", "dlss_performance"};
 inline constexpr std::array<std::string_view, 4> kSteps = {"off", "low", "medium", "high"};
 inline constexpr std::array<std::string_view, 5> kAoMethods = {"off", "ssao", "hbao", "hbao_plus", "gtao"};
 inline constexpr std::array<std::string_view, 4> kAoQualities = {"low", "medium", "high", "ultra"};
 inline constexpr std::array<std::string_view, 5> kReflections = {"original", "low", "medium", "high", "ultra"};
 inline constexpr std::array<std::string_view, 2> kOnOff = {"off", "on"};
+inline constexpr std::array<std::string_view, 4> kCrosshairs = {"original", "cross", "t", "circle"};
 inline constexpr std::array<std::string_view, 3> kSilverWeapons = {"native", "force-on", "force-off"};
 inline constexpr std::array<std::string_view, 3> kInputModes = {"auto", "keyboard_mouse", "controller"};
 inline constexpr std::array<std::string_view, 6> kLanguages = {"en-US", "pt-BR", "es", "fr", "de", "it"};

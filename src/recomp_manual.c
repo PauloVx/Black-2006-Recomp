@@ -2860,6 +2860,135 @@ static void black_mouse_look(uint32_t camera)
     _mm_setcsr(guest_csr);
 }
 
+/* BEGIN BLACK_PC_CROSSHAIR
+ * What the PC crosshair (xboxrecomp src/video/pc_crosshair.c) is told once per gameplay update, from the look
+ * integrator below: whether the player is in control, the speed of the player's actor (world position at +A0..A8 of
+ * [2D45D4]+30), the mission's bullets fired (u16 at +48 of [[2D12CC]], the results screen's TOTAL BULLETS FIRED)
+ * and the camera zoom ([[camera+8C]+2A4], 1 unzoomed). Hits and kills: the characters are the objects with vtable
+ * 28C1E8 (type 1 at +C4, 3C0 bytes, a weapon at +29C); a host thread finds them about once a second and each update
+ * watches their health (float at +2F0, 100 when whole, falling in steps to 0), their death flag (+3AD, set by the
+ * native death handlers 17AD70, 17C270, 1B6B80 and 1E68B0) and their disarm flag (+3AC: a shot knocked the weapon
+ * out of their hands). Any of them within two seconds of the player firing is the player's: a kill, or a hit.
+ */
+#include "pc_crosshair.h"
+
+#define BLACK_SOLDIER_VTABLE 0x0028C1E8u
+#define BLACK_SOLDIERS 96u
+static volatile LONG black_xh_list_gen;
+static uint32_t black_xh_list[BLACK_SOLDIERS];
+static volatile LONG black_xh_list_n;
+static SRWLOCK black_xh_lock = SRWLOCK_INIT;
+
+static DWORD WINAPI black_xh_scan(LPVOID unused)
+{
+    (void)unused;
+    for (;;) {
+        uint32_t found[BLACK_SOLDIERS], o;
+        unsigned n = 0;
+        for (o = 0x80000000u; o < 0x84000000u && n < BLACK_SOLDIERS; o += 0x20u)
+            if (GUEST32(o) == BLACK_SOLDIER_VTABLE && black_pc_ram_span(o, 0x3B0u)) found[n++] = o;
+        AcquireSRWLockExclusive(&black_xh_lock);
+        memcpy(black_xh_list, found, n * sizeof(found[0]));
+        InterlockedExchange(&black_xh_list_n, (LONG)n);
+        InterlockedIncrement(&black_xh_list_gen);
+        ReleaseSRWLockExclusive(&black_xh_lock);
+        Sleep(1000);
+    }
+}
+
+static void black_crosshair_tick(uint32_t camera)
+{
+    static int started;
+    static LARGE_INTEGER frequency, last;
+    static float lx, ly, lz;
+    static int have_last;
+    static uint32_t watched[BLACK_SOLDIERS];
+    static uint8_t dead[BLACK_SOLDIERS], disarmed[BLACK_SOLDIERS];
+    static float health[BLACK_SOLDIERS];
+    static unsigned nwatched;
+    static LONG watched_gen;
+    LARGE_INTEGER now;
+    uint32_t actor, stats_ptr, zoom_object;
+    unsigned shots = 0, i;
+    float speed = 0.0f, zoom = 1.0f;
+    const unsigned csr = _mm_getcsr();
+    fenv_t environment;
+    fegetenv(&environment);
+    fesetenv(FE_DFL_ENV);
+    _mm_setcsr(0x1F80u);
+    if (!started) {
+        HANDLE thread = CreateThread(NULL, 0, black_xh_scan, NULL, 0, NULL);
+        started = 1;
+        if (thread) { SetThreadPriority(thread, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(thread); }
+        QueryPerformanceFrequency(&frequency);
+    }
+    QueryPerformanceCounter(&now);
+    if (!black_pc_ram_span(0x002D45D4u, 4u)) goto done;
+    actor = GUEST32(0x002D45D4u) + 0x30u;
+    if (black_pc_ram_span(actor, 0xACu)) {
+        const float x = black_input_f32(actor + 0xA0u), y = black_input_f32(actor + 0xA4u), z = black_input_f32(actor + 0xA8u);
+        const double dt = have_last ? (double)(now.QuadPart - last.QuadPart) / (double)frequency.QuadPart : 0.0;
+        if (dt > 0.0005 && dt < 0.25) {
+            const float dx = x - lx, dy = y - ly, dz = z - lz;
+            speed = (float)(sqrt((double)dx * dx + 0.5 * (double)dy * dy + (double)dz * dz) / dt);
+        }
+        lx = x; ly = y; lz = z; last = now; have_last = 1;
+    }
+    if (black_pc_ram_span(0x002D12CCu, 4u) && black_pc_ram_span(stats_ptr = GUEST32(0x002D12CCu), 4u) &&
+        black_pc_ram_span(GUEST32(stats_ptr), 0x4Au))
+        shots = *(const uint16_t *)((uintptr_t)g_xbox_mem_offset + GUEST32(stats_ptr) + 0x48u);
+    zoom_object = black_pc_ram_span(camera, 0x90u) ? GUEST32(camera + 0x8Cu) : 0;
+    if (black_pc_ram_span(zoom_object, 0x2A8u)) {
+        const float factor = black_input_f32(zoom_object + 0x2A4u);
+        if (factor >= 1.0f && factor < 50.0f) zoom = 1.0f / factor;
+    }
+    pc_crosshair_tick(!black_pc_input_gameplay_blocked_query(), speed, shots, zoom);
+    /* hits and kills: the soldiers' health and flags */
+    if (InterlockedCompareExchange(&black_xh_list_gen, 0, 0) != watched_gen) {
+        AcquireSRWLockShared(&black_xh_lock);
+        watched_gen = black_xh_list_gen;
+        nwatched = (unsigned)black_xh_list_n;
+        for (i = 0; i < nwatched; ++i) {
+            const uint32_t s = black_xh_list[i];
+            unsigned k;
+            uint8_t was = 0xFF, was_disarmed = 0xFF;
+            float was_health = -1.0f;
+            for (k = 0; k < BLACK_SOLDIERS && watched[k] != s; ++k) {}
+            if (k < BLACK_SOLDIERS) { was = dead[k]; was_disarmed = disarmed[k]; was_health = health[k]; }
+            watched[i] = s;
+            dead[i] = was;
+            disarmed[i] = was_disarmed;
+            health[i] = was_health;
+        }
+        ReleaseSRWLockShared(&black_xh_lock);
+    }
+    for (i = 0; i < nwatched; ++i) {
+        const uint32_t s = watched[i];
+        uint8_t flag, lost;
+        float hp;
+        if (!black_pc_ram_span(s, 0x3B0u) || GUEST32(s) != BLACK_SOLDIER_VTABLE) { dead[i] = disarmed[i] = 0xFF; health[i] = -1.0f; continue; }
+        flag = *(const uint8_t *)((uintptr_t)g_xbox_mem_offset + s + 0x3ADu) ? 1 : 0;
+        lost = *(const uint8_t *)((uintptr_t)g_xbox_mem_offset + s + 0x3ACu) ? 1 : 0;
+        hp = black_input_f32(s + 0x2F0u);
+        if (!(hp >= 0.0f && hp <= 10000.0f)) hp = -1.0f;
+        if (pc_crosshair_since_shot() < 2.0) {
+            if (flag && dead[i] == 0) { pc_crosshair_hit(PCX_MARK_KILL); fprintf(stderr, "[XHAIR] kill %08X\n", s); }
+            else if (!flag && dead[i] == 0 &&
+                     ((lost && disarmed[i] == 0) || (hp >= 0.0f && health[i] >= 0.0f && hp < health[i]))) {
+                pc_crosshair_hit(PCX_MARK_HIT);
+                fprintf(stderr, "[XHAIR] hit %08X %.1f\n", s, hp);
+            }
+        }
+        dead[i] = flag;
+        disarmed[i] = lost;
+        health[i] = hp;
+    }
+done:
+    fesetenv(&environment);
+    _mm_setcsr(csr);
+}
+/* END BLACK_PC_CROSSHAIR */
+
 void sub_001BD3F0(void)
 {
     const uint32_t camera = g_esi;
@@ -2884,6 +3013,7 @@ void sub_001BD3F0(void)
     _mm_setcsr(caller_csr);
     sub_001BD3F0_gen();
     black_mouse_look(camera);
+    black_crosshair_tick(camera);
 
 }
 

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+**DLSS and DLAA.** On an NVIDIA RTX graphics card, anti-aliasing gains DLAA (DLSS at the internal resolution) and
+DLSS Quality, Balanced and Performance, which draw the world at 2/3, 0.58 or half the width and height and have DLSS
+rebuild the internal resolution before the HUD, which stays sharp. With ray tracing on, the traced passes then run at
+the smaller size too. `scripts\fetch-dlss.ps1` (run by `setup.ps1`) fetches NVIDIA's runtime and headers into
+`third_party\dlss`; without them, or without an RTX card, these modes fall back to FXAA.
+
+**Crosshair and hit markers.** A crosshair in place of the game's dot (a cross, a T or a circle, on the Display page)
+opens with every shot and as you move, and closes again when you stop; aiming down the sights hides it and brings the
+dot back. A white mark flashes on every shot that wounds an enemy or knocks the weapon out of their hands, and a red
+one when it kills. Neither is ever in a photo.
+
 **Ray tracing (experimental).** With a graphics card that has DirectX Raytracing (NVIDIA RTX, AMD RX 6000 or newer),
 **Ray tracing** in the Graphics settings (in game and in the launcher) uses the GPU's ray tracing cores for shadows
 cast by characters and props, ambient occlusion and bounce light around them, and reflections of the whole scene,

@@ -8,6 +8,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $projectRoot 'BLACK Launcher.exe'
 
 & (Join-Path $PSScriptRoot 'build-launcher.ps1')
+# NVIDIA DLSS for the DLAA and DLSS anti-aliasing modes; the game builds without it (they fall back to FXAA)
+try { & (Join-Path $PSScriptRoot 'fetch-dlss.ps1') } catch { Write-Warning "DLSS SDK not fetched ($_): DLAA and DLSS will fall back to FXAA" }
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'game\default.xbe') -PathType Leaf)) {
     Write-Output "Next: open $launcher and choose your disc; it builds the game from there too."
     return

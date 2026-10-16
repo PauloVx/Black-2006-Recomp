@@ -352,7 +352,7 @@ static const char black_menu_definition[] =
 "item = \"EXIT PHOTO MODE\" | close\r\n"
 "\r\n"
 "; PC video pages use the same fonts, rails, focus and input as the game's menus.\r\n"
-"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur\r\n"
+"; setting = TEXT | mode/window/internal/aa/af/dof/sharpen/ao_method/ao_quality/reflections/ray_tracing/aspect/fov/scale/filter/vsync/fps/blur/crosshair/hitmarkers\r\n"
 "; &VIDEO_HELP is the focused setting's explanation. reset_video preserves locked values.\r\n"
 "[page VideoSettings]\r\n"
 "column = 00000000\r\n"
@@ -375,7 +375,7 @@ static const char black_menu_definition[] =
 "logo = 151.5 58\r\n"
 "title_at = 165 86\r\n"
 "rails = 47 130\r\n"
-"list = 168 142 23\r\n"
+"list = 168 142 20\r\n"
 "values = 607\r\n"
 "item_size = 13.5\r\n"
 "selector = 451\r\n"
@@ -391,6 +391,8 @@ static const char black_menu_definition[] =
 "setting = \"SCALING FILTER\" | filter\r\n"
 "setting = \"VERTICAL SYNC\" | vsync\r\n"
 "setting = \"FRAME LIMIT\" | fps\r\n"
+"setting = \"CROSSHAIR\" | crosshair\r\n"
+"setting = \"HIT MARKERS\" | hitmarkers\r\n"
 "item = \"BACK\" | close\r\n"
 "\r\n"
 "[page VideoGraphics]\r\n"
@@ -522,10 +524,11 @@ static const char black_menu_definition[] =
 /* The built-in definitions of earlier builds (FNV-1a 64 of the whole file): a local\menus.ini that is still exactly
  * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05); 4: before the
  * Controls, Photo mode and Reflections pages; 5-7: the Controls, Photo mode and Reflections builds alone; 8-9: the
- * two builds before the Ray tracing row. */
+ * two builds before the Ray tracing row; 10: the Ray tracing build, before the crosshair rows. */
 static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
                                                 0xFF74A7E07CF4C7F0ull, 0x33977C1E8AC020F3ull, 0xB86AB9AC7D0F4406ull,
-                                                0xDC483F969B68C28Aull, 0x9EE07629CB313D32ull, 0xC6D3B76BDD8FC724ull };
+                                                0xDC483F969B68C28Aull, 0x9EE07629CB313D32ull, 0xC6D3B76BDD8FC724ull,
+                                                0xCAB7BCC76B5F689Aull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 

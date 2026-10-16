@@ -215,6 +215,13 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                     {}});
     rows.push_back(pick(tr("MOTION BLUR"), tr("Original keeps BLACK's motion blur; off removes only that effect."),
                         s.motionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
+    rows.push_back(pick(tr("CROSSHAIR"),
+                        tr("A crosshair around the game's dot that opens as you move and fire. Original keeps the dot "
+                           "alone."),
+                        s.crosshair,
+                        {{"original", tr("ORIGINAL")}, {"cross", tr("CROSS")}, {"t", tr("T-SHAPE")}, {"circle", tr("CIRCLE")}}));
+    rows.push_back(pick(tr("HIT MARKERS"), tr("A mark on the crosshair when a shot of yours kills an enemy."), s.hitmarkers,
+                        {{"off", tr("OFF")}, {"on", tr("ON")}}));
     return rows;
 }
 
@@ -231,8 +238,16 @@ std::vector<SettingsFlow::Option> SettingsFlow::graphicsOptions() {
     rows.push_back(
         pick(tr("ANTI-ALIASING"),
              tr("FXAA smooths jagged edges at almost no cost. SSAA draws four times the pixels: the cleanest "
-                "and the heaviest."),
-             s.antiAliasing, {{"off", tr("OFF")}, {"fxaa", tr("FXAA")}, {"ssaa", tr("SSAA 4X")}}));
+                "and the heaviest. DLAA is NVIDIA DLSS anti-aliasing; the DLSS modes draw fewer pixels and let DLSS "
+                "rebuild the rest. Both need an RTX graphics card."),
+             s.antiAliasing,
+             {{"off", tr("OFF")},
+              {"fxaa", tr("FXAA")},
+              {"ssaa", tr("SSAA 4X")},
+              {"dlaa", tr("DLAA")},
+              {"dlss_quality", tr("DLSS QUALITY")},
+              {"dlss_balanced", tr("DLSS BALANCED")},
+              {"dlss_performance", tr("DLSS PERFORMANCE")}}));
     rows.push_back({tr("ANISOTROPIC FILTERING"),
                     tr("Keeps floors and walls seen at a slant sharp. Costs almost nothing."),
                     [&s] { return s.anisotropy == 1 ? std::string(tr("OFF")) : std::to_string(s.anisotropy) + "X"; },
