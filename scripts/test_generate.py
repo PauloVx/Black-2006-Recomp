@@ -386,7 +386,25 @@ def test_weapon_runtime_consumers():
     assert generate.weapon_runtime_hooks("unrelated", guards) == guards
 
 
+def test_checkpoint_boundaries():
+    for name, label, event in (("sub_001EDC90", "001EE310", 2),
+                               ("sub_001FE450", "001FE713", 4)):
+        body = f"loc_{label}: ;\n    native();\n"
+        hooked = generate.checkpoint_hooks(name, body)
+        assert hooked == f"loc_{label}: ;\n    black_checkpoint_event({event}u, ebp);\n    native();\n"
+        assert generate.checkpoint_hooks(name, hooked) == hooked
+        for invalid in ("native();", body + body):
+            try:
+                generate.checkpoint_hooks(name, invalid)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Changed native checkpoint boundary must fail closed")
+    assert generate.checkpoint_hooks("other", "unchanged") == "unchanged"
+
+
 if __name__ == "__main__":
+    test_checkpoint_boundaries()
     test_weapon_runtime_consumers()
     test_audio_completion_enqueue_boundary()
     test_disasm_forwards_feedback_seeds()
@@ -401,4 +419,4 @@ if __name__ == "__main__":
     test_native_lab_loadout_boundary()
     test_native_lab_streaming_boundary()
     test_scope_mask_native_boundary()
-    print("14 checks passed")
+    print("15 checks passed")
