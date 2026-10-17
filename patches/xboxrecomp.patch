@@ -36913,10 +36913,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..76bdcd7
+index 0000000..67e9e39
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2599 @@
+@@ -0,0 +1,2605 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -38608,6 +38608,13 @@ index 0000000..76bdcd7
 +static void queue(int action)
 +{
 +    AcquireSRWLockExclusive(&m_lock);
++    /* Mouse motion can report the same row repeatedly before the game polls. Keep one hover so clicks
++     * still have room, while a real new motion can re-focus a row after a page or keyboard change. */
++    if (action >= PCM_ACT_HOVER && action < PCM_ACT_HOVER + PCM_ITEMS && m_qhead != m_qtail &&
++        m_queue[(m_qtail + 31) % 32] == action) {
++        ReleaseSRWLockExclusive(&m_lock);
++        return;
++    }
 +    if ((m_qtail + 1) % 32 != m_qhead) { m_queue[m_qtail] = action; m_qtail = (m_qtail + 1) % 32; }
 +    ReleaseSRWLockExclusive(&m_lock);
 +}
@@ -38690,17 +38697,16 @@ index 0000000..76bdcd7
 +
 +void pc_menu_pointer(int x, int y)
 +{
-+    int item, previous;
++    int item;
 +    if (!pc_menu_active()) return;
 +    AcquireSRWLockExclusive(&m_lock);
 +    if (m_xf_s <= 0) { ReleaseSRWLockExclusive(&m_lock); return; }
-+    previous = m_pointer_item;
 +    m_pointer_x = x; m_pointer_y = y;
 +    m_pointer_known = 1;
 +    pointer_hit_locked();
 +    item = m_pointer_item;
 +    ReleaseSRWLockExclusive(&m_lock);
-+    if (item != previous && item >= 0) { input_seen(); queue(PCM_ACT_HOVER + item); }
++    if (item >= 0) { input_seen(); queue(PCM_ACT_HOVER + item); }
 +}
 +
 +static int f_wheel(int delta)
