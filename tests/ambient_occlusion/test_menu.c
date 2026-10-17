@@ -682,6 +682,40 @@ static int sweep(const char *page, int top[8], int left[8], int right[8])
     return n;
 }
 
+/* These small pages exercise pointer geometry without retail assets. The host rows are at y=150/180,
+ * while the child page is at y=300, so a stationary pointer that belonged to the host is outside the
+ * child after either mouse or keyboard navigation. */
+static const char k_pointer_transition_def[] =
+"[style]\nintro = 0\nanimation = 0\n"
+"[page PointerHost]\nlist = 100 150 30\nfocus = 1\n"
+"item = \"OPEN FIRST\" | open PointerChild\n"
+"item = \"OPEN SECOND\" | open PointerDisabled\n"
+"item = \"OPEN THIRD\" | open PointerChild\n"
+"[page PointerChild]\nlist = 100 300 30\nfocus = 1\nback = close\n"
+"item = \"CLOSE CHILD\" | close\n"
+"[page PointerDisabled]\nlist = 100 180 30\nfocus = 2\n"
+"item = \"DISABLED UNDER POINTER\" | gamecode ChildHit | disabled unless FE_POINTER_ENABLED\n"
+"item = \"ENABLED TRAP\" | gamecode ChildHit\n";
+
+/* The child deliberately defaults to row 1 while the stationary pointer lands on row 0 after it opens.
+ * Moving within row 0 must still make pointer focus win over that keyboard default. */
+static const char k_pointer_focus_def[] =
+"[style]\nintro = 0\nanimation = 0\n"
+"[page PointerFocusHost]\nlist = 100 150 30\nfocus = 1\n"
+"item = \"OPEN FOCUS CHILD\" | open PointerFocusChild\n"
+"[page PointerFocusChild]\nlist = 100 150 30\nfocus = 2\n"
+"item = \"CHILD FIRST\" | gamecode ChildFirst\n"
+"item = \"CHILD SECOND\" | gamecode ChildSecond\n";
+
+static void pointer_transition_fixture(const char *page)
+{
+    reset_game();
+    pc_menu_test_reset(k_pointer_transition_def);
+    tick("");
+    CHECK(tick(page) == 1, "%s is native for the pointer transition fixture", page);
+    pc_menu_test_pointer_space(640, 480);
+}
+
 static void test_pointer(void)
 {
     int top[8], left[8], right[8], n, f;
@@ -747,6 +781,115 @@ static void test_pointer(void)
     log_clear();
     click("PauseMenuOptionXbox");
     CHECK(log_is("gamecode ToggleCrouchOnOff 0 0 0\n"), "a click on the right of a toggle row is OFF: '%s'", g_log);
+}
+
+static void test_pointer_page_transitions(void)
+{
+    /* Opening by mouse must discard a parent hit that is outside the child's geometry, even when its
+     * old index is still in range on the child. */
+    pointer_transition_fixture("PointerHost");
+    pc_menu_pointer(120, 155); tick("PointerHost");
+    CHECK(pc_menu_test_pointer_item() == 0, "the first host row is under the pointer before opening");
+    log_clear(); click("PointerHost");
+    CHECK(display_has("CLOSE CHILD") && pc_menu_test_pointer_item() == -1,
+          "a mouse-opened child clears the in-range host hit outside its rows (item=%d)", pc_menu_test_pointer_item());
+    log_clear(); click("PointerHost");
+    CHECK(display_has("CLOSE CHILD") && !g_log[0],
+          "a stationary outside click does not activate the child's first row: '%s'", g_log);
+
+    /* A third host index is out of range for the one-row child. */
+    pointer_transition_fixture("PointerHost");
+    pc_menu_pointer(120, 215); tick("PointerHost");
+    CHECK(pc_menu_test_pointer_item() == 2, "the third host row is under the pointer before opening");
+    log_clear(); click("PointerHost");
+    CHECK(display_has("CLOSE CHILD") && pc_menu_test_pointer_item() == -1,
+          "the one-row child clears the out-of-range host hit after opening (item=%d)", pc_menu_test_pointer_item());
+    log_clear(); click("PointerHost");
+    CHECK(display_has("CLOSE CHILD") && !g_log[0],
+          "the out-of-range host index cannot confirm the child's default row: '%s'", g_log);
+
+    /* Keyboard confirmation also changes the current hit rows while the pointer stays put. */
+    pointer_transition_fixture("PointerHost");
+    pc_menu_pointer(120, 155); tick("PointerHost");
+    log_clear(); press(PCM_ACT_CONFIRM, "PointerHost");
+    CHECK(display_has("CLOSE CHILD") && pc_menu_test_pointer_item() == -1,
+          "keyboard-open recomputes the pointer against child rows (item=%d)", pc_menu_test_pointer_item());
+    log_clear(); click("PointerHost");
+    CHECK(display_has("CLOSE CHILD") && !g_log[0],
+          "a stationary outside click after keyboard-open does nothing: '%s'", g_log);
+
+    /* Closing by clicking a child row leaves the pointer over empty space on the host. */
+    pointer_transition_fixture("PointerHost");
+    pc_menu_pointer(120, 155); tick("PointerHost");
+    click("PointerHost");
+    pc_menu_pointer(120, 305); tick("PointerHost");
+    CHECK(pc_menu_test_pointer_item() == 0, "the child's close row is under the pointer");
+    log_clear(); click("PointerHost");
+    CHECK(display_has("OPEN FIRST") && pc_menu_test_pointer_item() == -1,
+          "closing publishes host rows and clears the child hit (item=%d)", pc_menu_test_pointer_item());
+    log_clear(); click("PointerHost");
+    CHECK(!display_has("CLOSE CHILD") && display_has("OPEN FIRST") && !g_log[0],
+          "a stationary click over empty host space does not reopen the child: '%s'", g_log);
+
+    /* The old host index points at an enabled child row, but the pointer lies on a disabled current row. */
+    pointer_transition_fixture("PointerHost");
+    value_set("FE_POINTER_ENABLED", 0);
+    pc_menu_pointer(120, 185); tick("PointerHost");
+    log_clear(); click("PointerHost");
+    CHECK(display_has("ENABLED TRAP") && pc_menu_test_focus() == 1 && pc_menu_test_pointer_item() == -1,
+          "a disabled child row is not a pointer hit even when the old index names row 1 (item=%d)", pc_menu_test_pointer_item());
+    log_clear(); click("PointerHost");
+    CHECK(!strstr(g_log, "gamecode ChildHit") && display_has("ENABLED TRAP"),
+          "the disabled row under the pointer cannot activate the enabled row: '%s'", g_log);
+}
+
+static void test_pointer_remap_after_resize(void)
+{
+    reset_game();
+    value_set("FEToggleCrouchFlag", 1);
+    tick("PauseMenuOptionXbox");
+    pc_menu_test_pointer_space(730, 548); /* 1.140625x; (550,160) maps left of the OFF split. */
+    pc_menu_pointer(550, 160); tick("PauseMenuOptionXbox");
+    CHECK(pc_menu_test_pointer_item() == 0, "the toggle row is hit before resizing");
+    pc_menu_test_pointer_space(640, 480); /* same client point now maps to the OFF side of that row. */
+    CHECK(pc_menu_test_pointer_item() == 0, "the stationary pointer still hits the toggle after resizing");
+    log_clear(); click("PauseMenuOptionXbox");
+    CHECK(log_is("gamecode ToggleCrouchOnOff 0 0 0\n"),
+          "the current mapping selects OFF after resize without another mouse move: '%s'", g_log);
+}
+
+static void test_pointer_hover_queue_coalescing(void)
+{
+    int i;
+    reset_game();
+    pc_menu_test_reset(k_pointer_focus_def);
+    tick("");
+    tick("PointerFocusHost");
+    pc_menu_test_pointer_space(640, 480);
+    for (i = 0; i < 48; i++) pc_menu_pointer(120 + (i & 1), 155);
+    CHECK(pc_menu_test_pointer_item() == 0, "repeated motion stays on the host's first row");
+    log_clear(); click("PointerFocusHost");
+    CHECK(display_has("CHILD FIRST") && pc_menu_test_focus() == 1,
+          "48 queued same-row hover events coalesce without dropping the following click (focus=%d, '%s')",
+          pc_menu_test_focus(), g_log);
+}
+
+static void test_pointer_focus_after_page_change(void)
+{
+    reset_game();
+    pc_menu_test_reset(k_pointer_focus_def);
+    tick("");
+    tick("PointerFocusHost");
+    pc_menu_test_pointer_space(640, 480);
+    pc_menu_pointer(120, 155); tick("PointerFocusHost");
+    click("PointerFocusHost");
+    CHECK(display_has("CHILD FIRST") && pc_menu_test_focus() == 1 && pc_menu_test_pointer_item() == 0,
+          "the child starts on its keyboard default while row 0 is under the pointer (focus=%d item=%d)",
+          pc_menu_test_focus(), pc_menu_test_pointer_item());
+    pc_menu_pointer(121, 155); tick("PointerFocusHost");
+    CHECK(pc_menu_test_focus() == 0,
+          "moving within row 0 after a page change focuses it despite the same cached item index (focus=%d)",
+          pc_menu_test_focus());
 }
 
 static void test_mission_failed(void)
@@ -1444,6 +1587,10 @@ int main(int argc, char **argv)
     test_video_setting_focus_and_layout();
     test_input();
     test_pointer();
+    test_pointer_page_transitions();
+    test_pointer_remap_after_resize();
+    test_pointer_hover_queue_coalescing();
+    test_pointer_focus_after_page_change();
     test_native_video_shortcuts();
     if (g_have_files) test_objectives();
     if (g_have_files) test_render();
