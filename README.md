@@ -45,13 +45,24 @@ See [launcher/README.md](launcher/README.md) to build or change it.
 ## HD textures
 
 The game can use [BLACK HD Reimagined](#credits-and-licensing), a texture pack made by HD REIMAGINED for the PS2
-version in PCSX2. Put the pack's files in a `texture_pack_hd` folder next to the launcher (any layout of subfolders
-works), then choose **Settings > Game > Textures: HD PACK**. **ORIGINAL** goes back to the game's own textures.
+version in PCSX2. It is not included here.
 
-The pack's files are named by PS2 hashes that mean nothing to the Xbox version, so each game texture is matched to
-the pack file that looks like it, and replaced only when the match is clear. The first start with the pack reads
-every file once and keeps what it learned in `texture_pack_hd/black_recomp_index.bin`; later starts are quick.
-The pack is not included here: download it from its authors.
+To install it:
+
+1. Download the pack from ModDB:
+   [BLACK HD Reimagined Texture Pack](https://www.moddb.com/mods/black-hd-reimagined/addons/black-hd-reimagined-texture-pack).
+2. Make a folder named `texture_pack_hd` next to `BLACK Launcher.exe`.
+3. Extract the download into it. Any layout of subfolders works: the PCSX2 one
+   (`texture_pack_hd/SLUS-21376/replacements/...`) is fine as it is.
+4. In the launcher, choose **Settings > Game > Textures: HD PACK**, then **Play**. **ORIGINAL** goes back to the
+   game's own textures.
+
+The pack's files are named by PS2 hashes that mean nothing to the Xbox version. Instead,
+[`textures/black-hd-reimagined.map`](textures/black-hd-reimagined.map) says which pack file replaces which game
+texture. It was made by matching every texture on the disc (about 2000) to the pack by look, then checking the pairs by
+eye: 1161 game textures use 1007 of the pack's 1324 files. The rest are versions of the same picture or have no
+counterpart in this version. Without the map, the game falls back to matching by look while it plays, keeping what it
+learned in `texture_pack_hd/black_recomp_index.bin`.
 
 | Original | HD pack |
 | --- | --- |

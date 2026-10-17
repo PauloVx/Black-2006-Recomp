@@ -292,6 +292,8 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
     }
     if (settings.textures == "hd-pack" && fs::is_directory(project.root() / "texture_pack_hd")) {
         env["RECOMP_TEXTURE_PACK"] = gamePath(project.root() / "texture_pack_hd", style);  // replacement textures
+        const fs::path map = project.root() / "textures" / "black-hd-reimagined.map";  // which file replaces which texture
+        if (fs::is_regular_file(map)) env["RECOMP_TEXTURE_PACK_MAP"] = gamePath(map, style);
     }
     if (settings.silverWeaponMode == "force-on") {
         env["RECOMP_BLACK_SILVER_WEAPONS"] = "1";

@@ -21,7 +21,7 @@ VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?")
 ROOT_FILES = {'.gitattributes', '.gitignore', 'CMakeLists.txt', 'LICENSE', 'NOTICE',
               'README.md', 'CHANGELOG.md', 'Build BLACK.cmd', 'Play BLACK.sh',
               'BLACK Settings.sh', 'Install Linux Shortcuts.sh', 'Build BLACK.sh'}
-SOURCE_DIRS = {'cmake', 'docs', 'LICENSES', 'localization', 'scripts', 'src',
+SOURCE_DIRS = {'cmake', 'docs', 'LICENSES', 'localization', 'scripts', 'src', 'textures',
                'subtitles', 'tests', 'translations'}
 # Submodules ship in the archive (it has no .git to fetch them): their tracked sources, without test binaries.
 SUBMODULES = ('third_party/xboxrecomp', 'third_party/dsp56300')
