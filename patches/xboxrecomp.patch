@@ -36913,9 +36913,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
+index 0000000..76bdcd7
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2582 @@
+@@ -0,0 +1,2599 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -37666,6 +37667,7 @@ new file mode 100644
 +static int m_hit_n, m_hit_scratch_n;
 +static float m_xf_ox, m_xf_oy, m_xf_s;
 +static int m_pointer_item = -1, m_pointer_known;
++static int m_pointer_x, m_pointer_y;     /* saved client pixels, also valid after a page change or resize */
 +static float m_pointer_mx;
 +#define PCM_ACT_HOVER 64                 /* + item index: the pointer moved onto that item */
 +static unsigned m_generation;
@@ -37677,6 +37679,24 @@ new file mode 100644
 +static volatile LONG m_movie_skip_prompt;
 +static const uint64_t *m_replaced;         /* earlier built-in definitions (FNV-1a 64 of the file) */
 +static int m_nreplaced;
++
++/* m_lock held: clicks always use the currently published rows and window mapping. */
++static void pointer_hit_locked(void)
++{
++    float my;
++    int i;
++    m_pointer_item = -1;
++    if (!m_pointer_known || m_xf_s <= 0) return;
++    m_pointer_mx = ((float)m_pointer_x - m_xf_ox) / m_xf_s;
++    my = ((float)m_pointer_y - m_xf_oy) / m_xf_s;
++    for (i = 0; i < m_hit_n; i++) {
++        const Hit *h = &m_hit[i];
++        if (h->ok && m_pointer_mx >= h->x0 && m_pointer_mx < h->x1 && my >= h->y0 && my < h->y1) {
++            m_pointer_item = i;
++            break;
++        }
++    }
++}
 +
 +static double now_s(void)
 +{
@@ -38550,6 +38570,7 @@ new file mode 100644
 +    }
 +    memcpy(m_hit, m_hit_scratch, sizeof(m_hit));
 +    m_hit_n = m_hit_scratch_n;
++    pointer_hit_locked();
 +    ReleaseSRWLockExclusive(&m_lock);
 +    m_active_tick = GetTickCount64();
 +    if (!InterlockedExchange(&m_active, 1)) pc_video_menu_hide_hint(1);
@@ -38650,7 +38671,8 @@ new file mode 100644
 +        input_seen();
 +        if (button == 0) {
 +            int item, kind = IT_BUTTON, act = PCM_ACT_CONFIRM;
-+            AcquireSRWLockShared(&m_lock);
++            AcquireSRWLockExclusive(&m_lock);
++            pointer_hit_locked();
 +            item = m_pointer_known ? m_pointer_item : -2;    /* -2: no pointer yet, the keyboard's confirm */
 +            if (item >= 0 && item < m_hit_n) {
 +                const Hit *h = &m_hit[item];
@@ -38658,7 +38680,7 @@ new file mode 100644
 +                if (kind == IT_TOGGLE && h->split > 0) act = m_pointer_mx >= h->split ? PCM_ACT_RIGHT : PCM_ACT_LEFT;
 +                else if (kind == IT_SLIDER) act = m_pointer_mx >= h->split ? PCM_ACT_RIGHT : PCM_ACT_LEFT;
 +            }
-+            ReleaseSRWLockShared(&m_lock);
++            ReleaseSRWLockExclusive(&m_lock);
 +            if (item >= 0) { queue(PCM_ACT_HOVER + item); queue(act); }
 +            else if (item == -2) queue(PCM_ACT_CONFIRM);
 +        } else if (button == 1) queue(PCM_ACT_BACK);
@@ -38668,23 +38690,17 @@ new file mode 100644
 +
 +void pc_menu_pointer(int x, int y)
 +{
-+    int i, item = -1, changed;
-+    float mx, my;
++    int item, previous;
 +    if (!pc_menu_active()) return;
 +    AcquireSRWLockExclusive(&m_lock);
 +    if (m_xf_s <= 0) { ReleaseSRWLockExclusive(&m_lock); return; }
-+    mx = ((float)x - m_xf_ox) / m_xf_s;
-+    my = ((float)y - m_xf_oy) / m_xf_s;
-+    for (i = 0; i < m_hit_n; i++) {
-+        const Hit *h = &m_hit[i];
-+        if (h->ok && mx >= h->x0 && mx < h->x1 && my >= h->y0 && my < h->y1) { item = i; break; }
-+    }
-+    changed = item != m_pointer_item;
-+    m_pointer_item = item;
-+    m_pointer_mx = mx;
++    previous = m_pointer_item;
++    m_pointer_x = x; m_pointer_y = y;
 +    m_pointer_known = 1;
++    pointer_hit_locked();
++    item = m_pointer_item;
 +    ReleaseSRWLockExclusive(&m_lock);
-+    if (changed && item >= 0) { input_seen(); queue(PCM_ACT_HOVER + item); }
++    if (item != previous && item >= 0) { input_seen(); queue(PCM_ACT_HOVER + item); }
 +}
 +
 +static int f_wheel(int delta)
@@ -39132,6 +39148,7 @@ new file mode 100644
 +        canvas_for(&xf, NULL, w, h, px, py, pw, ph);
 +        AcquireSRWLockExclusive(&m_lock);
 +        m_xf_ox = xf.ox; m_xf_oy = xf.oy; m_xf_s = xf.s;
++        pointer_hit_locked();
 +        ReleaseSRWLockExclusive(&m_lock);
 +    }
 +    video_on = pc_video_menu_overlay(w, h, &video, &video_changed);
@@ -39442,6 +39459,7 @@ new file mode 100644
 +    canvas_for(&xf, NULL, w, h, 0, 0, w, h);
 +    AcquireSRWLockExclusive(&m_lock);
 +    m_xf_ox = xf.ox; m_xf_oy = xf.oy; m_xf_s = xf.s;
++    pointer_hit_locked();
 +    ReleaseSRWLockExclusive(&m_lock);
 +}
 +
