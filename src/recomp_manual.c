@@ -1293,6 +1293,8 @@ void black_test_weapon_loadout(uint32_t record)
 }
 /* END BLACK_TEST_WEAPON_LOADOUT */
 
+#include "black_checkpoint.inc"
+
 /* BEGIN BLACK_TEST_STREAM_UNIT
  * Explicit offline checkpoint control. Select a unit from the loaded mission's
  * own bounded table before native streaming chooses its two initial units. */

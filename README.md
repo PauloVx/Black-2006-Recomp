@@ -168,6 +168,13 @@ Start stay with the layout. The change goes into the game's own action map, so
 kept in `local/controls.ini`, which the launcher's key bindings also read and
 write. See the [Controls tests](tests/controls/README.md).
 
+Reached checkpoints are also saved under `save/checkpoints/` for the selected
+saved profile, mission and difficulty. Starting that same mission again resumes
+the checkpoint with its native inventory, objectives and statistics. **Restart
+Mission** discards it; completing a mission retires it. Unsaved profiles retain
+the original session-only checkpoints. Keep `save/` together with your profile
+data when moving the game. See the [checkpoint regressions](tests/checkpoints/README.md).
+
 The launcher's **Game > Menu language** setting chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
