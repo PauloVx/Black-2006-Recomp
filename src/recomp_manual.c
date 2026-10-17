@@ -1196,6 +1196,7 @@ static uint32_t black_p2_ready_ask;
 static uint32_t black_p2_use;
 static int black_msg_in;
 static void black_msg_swap(void);
+static void black_hud_packs(int count);
 static unsigned black_p2_tries;
 
 /* Calls a generated guest function as guest code would: `n` stack arguments below the caller's stack, the registers
@@ -1918,26 +1919,34 @@ static uint32_t black_puppet_make(uint32_t from, unsigned slot)
     return ch;
 }
 
-/* The puppets are made once the level has a soldier to copy and two characters free. */
+/* The puppets are made in free characters (the last ones) once the level has a soldier to copy, and again in others
+ * when the game takes theirs for a character of its own. */
 static void black_puppets_make(void)
 {
     uint32_t from = 0;
-    unsigned i;
+    unsigned i, k;
+    for (k = 0; k < 2u; k++)
+        if (black_puppet[k] && !black_puppet_ok(black_puppet[k])) black_puppet[k] = 0;
     if (black_puppet[0] && black_puppet[1]) return;
     if (!black_pc_ram_span(GUEST32(0x002D1980u), BLACK_CHAR_POOL_AT + BLACK_CHARS * BLACK_CHAR_BYTES)) return;
-    for (i = 0; i < BLACK_CHARS - 2u; i++) {
+    from = black_puppet[0] ? black_puppet[0] : black_puppet[1];
+    for (i = 0; i < BLACK_CHARS && !from; i++) {
         const uint32_t ch = black_char(i), t = GUEST32(ch + 0x320u);
-        if (!t) continue;
-        if (!from && black_pc_ram_span(t, 0x60u) && black_pc_ram_span(GUEST32(ch + 0x328u), 0x240u)) from = ch;
+        if (t && black_pc_ram_span(t, 0x60u) && black_pc_ram_span(GUEST32(ch + 0x328u), 0x240u)) from = ch;
     }
-    if (!from || GUEST32(black_char(30u) + 0x320u) || GUEST32(black_char(31u) + 0x320u)) return;
+    if (!from) return;
     if (!black_puppet_names && !(black_puppet_names = xbox_HeapAlloc(32u, 16u))) return;
     /* a soldier's clips with a rifle: standing, and moving (as character 0 plays them) */
     memcpy((uint8_t *)(uintptr_t)g_xbox_mem_offset + black_puppet_names, "TM_AR_S_001\0\0\0\0\0TM_AR_S_MOV\0", 28);
-    black_puppet_template = GUEST32(from + 0x320u);
-    black_puppet_moving[0] = black_puppet_moving[1] = -1;
-    black_puppet[0] = black_puppet_make(from, 30u);
-    black_puppet[1] = black_puppet_make(from, 31u);
+    if (!black_puppet[0] && !black_puppet[1]) black_puppet_template = GUEST32(from + 0x320u);
+    for (k = 0; k < 2u; k++) {
+        if (black_puppet[k]) continue;
+        for (i = BLACK_CHARS; i-- > 0;)
+            if (!GUEST32(black_char(i) + 0x320u) && black_pc_ram_span(GUEST32(black_char(i) + 0x328u), 0x240u)) break;
+        if (i >= BLACK_CHARS) return;
+        black_puppet_moving[k] = -1;
+        black_puppet[k] = black_puppet_make(from, i);
+    }
 }
 
 /* A puppet where its player is, standing or moving as its player does, posed for the update's time. */
@@ -1961,15 +1970,75 @@ static void black_puppet_follow(unsigned who, uint32_t actor, uint32_t dt)
         black_guest_call(sub_0017E130, &r, args, 1, 0x0017F2C3u);
         black_puppet_moving[who] = moving;
     }
+    /* player one's actor keeps other values in its rows' fourth words: a transform has none */
     for (off = 0x70u; off < 0xB0u; off += 4u) {
-        GUEST32(ch + off) = GUEST32(actor + off);
-        GUEST32(ch + off + 0x60u) = GUEST32(actor + off);
+        const uint32_t v = (off & 0xFu) == 0xCu && off < 0xA0u ? 0u : GUEST32(actor + off);
+        GUEST32(ch + off) = v;
+        GUEST32(ch + off + 0x60u) = v;
     }
     memset(&r, 0, sizeof(r));
     r.eax = GUEST32(ch + 0x328u);
     args[0] = dt;
     args[1] = 0;
     black_guest_call(sub_001801B0, &r, args, 2, 0x001F0C37u);
+}
+
+/* The characters' brains (+324, vtable 28BEF0) know the player as the actor in the core (+788, +7A8), so they only
+ * ever see whoever is in it. Each character of the pool updates (vtable +44, 1F08D0) with the nearer player in the
+ * core: its actor and camera owner only, the first-person state staying player one's. A character keeps the player it
+ * has until the other is 3 m nearer. */
+#define BLACK_AI_SWITCH 3.0f
+extern void sub_001F08D0_gen(void);
+static uint8_t black_ai_two[BLACK_CHARS];
+static int black_p2_lit;
+
+static void black_p2_light(void)
+{
+    uint32_t *const actor = (uint32_t *)((uint8_t *)(uintptr_t)g_xbox_mem_offset + black_p2_core + BLACK_ACTOR_AT);
+    uint32_t *const other = (uint32_t *)BLACK_P2_ACTOR;
+    const uint32_t owner = GUEST32(0x002D12B8u);
+    unsigned i;
+    if (!black_p2_lit) black_p2_find_links();
+    for (i = 0; i < BLACK_ACTOR_BYTES / 4u; i++) {
+        uint32_t held;
+        if (black_p2_link[i]) continue;
+        held = actor[i]; actor[i] = other[i]; other[i] = held;
+    }
+    GUEST32(0x002D12B8u) = black_p2_owner;
+    black_p2_owner = owner;
+    black_p2_lit = !black_p2_lit;
+}
+
+static float black_dist(uint32_t a, uint32_t b)
+{
+    float pa[3], pb[3], d = 0.0f;
+    unsigned k;
+    memcpy(pa, (uint8_t *)(uintptr_t)g_xbox_mem_offset + a + 0xA0u, 12);
+    memcpy(pb, (uint8_t *)(uintptr_t)g_xbox_mem_offset + b + 0xA0u, 12);
+    for (k = 0; k < 3u; k++) d += (pa[k] - pb[k]) * (pa[k] - pb[k]);
+    return sqrtf(d);
+}
+
+void sub_001F08D0(void)
+{
+    const uint32_t ch = g_ecx, pool = black_pc_ram_span(0x002D1980u, 4u) ? GUEST32(0x002D1980u) + BLACK_CHAR_POOL_AT : 0;
+    unsigned q;
+    int two;
+    if (!pool || !black_p2_playing() || black_p2_in || black_p2_lit || ch - pool >= BLACK_CHARS * BLACK_CHAR_BYTES ||
+        (ch - pool) % BLACK_CHAR_BYTES || !GUEST32(ch + 0x324u) || black_puppet_ok(ch)) {
+        sub_001F08D0_gen();
+        return;
+    }
+    q = (ch - pool) / BLACK_CHAR_BYTES;
+    {
+        const float one = black_dist(ch, black_p2_core + BLACK_ACTOR_AT), other = black_dist(ch, black_p2_shadow);
+        if (black_ai_two[q] && one + BLACK_AI_SWITCH < other) black_ai_two[q] = 0;
+        else if (!black_ai_two[q] && other + BLACK_AI_SWITCH < one) black_ai_two[q] = 1;
+        two = black_ai_two[q];
+    }
+    if (two) black_p2_light();
+    sub_001F08D0_gen();
+    if (two) black_p2_light();
 }
 
 /* With player two out: a physics proxy of its own from the world's character pool (DF400) for the shadow, its body
@@ -2050,6 +2119,7 @@ static void black_p2_crosshair(void)
     memcpy(at, a + 0xA0u, 12);
     memcpy(&dt, (uint8_t *)(uintptr_t)g_xbox_mem_offset + black_p2_core + 0x1Cu, 4);
     memcpy(&zoom, a + 0x2A4u, 4);
+    zoom = zoom >= 1.0f && zoom < 50.0f ? 1.0f / zoom : 1.0f;
     for (k = 0; k < 3u; k += 2u) step += (at[k] - was[k]) * (at[k] - was[k]);
     memcpy(was, at, 12);
     if (black_pc_ram_span(weapon, 0x100u) && black_pc_ram_span(GUEST32(weapon + 0xF4u), 0x20u))
@@ -2085,7 +2155,7 @@ static void black_p2_update(void)
     const uint32_t pad1 = GUEST32(0x002D45E8u) + 0x98u;
     uint32_t *const words = (uint32_t *)BLACK_P2_ACTOR;
     uint32_t ctl, dt, source1;
-    uint8_t idle;
+    uint8_t idle, packs2;
     int ready;
     unsigned k;
     /* no input source (a scripted sequence): player two has none either, and still updates */
@@ -2159,6 +2229,7 @@ static void black_p2_update(void)
      * own would, so player two's asks for it as it joins. */
     ready = black_p2_ready && GUEST32(actor + 0x324u) == actor + 0x800u && GUEST8(actor + 0x8D1u);
     black_p2_ready = 0;
+    packs2 = BLACK_P2_ACTOR[0x8E1u];
     black_use_swap();
     black_msg_swap();
     black_p2_enter();
@@ -2208,6 +2279,9 @@ static void black_p2_update(void)
     black_p2_leave();
     black_use_swap();
     if (black_msg_in) black_msg_swap();
+    /* player two's pickup or use showed its count: player one's half shows player one's */
+    if (BLACK_P2_ACTOR[0x8E1u] != packs2 && BLACK_P2_ACTOR[0x8E1u] != GUEST8(actor + 0x8E1u))
+        black_hud_packs(GUEST8(actor + 0x8E1u));
     black_p2_crosshair();
     black_puppets_make();
     dt = GUEST32(black_p2_core + 0x1Cu);
@@ -2301,6 +2375,24 @@ void sub_001B7440(void)
         return;
     }
     sub_001B7440_gen();
+}
+
+/* A soldier's draw (vtable +14, 1C6150) uses what its model's last pose (1801B0) left, and with two views a frame
+ * the update's pose only shows in neither or one: in split-screen each of the level's characters is posed again, with
+ * no time passing, before each view draws it. */
+extern void sub_001C6150_gen(void);
+void sub_001C6150(void)
+{
+    const uint32_t ch = g_ecx, pool = black_pc_ram_span(0x002D1980u, 4u) ? GUEST32(0x002D1980u) + BLACK_CHAR_POOL_AT : 0;
+    if (black_p2_playing() && pool && ch >= pool && ch < pool + BLACK_CHARS * BLACK_CHAR_BYTES &&
+        !((ch - pool) % BLACK_CHAR_BYTES) && black_pc_ram_span(GUEST32(ch + 0x328u), 0x240u)) {
+        BlackRegs r;
+        const uint32_t args[2] = { 0, 0 };
+        memset(&r, 0, sizeof(r));
+        r.eax = GUEST32(ch + 0x328u);
+        black_guest_call(sub_001801B0, &r, args, 2, 0x001F0C37u);
+    }
+    sub_001C6150_gen();
 }
 
 void sub_000D1500(void)
@@ -2433,16 +2525,16 @@ extern void sub_0012C3A0(void);
 /* The HUD's elements ([2D12E4]: lists at +A0, 0xA8 apart, +23C of them, linked at +8) take the player's values in
  * their update (12C3A0, as 1F1080 does each frame) and animate what changed. The ones that show the player keep player
  * two's state of their own: put in for its update (with the frame's time) and its draw, kept afterwards, and player
- * one's put back as it was. An element's state is taken as reaching the next element in memory (0x400 at most). The
- * elements' sprites are the HUD's, shared, except the ammo counter's (its bullets, and the cases thrown out on a
- * shot): each player's are its own, and the other player's cases are not shown in its half. */
+ * one's put back as it was. An element's state is taken as reaching the next element in memory (at most its own size).
+ * What each player's update put in the elements' sprites is its own; the ammo counter's (its bullets, and the cases
+ * thrown out on a shot) are each player's own sprites, and the other player's cases are not shown in its half. */
 #define BLACK_HUD_POOLS_AT 0x002DB790u
 #define BLACK_HUD_POOLS_END 0x002E7100u
 #define BLACK_HUD_AMMO_VTABLE 0x00290F28u
 #define BLACK_HUD_MSG_VTABLE 0x00290F74u
 #define BLACK_HUD_SPRITES 64u
 #define BLACK_HUD_ELEMENTS 128u
-#define BLACK_HUD_ELEMENT_BYTES 0x400u
+#define BLACK_HUD_ELEMENT_BYTES 0xC00u
 static uint32_t black_hud_at[BLACK_HUD_ELEMENTS], black_hud_bytes[BLACK_HUD_ELEMENTS];
 static uint8_t black_hud_p2[BLACK_HUD_ELEMENTS][BLACK_HUD_ELEMENT_BYTES], black_hud_p1[BLACK_HUD_ELEMENTS][BLACK_HUD_ELEMENT_BYTES];
 static unsigned black_hud_count;
@@ -2452,6 +2544,23 @@ static int black_hud_order(const void *a, const void *b)
 {
     const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
     return x < y ? -1 : x > y;
+}
+
+/* How far an element's state reaches: the health panel (0xEC0 bytes from 130830: 290F90, 290FC4 at +C0, 290FB8 at
+ * +C80) and the ammo panel (0x2F0 from 130870: 290F84, 290FAC at +30, 290F28 at +E0). */
+static uint32_t black_hud_size(uint32_t vt)
+{
+    switch (vt) {
+    case 0x00290F90u: return 0xC0u;
+    case 0x00290FC4u: return 0xBC0u;
+    case 0x00290FB8u: return 0x240u;
+    case 0x00290F84u: return 0x30u;
+    case 0x00290FACu: return 0xB0u;
+    case 0x00290F28u: return 0x210u;
+    case 0x00290F9Cu: case 0x00290F64u: return 0x30u;
+    case 0x00290EECu: return 0x170u;
+    default: return 0x400u;
+    }
 }
 
 /* The elements in memory order, each with the bytes up to the next; nonzero when they are the ones last seen. */
@@ -2470,7 +2579,8 @@ static int black_hud_elements(void)
     same = n == black_hud_count;
     for (i = 0; i < n; i++) {
         uint32_t bytes = i + 1u < n ? at[i + 1u] - at[i] : 0x100u;
-        if (bytes > BLACK_HUD_ELEMENT_BYTES) bytes = BLACK_HUD_ELEMENT_BYTES;
+        const uint32_t most = black_hud_size(GUEST32(at[i]));
+        if (bytes > most) bytes = most;
         if (!black_pc_ram_span(at[i], bytes)) bytes = 0;
         same = same && black_hud_at[i] == at[i];
         black_hud_at[i] = at[i];
@@ -2549,6 +2659,52 @@ static int black_hud_ammo(void)
 
 static void black_hud_hide(uint32_t p) { GUEST32(p + 0x1Cu) = 0; }
 
+/* The other elements' sprites (the health bar's among them) are the same ones for both players: what each player's
+ * update put in them (their data, not their links) is its own. */
+#define BLACK_HUD_PANEL_SPRITES 128u
+#define BLACK_HUD_SPRITE_DATA 0x48u
+static uint32_t black_hud_p2_panel[BLACK_HUD_PANEL_SPRITES];
+static uint8_t black_hud_p2_panel_data[BLACK_HUD_PANEL_SPRITES][BLACK_HUD_SPRITE_DATA];
+static unsigned black_hud_p2_panels;
+
+static unsigned black_hud_panel(uint8_t (*states)[BLACK_HUD_ELEMENT_BYTES], uint32_t *out)
+{
+    unsigned n = 0, i, k, j;
+    for (i = 0; i < black_hud_count; i++) {
+        const uint32_t vt = black_hud_bytes[i] >= 4u ? GUEST32(black_hud_at[i]) : 0;
+        if (!black_hud_mine(vt) || vt == BLACK_HUD_AMMO_VTABLE) continue;
+        for (k = 0; k + 4u <= black_hud_bytes[i] && n < BLACK_HUD_PANEL_SPRITES; k += 4u) {
+            const uint32_t p = *(const uint32_t *)(states[i] + k);
+            if (!black_hud_sprite(p)) continue;
+            for (j = 0; j < n && out[j] != p; j++) {}
+            if (j == n) out[n++] = p;
+        }
+    }
+    return n;
+}
+
+/* The pack count the HUD's movie shows ("HealthPacks" in _level1, as the pickup 1EA6B0 sets it). The movie is one
+ * for both halves: each half shows its player's. */
+extern void sub_000E87B0(void);
+extern void sub_00101260(void);
+static void black_hud_packs(int count)
+{
+    const uint32_t movie = GUEST32(0x002D199Cu);
+    uint32_t args[4];
+    BlackRegs r;
+    if (!black_pc_ram_span(movie, 0x3960u)) return;
+    memset(&r, 0, sizeof(r));
+    r.edi = (uint32_t)count;
+    args[3] = black_guest_call(sub_000E87B0, &r, NULL, 0, 0x001EA6EAu);
+    if (!args[3]) return;
+    args[0] = 0x0028F274u;
+    args[1] = 0;
+    args[2] = 1;
+    memset(&r, 0, sizeof(r));
+    r.eax = movie + 0x38C9u;
+    black_guest_call(sub_00101260, &r, args, 4, 0x001EA6FBu);
+}
+
 /* The messages element (vtable 290F74, 0x2B20 bytes, 1314E0) shows what the player could use (+1C..+27, its texts
  * from +2510, +2B10..+2B13) and what it picked up: everything put in it (12B510) comes from the player in the core
  * (the use query 1EAF40 and the pickups, 1BED90). Player two has one of its own, with the sprites it points at:
@@ -2620,13 +2776,13 @@ static void black_hud_update(void)
 void sub_00129340(void)
 {
     static const uint32_t below = 0u, above = 1u;
-    static uint32_t one[BLACK_HUD_SPRITES];
-    static uint8_t one_data[BLACK_HUD_SPRITES][0x50];
+    static uint32_t one[BLACK_HUD_SPRITES], panel[BLACK_HUD_PANEL_SPRITES];
+    static uint8_t one_data[BLACK_HUD_SPRITES][0x50], panel_data[BLACK_HUD_PANEL_SPRITES][BLACK_HUD_SPRITE_DATA];
     uint8_t *const m = (uint8_t *)(uintptr_t)g_xbox_mem_offset;
     const int hud = black_split_hud;
-    unsigned ones = 0, k;
+    unsigned ones = 0, panels = 0, k;
     uint32_t msg = 0;
-    int own = 0;
+    int own = 0, packs1 = 0, packs2 = 0;
     black_split_hud = 0;
     sub_00129340_gen();
     if (!hud || !pc_split_enabled()) return;
@@ -2639,10 +2795,14 @@ void sub_00129340(void)
             black_hud_copy(black_hud_p1, 1);
             ones = ammo >= 0 ? black_hud_sprites(black_hud_p1[ammo], black_hud_bytes[ammo], one) : 0;
             for (k = 0; k < ones; k++) memcpy(one_data[k], m + one[k] - 8u, 0x50u);
+            panels = black_hud_panel(black_hud_p1, panel);
+            for (k = 0; k < panels; k++) memcpy(panel_data[k], m + panel[k], BLACK_HUD_SPRITE_DATA);
             if (same && black_hud_p2_kept) {
                 black_hud_copy(black_hud_p2, 0);
                 for (k = 0; k < black_hud_p2_sprites; k++)
                     memcpy(m + black_hud_p2_sprite[k] - 8u, black_hud_p2_sprite_data[k], 0x50u);
+                for (k = 0; k < black_hud_p2_panels; k++)
+                    memcpy(m + black_hud_p2_panel[k], black_hud_p2_panel_data[k], BLACK_HUD_SPRITE_DATA);
             }
             /* player one's cases out of player two's half */
             for (k = 0; k < ones; k++)
@@ -2652,6 +2812,9 @@ void sub_00129340(void)
             if ((msg = black_msg_at) != 0) black_msg_swap();
             black_use_swap();
             black_p2_enter();
+            packs1 = BLACK_P2_ACTOR[0x8E1u];
+            packs2 = GUEST8(black_p2_core + BLACK_ACTOR_AT + 0x8E1u);
+            if (packs1 != packs2) black_hud_packs(packs2);
             black_hud_update();
             for (k = 0; k < black_hud_count; k++) {
                 uint32_t dt = GUEST32(black_p2_core + 0x1Cu);
@@ -2681,8 +2844,13 @@ void sub_00129340(void)
             if (black_msg_in) black_msg_swap();
             black_hud_p2_sprites = ammo >= 0 ? black_hud_sprites(black_hud_p2[ammo], black_hud_bytes[ammo], black_hud_p2_sprite) : 0;
             for (k = 0; k < black_hud_p2_sprites; k++) memcpy(black_hud_p2_sprite_data[k], m + black_hud_p2_sprite[k] - 8u, 0x50u);
+            black_hud_p2_panels = black_hud_panel(black_hud_p2, black_hud_p2_panel);
+            for (k = 0; k < black_hud_p2_panels; k++)
+                memcpy(black_hud_p2_panel_data[k], m + black_hud_p2_panel[k], BLACK_HUD_SPRITE_DATA);
             black_hud_copy(black_hud_p1, 0);
             for (k = 0; k < ones; k++) memcpy(m + one[k] - 8u, one_data[k], 0x50u);
+            for (k = 0; k < panels; k++) memcpy(m + panel[k], panel_data[k], BLACK_HUD_SPRITE_DATA);
+            if (packs1 != packs2) black_hud_packs(packs1);
             /* player two's cases out of player one's half */
             for (k = 0; k < black_hud_p2_sprites; k++)
                 if (!black_hud_has(one, ones, black_hud_p2_sprite[k])) black_hud_hide(black_hud_p2_sprite[k]);

@@ -48,7 +48,15 @@ typedef struct BlackHintCache {
 
 /* The guest HUD and its formatter run on the guest thread. TLS also prevents an
  * unrelated guest worker borrowing another thread's temporary stack or cache. */
-static RECOMP_TLS BlackHintCache black_hint_cache;
+static RECOMP_TLS BlackHintCache black_hint_caches[2];
+/* Split-screen's player two has a messages element of its own, swapped in while black_msg_in is set: its own
+ * cache, and its pad's buttons. */
+#define black_hint_cache black_hint_caches[black_msg_in != 0]
+
+static int black_hint_device(void)
+{
+    return black_msg_in ? (int)PC_DEVICE_CONTROLLER : (int)pc_input_prompt_device();
+}
 /* Native control-name localization must not borrow frontend [ENTER]/[ESC]
  * replacements, including when the OHCI thread changes device during formatting. */
 static RECOMP_TLS int black_hint_native_formatting;
@@ -411,7 +419,7 @@ void black_pickup_text_ready(uint32_t hud)
         text->current=*(const unsigned char *)((uintptr_t)g_xbox_mem_offset+hud+0x1Du);
         memcpy(text->rendered,text->native,sizeof(text->rendered));
         text->device=PC_DEVICE_CONTROLLER; text->valid=1;
-        pc_input_init(); device=(int)pc_input_prompt_device();
+        pc_input_init(); device=black_hint_device();
         black_pickup_refresh(hud,device);
     } __finally {
         black_hint_restore(&saved);
@@ -428,7 +436,7 @@ static void black_hint_tick(void)
     int device;
     pc_input_init();
     _mm_setcsr(caller_csr);
-    device=(int)pc_input_prompt_device();
+    device=black_hint_device();
     if (black_hint_current(hud)) {
         black_pickup_refresh(hud,device);
         active_id=GUEST32(hud+0x2110u); pending_id=GUEST32(hud+0x22A4u);
