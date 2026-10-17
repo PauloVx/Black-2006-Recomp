@@ -4064,10 +4064,10 @@ index caef326..e1a51e2 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_controls.c b/src/input/pc_controls.c
 new file mode 100644
-index 0000000..8531eb3
+index 0000000..e0532d0
 --- /dev/null
 +++ b/src/input/pc_controls.c
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,300 @@
 +/*
 + * pc_controls.c -- the player's controls: keyboard bindings and controller layout, kept in local\controls.ini.
 + * See pc_controls.h.
@@ -4191,13 +4191,18 @@ index 0000000..8531eb3
 +int pc_controls_pad_bind(PcAction action, int control)
 +{
 +    const int slot = pc_controls_action_slot(action);
++    const int restoring = control < 0;
 +    int old, a;
 +    pc_controls_load();
 +    if (!pc_controls_pad_action(action) || slot < 0) return 0;
 +    /* Restoring a default can displace the action that took this button in an earlier swap. */
-+    if (control < 0) control = preset_control(layout_preset(), slot);
++    if (restoring) control = preset_control(layout_preset(), slot);
 +    if (!pc_controls_pad_bindable(control) || (old = slot_control(slot)) < 0) return 0;
-+    if (old == control) return 1;
++    if (old == control) {
++        /* A loaded explicit default must stop pinning this button when the profile changes presets. */
++        if (restoring) { s_override[slot] = -1; changed(); }
++        return 1;
++    }
 +    /* a listed action that had this control takes this one's old control */
 +    for (a = 0; a < PC_ACTION_COUNT; a++) {
 +        const int other = pc_controls_action_slot((PcAction)a);
