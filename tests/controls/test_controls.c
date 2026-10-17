@@ -192,6 +192,15 @@ static void test_restore_loaded_default_override(const char *path)
 
     CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
     CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+    /* Profile 3's default is 22. Staying on 23 proves FIRE=RT was loaded, not merely seeded on disk. */
+    g_ecx = 3;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+    g_ecx = 0;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23 && GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+
     CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, -1));
     text = (char *)read_all(path, NULL);
     controller = text ? last_occurrence(text, "[controller]") : NULL;
