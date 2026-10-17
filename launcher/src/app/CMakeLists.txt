@@ -31,7 +31,7 @@ target_link_libraries(black_launcher PRIVATE black_launcher_core black_walnut bl
 set_target_properties(black_launcher PROPERTIES
     OUTPUT_NAME "BLACK Launcher"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-target_compile_definitions(black_launcher PRIVATE BLACK_LAUNCHER_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(black_launcher PRIVATE BLACK_LAUNCHER_VERSION="${BLACK_VERSION}")
 if(WIN32)
     target_compile_definitions(black_launcher PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(black_launcher PRIVATE ole32 shell32)

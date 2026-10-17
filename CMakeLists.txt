@@ -26,6 +26,9 @@ add_executable(${PROJECT_NAME} WIN32
     src/recomp_manual.c
     ${RECOMP_GEN_SOURCES}
 )
+# The release version, shared with the launcher
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" BLACK_VERSION LIMIT_COUNT 1)
+target_compile_definitions(${PROJECT_NAME} PRIVATE BLACK_VERSION="${BLACK_VERSION}")
 option(RECOMP_ICALL_FEEDBACK "Record indirect call targets for the next generation pass" OFF)
 option(RECOMP_TRACE_UNRESOLVED_STUBS "Log unresolved guest call targets and state" OFF)
 if(RECOMP_ICALL_FEEDBACK)

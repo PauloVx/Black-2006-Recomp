@@ -9,6 +9,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(BlackLauncher VERSION 0.1.0 LANGUAGES C CXX)
 
+# The release version (the repository's VERSION file), shared with the game
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" BLACK_VERSION LIMIT_COUNT 1)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

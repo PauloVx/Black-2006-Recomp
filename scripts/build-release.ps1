@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '0.1.0-alpha.3',
+    [string]$Version = '0.1.0-alpha.4',
     [string]$OutputDirectory,
     [switch]$AllowDirty
 )

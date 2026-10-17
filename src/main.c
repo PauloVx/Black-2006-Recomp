@@ -445,7 +445,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     setvbuf(stderr, NULL, _IONBF, 0);
     RECOMP_ICALL_FEEDBACK_INIT();
 
-    printf("=== BLACK - Static Recompilation ===\n");
+    printf("=== BLACK - Static Recompilation %s ===\n", BLACK_VERSION);
     printf("Loading XBE...\n");
 
     /* Install VEH handler (first handler in chain) */

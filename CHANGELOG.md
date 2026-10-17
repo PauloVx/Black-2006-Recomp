@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.4 — 2026-10-17
+
+**HD textures.** The game can use [BLACK HD Reimagined](https://www.moddb.com/mods/black-hd-reimagined/addons/black-hd-reimagined-texture-pack),
+the PS2 texture pack by HD REIMAGINED: extract it into a `texture_pack_hd` folder next to the launcher and choose
+**Settings > Game > Textures: HD PACK** (**ORIGINAL** goes back). The pack's files are named by PS2 hashes, so every
+texture on the Xbox disc was matched to the pack by look and the pairs checked by eye; `textures/black-hd-reimagined.map`
+keeps the result, and the game finds each replacement by the texture's content. 1161 game textures use 1007 of the
+pack's 1324 files, with their mipmaps; the PS2's half-scale alpha is doubled. The pack is not included. Without the
+map, the game matches by look as it plays.
+
+**Two players, split screen (experimental).** **TWO PLAYERS (EXPERIMENTAL)**, chosen before the difficulty, starts a
+mission for two on one screen, top and bottom, player two on the second controller or the arrows and the numpad: each has their own weapons, ammunition,
+pickups, health packs, HUD, crosshair and hit markers, and every effect is drawn in both views. Enemies see, hear and
+shoot at both players. Unfinished: enemies sometimes don't engage the second player.
+
+**Versions.** The game and the launcher take their version from the repository's `VERSION` file; the launcher's main
+menu and the game's log show it.
 
 **Debug overlay.** Insert shows a panel in the pause menu's style over the top-left corner: frame rate, frame times
 (average and worst), the game's own frame rate, GPU time and draws, latency (from the game starting a frame to the

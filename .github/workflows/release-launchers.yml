@@ -36,7 +36,7 @@ jobs:
         run: |
           python scripts/release/test_release.py
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
-          python scripts/release/build_release.py --version 0.1.0-alpha.3
+          python scripts/release/build_release.py --version 0.1.0-alpha.4
           if ($LASTEXITCODE -ne 0) { throw 'Release packaging failed' }
       - uses: actions/upload-artifact@v4
         with:
@@ -73,7 +73,7 @@ jobs:
       - name: Compile and run production runtime and Rust ABI check under Wine
         run: bash scripts/linux/test_cross_build.sh
       - name: Package the Linux-built launcher
-        run: python3 scripts/release/build_release.py --version 0.1.0-alpha.3
+        run: python3 scripts/release/build_release.py --version 0.1.0-alpha.4
       - uses: actions/upload-artifact@v4
         with:
           name: BLACK-starter-built-on-Linux
