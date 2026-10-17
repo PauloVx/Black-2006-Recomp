@@ -2002,64 +2002,6 @@ static void black_puppet_follow(unsigned who, uint32_t actor, uint32_t dt)
     black_guest_call(sub_001801B0, &r, args, 2, 0x001F0C37u);
 }
 
-/* The characters' brains (+324, vtable 28BEF0) know the player as the actor in the core (+788, +7A8), so they only
- * ever see whoever is in it. Each character of the pool updates (vtable +44, 1F08D0) with the nearer player in the
- * core: its actor and camera owner only, the first-person state staying player one's. A character keeps the player it
- * has until the other is 3 m nearer. */
-#define BLACK_AI_SWITCH 3.0f
-extern void sub_001F08D0_gen(void);
-static uint8_t black_ai_two[BLACK_CHARS];
-static int black_p2_lit;
-
-static void black_p2_light(void)
-{
-    uint32_t *const actor = (uint32_t *)((uint8_t *)(uintptr_t)g_xbox_mem_offset + black_p2_core + BLACK_ACTOR_AT);
-    uint32_t *const other = (uint32_t *)BLACK_P2_ACTOR;
-    const uint32_t owner = GUEST32(0x002D12B8u);
-    unsigned i;
-    if (!black_p2_lit) black_p2_find_links();
-    for (i = 0; i < BLACK_ACTOR_BYTES / 4u; i++) {
-        uint32_t held;
-        if (black_p2_link[i]) continue;
-        held = actor[i]; actor[i] = other[i]; other[i] = held;
-    }
-    GUEST32(0x002D12B8u) = black_p2_owner;
-    black_p2_owner = owner;
-    black_p2_lit = !black_p2_lit;
-}
-
-static float black_dist(uint32_t a, uint32_t b)
-{
-    float pa[3], pb[3], d = 0.0f;
-    unsigned k;
-    memcpy(pa, (uint8_t *)(uintptr_t)g_xbox_mem_offset + a + 0xA0u, 12);
-    memcpy(pb, (uint8_t *)(uintptr_t)g_xbox_mem_offset + b + 0xA0u, 12);
-    for (k = 0; k < 3u; k++) d += (pa[k] - pb[k]) * (pa[k] - pb[k]);
-    return sqrtf(d);
-}
-
-void sub_001F08D0(void)
-{
-    const uint32_t ch = g_ecx, pool = black_pc_ram_span(0x002D1980u, 4u) ? GUEST32(0x002D1980u) + BLACK_CHAR_POOL_AT : 0;
-    unsigned q;
-    int two;
-    if (!pool || !black_p2_playing() || black_p2_in || black_p2_lit || ch - pool >= BLACK_CHARS * BLACK_CHAR_BYTES ||
-        (ch - pool) % BLACK_CHAR_BYTES || !GUEST32(ch + 0x324u) || black_puppet_ok(ch)) {
-        sub_001F08D0_gen();
-        return;
-    }
-    q = (ch - pool) / BLACK_CHAR_BYTES;
-    {
-        const float one = black_dist(ch, black_p2_core + BLACK_ACTOR_AT), other = black_dist(ch, black_p2_shadow);
-        if (black_ai_two[q] && one + BLACK_AI_SWITCH < other) black_ai_two[q] = 0;
-        else if (!black_ai_two[q] && other + BLACK_AI_SWITCH < one) black_ai_two[q] = 1;
-        two = black_ai_two[q];
-    }
-    if (two) black_p2_light();
-    sub_001F08D0_gen();
-    if (two) black_p2_light();
-}
-
 /* With player two out: a physics proxy of its own from the world's character pool (DF400) for the shadow, its body
  * placed as player one's is to player one -- beside player one when player two has just joined -- and still. */
 static void black_p2_take_proxy(int beside_one)
@@ -2164,6 +2106,18 @@ static void black_use_swap(void)
     held = GUEST32(at);
     GUEST32(at) = black_p2_use;
     black_p2_use = held;
+}
+
+/* The AI's targets ([2D1988]+FAC: 32 of {+0 id, +4 kind (0 in use, 5 free), +8 the actor}, an actor's at its +378):
+ * player two's was taken with player two in the core, so it names the core's actor, player one whenever the soldiers
+ * think. It names player two's own. */
+static void black_p2_target(void)
+{
+    const uint32_t ai = black_pc_ram_span(0x002D1988u, 4u) ? GUEST32(0x002D1988u) : 0, index = GUEST32(black_p2_shadow + 0x378u);
+    uint32_t entry;
+    if (!ai || index >= 32u || !black_pc_ram_span(ai + 0xFACu, 32u * 12u)) return;
+    entry = ai + 0xFACu + index * 12u;
+    if (GUEST32(entry + 4u) == 0u && GUEST32(entry + 8u) == black_p2_core + BLACK_ACTOR_AT) GUEST32(entry + 8u) = black_p2_shadow;
 }
 
 /* After player one's update: player two's controller, on the second pad, then its actor (as 1F1080 does player one's).
@@ -2301,6 +2255,7 @@ static void black_p2_update(void)
     /* player two's pickup or use showed its count: player one's half shows player one's */
     if (BLACK_P2_ACTOR[0x8E1u] != packs2 && BLACK_P2_ACTOR[0x8E1u] != GUEST8(actor + 0x8E1u))
         black_hud_packs(GUEST8(actor + 0x8E1u));
+    black_p2_target();
     black_p2_crosshair();
     black_puppets_make();
     dt = GUEST32(black_p2_core + 0x1Cu);

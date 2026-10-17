@@ -121,8 +121,9 @@ for a second actor. So player 2 is swapped into core+0x30 whenever its code runs
 - **Characters in both views**: the viewmodel set's animation pool holds every animated model's blocks (a model's
   is its +0xAC), the level's characters too; only the first-person slots' blocks and tops are exchanged with the
   actor, so the characters keep their poses while player 2 is in (its update and its view).
-- **Enemies**: the characters' brains know the player as the actor in the core, so each character updates with
-  the nearer player in it (actor and camera owner only), keeping the one it has until the other is 3 m nearer.
+- **Enemies**: player 2's entry in the AI's targets ([2D1988]+0xFAC, its index at the actor's +0x378) names player
+  2's own actor. Not done: enemies still do not engage player 2. Its actor has no node in the world's grid
+  (core+0x4960 holds one player node, the core's), and the soldiers' combat falls back to the core's player.
 
 ### Later: PvP
 
