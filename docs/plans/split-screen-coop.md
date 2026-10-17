@@ -85,18 +85,27 @@ for a second actor. So player 2 is swapped into core+0x30 whenever its code runs
 - **Swapped with the actor**: the camera owner `[2D12B8]`; player 2's copy of the first-person weapon state (the
   viewmodel set `[2D12C8]`: its animation sets and two slots, each slot's locator records and animation controller,
   and the animation-pool blocks the controllers use; exchanged in place, since the loaded animations point back into
-  it); the first-person muzzle flash (`[2D1990]+0x4E1F0`, drawn at the in-view player's Flash_Loc) and shells
+  it), with the animation library's working state (`0x2C3260..0x2CE710`); player 2's own first-person weapon files:
+  a manager of its own for `[2D12D8]` (which reads a weapon's file into the next of two heaps, 13 and 14) reading into
+  heaps 16 and 18 (unused by the game) on memory of its own, and its own copy of the first-person sound pool
+  (`[[2D0D60]+0xD3C8]+0xC`) with its four weapon sounds and two banks on memory of its own; the first-person muzzle flash (`[2D1990]+0x4E1F0`, drawn at the in-view player's Flash_Loc) and shells
   (`+0x506D0`, thrown from Bullet_Loc); and, in the effects held by characters (`+0x65690`), the owner of the
   out player's (the shadow), so each view leaves out the other player's first-person effects.
+- **Own copies**: the model the actor is drawn with (+0x320, whose first entry is the weapon in hand), and what it
+  could use or pick up (`[2D0D64]+0x5848`).
 - **Per frame**: player 2's controller, actor update, and the post-physics update (actor vtable +0x10, which sets
-  the eye matrix the camera follows) run after player 1's, then its muzzle flash ages and its shells move, as
-  player 1's do in the effects' update. The held effects update once per player, with that player in.
-- **HUD**: player 2's HUD keeps its own state (the elements, the HUD itself and its sprite/text/layer pools,
-  `0x2DB790..0x2E7100`), updated with player 2 in and the frame's time, and drawn into its half. While the set of
-  elements is the one last seen; otherwise it starts again from player 1's.
+  the eye matrix the camera follows) run after player 1's, then its muzzle flash ages, its shells move, as player 1's
+  do in the effects' update, and the use query (1EAF40) finds what it could use. The held effects update once per
+  player, with that player in.
+- **HUD**: the elements that show the player (the health and ammo panels, 290F9C, 290F64, 290EEC) keep player 2's
+  own state, updated with player 2 in and the frame's time, and the ammo counter's sprites are each player's. The
+  messages element (the use prompt and what was picked up, all posted by the player in the core) is player 2's own,
+  exchanged for its update and its HUD. The mission's texts (objectives, title cards) are shared: both halves show
+  them.
 - **Scripted scenes**: when the mission drives player 1 with the scripted controller (+0x324 = +0x800) and stops the
   first-person idle (slot +0x234), player 2 follows; joining during a suppressor fitting, its weapon starts in the
-  same state.
+  same state; joining after the opening scene asked for the clip that readies player 1's weapon (kind 6), player 2
+  asks for its own.
 - **Crosshair and hit markers**: each player has its own spread and markers. A marker shows only when that player's
   bullets hurt a soldier (1E74B0's attacker), not when soldiers hurt each other.
 - **Own weapons**: player 2 starts with an empty weapon array of its own, so its load takes its own weapons.
