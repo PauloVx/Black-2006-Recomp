@@ -257,7 +257,7 @@ index f7b9f8f..79b537b 100644
  uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size);
 
 diff --git a/src/apu/apu_core.c b/src/apu/apu_core.c
-index 459be77..7d3339d 100644
+index 459be77..4ba263a 100644
 --- a/src/apu/apu_core.c
 +++ b/src/apu/apu_core.c
 @@ -21,6 +21,7 @@
@@ -851,10 +851,35 @@ index 459be77..7d3339d 100644
 
      d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
  }
-@@ -432,13 +743,37 @@ static void se_frame(MCPXAPUState *d)
+@@ -432,13 +743,62 @@ static void se_frame(MCPXAPUState *d)
   * APU frame thread (background processing)
   * ============================================================ */
 
++/* The frame thread keeps d->lock across up to eight frames between its waits
++ * (throttle waits once per eight), and a title thread writing a PIO method
++ * waited for all of them: about a quarter of BLACK's main thread in busy
++ * scenes. Between frames, a waiting writer gets the lock: the method still
++ * runs at once, in order, as before, after at most one frame instead of
++ * eight. RECOMP_APU_PIO_HANDOFF=0 keeps the lock across the frames. */
++extern volatile LONG g_apu_pio_waiters;
++
++static void mcpx_apu_pio_handoff(MCPXAPUState *d)
++{
++    static int on = -1;
++    int turns = 0;
++    if (on < 0) {
++        const char *e = getenv("RECOMP_APU_PIO_HANDOFF");
++        on = !(e && *e == '0');
++    }
++    if (!on || !InterlockedCompareExchange(&g_apu_pio_waiters, 0, 0))
++        return;
++    qemu_mutex_unlock(&d->lock);
++    /* bounded: a title writing methods back to back must not starve the audio */
++    while (InterlockedCompareExchange(&g_apu_pio_waiters, 0, 0) && turns++ < 64)
++        SwitchToThread();
++    qemu_mutex_lock(&d->lock);
++}
++
 +/* How the frame thread spends its frames, for a hang report: running the
 + * voice processor, or only the monitor because the front end is off, halted
 + * or trapped. */
@@ -890,7 +915,7 @@ index 459be77..7d3339d 100644
              d->is_idle = true;
              qemu_cond_signal(&d->idle_cond);
              qemu_cond_wait(&d->cond, &d->lock);
-@@ -446,10 +781,24 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -446,10 +806,24 @@ static void *mcpx_apu_frame_thread(void *arg)
              continue;
          }
 
@@ -919,7 +944,7 @@ index 459be77..7d3339d 100644
 
          int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
                                  NV_PAPU_SECTL_XCNTMODE);
-@@ -458,16 +807,59 @@ static void *mcpx_apu_frame_thread(void *arg)
+@@ -458,16 +832,60 @@ static void *mcpx_apu_frame_thread(void *arg)
                            !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
                            !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
 
@@ -961,6 +986,7 @@ index 459be77..7d3339d 100644
              /* Full pipeline: VP voices → DSP → monitor → waveOut */
 +            g_apu_frames_full++;
              se_frame(d);
++            mcpx_apu_pio_handoff(d);
          } else {
 +            g_apu_frames_monitor++;
 +            /* No DSP wrote this tick. Preserve earlier native slices if
@@ -979,7 +1005,7 @@ index 459be77..7d3339d 100644
      qemu_mutex_unlock(&d->lock);
      return NULL;
  }
-@@ -499,6 +891,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -499,6 +917,7 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
  {
      memset(d->regs, 0, sizeof(d->regs));
      mcpx_apu_vp_reset(d);
@@ -987,7 +1013,7 @@ index 459be77..7d3339d 100644
 
      if (d->gp.dsp) {
          memset((void *)d->gp.dsp->core.pram_opcache, 0,
-@@ -516,6 +909,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
+@@ -516,6 +935,11 @@ static void mcpx_apu_reset_locked(MCPXAPUState *d)
   * ============================================================ */
 
  MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
@@ -999,7 +1025,7 @@ index 459be77..7d3339d 100644
  {
      MCPXAPUState *d = (MCPXAPUState *)calloc(1, sizeof(MCPXAPUState));
      if (!d) {
-@@ -526,6 +924,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -526,6 +950,14 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      g_apu_ram_ptr = ram_ptr;
      g_state = d;
      d->ram_ptr = ram_ptr;
@@ -1014,7 +1040,7 @@ index 459be77..7d3339d 100644
 
      d->set_irq = false;
      d->exiting = false;
-@@ -546,13 +952,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
+@@ -546,13 +978,6 @@ MCPXAPUState *mcpx_apu_init_standalone(uint8_t *ram_ptr)
      /* Init software mixer for DirectSound bridge */
      mixer_init();
 
@@ -1028,7 +1054,7 @@ index 459be77..7d3339d 100644
      /* Start background frame thread */
      qemu_thread_create(&d->apu_thread, "mcpx.apu_thread",
                         mcpx_apu_frame_thread, d, QEMU_THREAD_JOINABLE);
-@@ -581,7 +980,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
+@@ -581,7 +1006,7 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
 
      qemu_thread_join(&d->apu_thread);
      mcpx_apu_vp_finalize(d);
@@ -1037,7 +1063,7 @@ index 459be77..7d3339d 100644
 
      free(d);
      g_state = NULL;
-@@ -614,8 +1013,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
+@@ -614,8 +1039,12 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
          if (is_write) {
              mcpx_apu_write(d, addr, val, size);
          }
@@ -1051,7 +1077,7 @@ index 459be77..7d3339d 100644
  }
 
  /* ============================================================
-@@ -630,6 +1033,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
+@@ -630,6 +1059,10 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
          return mcpx_apu_vp_read(d, addr - 0x20000, size);
      } else if (addr < 0x20000) {
          return mcpx_apu_read(d, (hwaddr)addr, size);
@@ -3371,7 +3397,7 @@ index 651b334..a8a5307 100644
  extern MCPXAPUState *g_state;
  extern struct McpxApuDebug g_dbg, g_dbg_cache;
 diff --git a/src/apu/apu_vp.c b/src/apu/apu_vp.c
-index b9f429e..e48b085 100644
+index b9f429e..6d83dce 100644
 --- a/src/apu/apu_vp.c
 +++ b/src/apu/apu_vp.c
 @@ -66,9 +66,21 @@ static void set_notify_status(MCPXAPUState *d, uint32_t v, int notifier,
@@ -3618,7 +3644,15 @@ index b9f429e..e48b085 100644
          }
          break;
 
-@@ -567,8 +718,13 @@ void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val,
+@@ -561,16 +712,28 @@ uint64_t mcpx_apu_vp_read(void *opaque, hwaddr addr, unsigned int size)
+     return 0;
+ }
+
++extern volatile LONG g_apu_pio_waiters;
++
+ void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val,
+                         unsigned int size)
+ {
      MCPXAPUState *d = (MCPXAPUState *)opaque;
      (void)size;
 
@@ -3627,13 +3661,20 @@ index b9f429e..e48b085 100644
 +     * calls arrive from several host threads, unlike the original CPU, and
 +     * must not race that publication or one another. The shim's mutex is
 +     * recursive, as VOICE_LOCK also takes it. */
++    InterlockedIncrement(&g_apu_pio_waiters);
 +    qemu_mutex_lock(&d->lock);
++    InterlockedDecrement(&g_apu_pio_waiters);
      fe_method(d, (uint32_t)addr, (uint32_t)val);
 +    qemu_mutex_unlock(&d->lock);
  }
 
++/* Title threads waiting for d->lock to write a PIO method (see mcpx_apu_pio_handoff). */
++volatile LONG g_apu_pio_waiters;
++
  /* ============================================================
-@@ -797,7 +953,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+  * SGE data pointer resolution
+  * ============================================================ */
+@@ -797,7 +960,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
              d->vp.ssl[v].ssl_seg = 0;
              if (!persist) {
                  d->vp.ssl[v].ssl_index = 0;
@@ -3642,7 +3683,7 @@ index b9f429e..e48b085 100644
              } else {
                  set_notify_status(d, v, MCPX_HW_NOTIFIER_SSLA_DONE +
                                    d->vp.ssl[v].ssl_index,
-@@ -843,7 +999,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -843,7 +1006,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                  uint32_t linear_addr = block_index * (uint32_t)block_size;
                  if (stream) {
                      hwaddr addr = segment_offset + linear_addr;
@@ -3651,7 +3692,7 @@ index b9f429e..e48b085 100644
                             block_size);
                  } else {
                      linear_addr += ba;
-@@ -911,7 +1067,8 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -911,7 +1074,8 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
          }
      }
 
@@ -3661,7 +3702,7 @@ index b9f429e..e48b085 100644
          if (stream) {
              d->vp.ssl[v].ssl_seg += 1;
              cbo = 0;
-@@ -921,15 +1078,19 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -921,15 +1085,19 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                  int next_index = (ssl_index + 1) % 2;
                  d->vp.ssl[v].ssl_index = next_index;
                  d->vp.ssl[v].ssl_seg = 0;
@@ -3684,7 +3725,7 @@ index b9f429e..e48b085 100644
              }
          }
      }
-@@ -940,32 +1101,122 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
+@@ -940,32 +1108,122 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
  }
 
  /* ============================================================
@@ -3825,7 +3866,7 @@ index b9f429e..e48b085 100644
  }
 
  /* ============================================================
-@@ -1041,7 +1292,7 @@ static void voice_process(MCPXAPUState *d,
+@@ -1041,7 +1299,7 @@ static void voice_process(MCPXAPUState *d,
          for (int sample_count = 0; sample_count < NUM_SAMPLES_PER_FRAME;) {
              int active = voice_get_mask(d, v, NV_PAVS_VOICE_PAR_STATE,
                                          NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE);
@@ -3834,7 +3875,7 @@ index b9f429e..e48b085 100644
              int count = voice_resample(d, v, &samples[sample_count],
                                         NUM_SAMPLES_PER_FRAME - sample_count, rate);
              if (count < 0) break;
-@@ -1049,10 +1300,6 @@ static void voice_process(MCPXAPUState *d,
+@@ -1049,10 +1307,6 @@ static void voice_process(MCPXAPUState *d,
          }
      }
 
@@ -3845,7 +3886,7 @@ index b9f429e..e48b085 100644
      /* Get volume bins */
      int bin[8];
      bin[0] = voice_get_mask(d, v, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN);
-@@ -1169,39 +1416,169 @@ static void voice_process(MCPXAPUState *d,
+@@ -1169,39 +1423,169 @@ static void voice_process(MCPXAPUState *d,
   * Simplified single-threaded version (no worker threads initially)
   * ============================================================ */
 
@@ -4024,7 +4065,7 @@ index b9f429e..e48b085 100644
 
      /* VP monitor output */
      if (d->monitor.point == MCPX_APU_DEBUG_MON_VP) {
-@@ -1243,5 +1620,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
+@@ -1243,5 +1627,6 @@ void mcpx_apu_vp_reset(MCPXAPUState *d)
      memset(d->vp.voice_locked, 0, sizeof(d->vp.voice_locked));
      for (int v = 0; v < MCPX_HW_MAX_VOICES; v++) {
          hrtf_filter_init(&d->vp.filters[v].hrtf);
@@ -4462,10 +4503,10 @@ index 0000000..12d970e
 +#endif /* XBOXRECOMP_PC_CONTROLS_H */
 diff --git a/src/input/pc_input.c b/src/input/pc_input.c
 new file mode 100644
-index 0000000..b96e033
+index 0000000..971a7fd
 --- /dev/null
 +++ b/src/input/pc_input.c
-@@ -0,0 +1,1627 @@
+@@ -0,0 +1,1649 @@
 +/*
 + * pc_input.c -- native keyboard and mouse for BLACK. See pc_input.h for the design.
 + *
@@ -4510,6 +4551,7 @@ index 0000000..b96e033
 +#define PC_WHEEL_MS 110
 +#define PC_PULSE_MS 150
 +#define PC_GAMEPLAY_MS 400              /* startup fallback and evidence for a new movement hold in a frame gap */
++#define PC_LOOK_GAP_MS 150              /* camera-update gap that keeps the pointer and mouse motion (see below) */
 +#define PC_PENDING_MS 5000             /* safety expiry for a stalled/disconnected native consumer */
 +#define PC_PENDING_MAX 4               /* bounded distinct presses awaiting native samples */
 +#define PC_NATIVE_SAMPLE_MAX 4         /* bounded snapshots; stale completions cannot acknowledge new input */
@@ -5172,15 +5214,33 @@ index 0000000..b96e033
 +    return gameplay_hold_source(source);
 +}
 +
++/* Below full speed the renderer often completes a frame before the next camera
++ * update, which ends gameplay for that frame. For keys and buttons that is the
++ * intended boundary, but releasing the pointer there (and discarding the mouse
++ * motion gathered meanwhile) made it flash and look choppy, worst on diagonals.
++ * The pointer and the motion survive while the last camera update is recent and
++ * nothing (pause, movie, focus loss) has ended gameplay for real. */
++static int look_gap_recent(uint64_t now)
++{
++    const uint64_t tick = (uint64_t)s_gameplay_tick;
++    if (!s_frame_authority || s_focus_pause_guard || !tick || now < tick || now - tick > PC_LOOK_GAP_MS) return 0;
++    if (movie_active() || (s_gameplay_blocked_query && s_gameplay_blocked_query())) return 0;
++    return 1;
++}
++
 +void pc_input_gameplay_tick(void)
 +{
 +    uint64_t now = now_ms();
 +    int was = pc_input_gameplay_active();
++    const int look_gap = look_gap_recent(now);
 +    if (!s_frame_authority && s_focused) s_focus_pause_guard = 0;
 +    if (!was && !s_focus_pause_guard) {
-+        /* control has just come back (or started): stale movement must not become a turn */
-+        InterlockedExchange(&s_dx, 0);
-+        InterlockedExchange(&s_dy, 0);
++        /* control has just come back (or started): stale movement must not become a turn.
++         * After only a short camera-update gap the motion is current: keep it. */
++        if (!look_gap) {
++            InterlockedExchange(&s_dx, 0);
++            InterlockedExchange(&s_dy, 0);
++        }
 +        trace("gameplay active");
 +        if (s_trace_level >= 2) {
 +            char line[512];
@@ -5213,7 +5273,9 @@ index 0000000..b96e033
 +    if (!seen || blocked) {
 +        unsigned id;
 +        InterlockedExchange(&s_gameplay_active, 0);
-+        InterlockedExchange(&s_dx, 0); InterlockedExchange(&s_dy, 0);
++        if (blocked || !look_gap_recent(now_ms())) {
++            InterlockedExchange(&s_dx, 0); InterlockedExchange(&s_dy, 0);
++        }
 +        AcquireSRWLockExclusive(&s_pending_lock);
 +        for (id = 0; id < SRC_COUNT; ++id) {
 +            unsigned read, write = 0;
@@ -5419,7 +5481,8 @@ index 0000000..b96e033
 +int pc_input_capture_wanted(void)
 +{
 +    pc_input_init();
-+    return !s_script_background && s_focused && kbm_enabled() && pc_input_gameplay_active() && !movie_active();
++    return !s_script_background && s_focused && kbm_enabled() &&
++           (pc_input_gameplay_active() || look_gap_recent(now_ms())) && !movie_active();
 +}
 +
 +int pc_input_cursor_hidden_wanted(void)
@@ -6436,7 +6499,7 @@ index e515377..89ce24e 100644
  /* Older spellings kept so existing call sites still build. */
  #define XC_PARENTAL_CONTROL       XC_P_CONTROL_GAMES
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
-index 5b56513..f88c7c5 100644
+index 5b56513..c1d8376 100644
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
 @@ -28,6 +28,7 @@
@@ -7016,7 +7079,7 @@ index 5b56513..f88c7c5 100644
   */
  #define XBOX_NV2A_REG_BASE     0xFD000000u
  #define NV2A_PMC_INTR_0        0x00000100u
-@@ -1973,25 +2312,103 @@ static int kernel_raise_interrupt(uint32_t vector)
+@@ -1973,25 +2312,167 @@ static int kernel_raise_interrupt(uint32_t vector)
  #define NV2A_PCRTC_INTR_VBLANK (1u << 0)
  #define NV2A_VECTOR            3u
 
@@ -7090,6 +7153,46 @@ index 5b56513..f88c7c5 100644
 +    return left < (LONGLONG)limit ? (DWORD)left : limit;
 +}
 +
++/* RECOMP_VBLANK_KEEP_GRID=1: missed vblanks are owed, not dropped (see
++ * kernel_vblank_tick). RECOMP_VBLANK_STATS=1 prints, every five seconds,
++ * how many vblanks were delivered, how many came late to repay a stall,
++ * how many were dropped and how often the grid restarted. */
++static int s_vblank_keep_grid = -1, s_vblank_stats;
++static LONGLONG s_vblank_grid, s_vstat_since;
++static unsigned s_vstat_delivered, s_vstat_owed, s_vstat_dropped, s_vstat_restarts;
++
++static void vblank_keep_grid_init(void)
++{
++    const char *e, *s;
++    if (s_vblank_keep_grid >= 0)
++        return;
++    e = getenv("RECOMP_VBLANK_KEEP_GRID");
++    s = getenv("RECOMP_VBLANK_STATS");
++    s_vblank_keep_grid = e && *e && *e != '0';
++    s_vblank_stats = s && *s && *s != '0';
++    if (s_vblank_keep_grid)
++        fprintf(stderr, "[VBLANK] keeping the grid: vblanks missed in a stall are delivered late, not dropped\n");
++}
++
++static void kernel_vblank_stats(LONGLONG now)
++{
++    LARGE_INTEGER f;
++    if (!s_vblank_stats)
++        return;
++    if (!s_vstat_since) {
++        s_vstat_since = now;
++        return;
++    }
++    QueryPerformanceFrequency(&f);
++    if (now - s_vstat_since < 5 * f.QuadPart)
++        return;
++    fprintf(stderr, "[VBLANK] %.2f/s delivered (%u late to repay a stall), %u dropped, %u grid restarts\n",
++            (double)s_vstat_delivered * (double)f.QuadPart / (double)(now - s_vstat_since),
++            s_vstat_owed, s_vstat_dropped, s_vstat_restarts);
++    s_vstat_delivered = s_vstat_owed = s_vstat_dropped = s_vstat_restarts = 0;
++    s_vstat_since = now;
++}
++
  static void kernel_vblank_tick(void)
  {
 -    static int enabled = -1;
@@ -7106,14 +7209,38 @@ index 5b56513..f88c7c5 100644
 -    now = (long long)GetTickCount64();
 -    if (now < next_ms)
 +    QueryPerformanceCounter(&now);
++    vblank_keep_grid_init();
++    kernel_vblank_stats(now.QuadPart);
 +    if (now.QuadPart < s_vblank_next)
          return;
 -    next_ms = now + 16;                       /* ~60 Hz */
-+    /* The next one on the 60 Hz grid; after a stall, restart the grid from
-+     * now rather than delivering the missed ones in a burst. */
-+    s_vblank_next += s_vblank_period;
-+    if (s_vblank_next <= now.QuadPart)
-+        s_vblank_next = now.QuadPart + s_vblank_period;
++    ++s_vstat_delivered;
++    if (s_vblank_keep_grid) {
++        /* Keep the grid through a short stall of this thread (a GPU lock
++         * held for a while, a slow DPC): the vblanks it missed follow at a
++         * quarter period apart, so a title that steps its world once per
++         * vblank-paced flip stays at real time. A stall of more than four
++         * periods is a real interruption and restarts the grid as below. */
++        s_vblank_grid += s_vblank_period;
++        if (s_vblank_grid <= now.QuadPart - 4 * s_vblank_period) {
++            s_vblank_grid = now.QuadPart + s_vblank_period;
++            ++s_vstat_restarts;
++        }
++        s_vblank_next = s_vblank_grid;
++        if (s_vblank_next <= now.QuadPart) {
++            s_vblank_next = now.QuadPart + s_vblank_period / 4;
++            ++s_vstat_owed;
++        }
++    } else {
++        /* The next one on the 60 Hz grid; after a stall, restart the grid from
++         * now rather than delivering the missed ones in a burst. */
++        s_vblank_next += s_vblank_period;
++        if (s_vblank_next <= now.QuadPart) {
++            s_vstat_dropped += (unsigned)((now.QuadPart - s_vblank_next) / s_vblank_period) + 1u;
++            s_vblank_next = now.QuadPart + s_vblank_period;
++            ++s_vstat_restarts;
++        }
++    }
 
      if (!xbox_GetConnectedInterrupt(NV2A_VECTOR))
          return;
@@ -7129,7 +7256,7 @@ index 5b56513..f88c7c5 100644
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PCRTC_INTR_0) |= NV2A_PCRTC_INTR_VBLANK;
      BRIDGE_MEM32(XBOX_NV2A_REG_BASE + NV2A_PMC_INTR_0)   |= NV2A_PMC_INTR_PCRTC;
 
-@@ -2006,16 +2423,77 @@ static void kernel_vblank_tick(void)
+@@ -2006,16 +2487,77 @@ static void kernel_vblank_tick(void)
      }
  }
 
@@ -7211,7 +7338,7 @@ index 5b56513..f88c7c5 100644
  }
 
  /* ── KeInitializeDpc (ordinal 107) ────────────────────────
-@@ -2044,18 +2522,20 @@ static void bridge_KeInitializeDpc(void)
+@@ -2044,18 +2586,20 @@ static void bridge_KeInitializeDpc(void)
  /* ── NV2A interrupt plumbing (ordinals 44, 98, 109) ───────
   *
   * The D3D8 library linked into a title installs an ISR for the GPU's vblank /
@@ -7238,7 +7365,7 @@ index 5b56513..f88c7c5 100644
 
  /* ULONG HalGetInterruptVector(ULONG BusInterruptLevel, PKIRQL Irql) */
  static void bridge_HalGetInterruptVector(void)
-@@ -2098,7 +2578,6 @@ static void bridge_KeInitializeInterrupt(void)
+@@ -2098,7 +2642,6 @@ static void bridge_KeInitializeInterrupt(void)
   * A small fixed table rather than a list: an Xbox has 26 interrupt vectors and
   * a title connects a handful, so the whole thing is smaller than the comment.
   */
@@ -7246,7 +7373,7 @@ index 5b56513..f88c7c5 100644
  static uint32_t g_connected_isr[XBOX_MAX_VECTORS];   /* KINTERRUPT guest VA */
 
  /* BOOLEAN KeConnectInterrupt(PKINTERRUPT Interrupt) */
-@@ -2115,6 +2594,9 @@ static void bridge_KeConnectInterrupt(void)
+@@ -2115,6 +2658,9 @@ static void bridge_KeConnectInterrupt(void)
                      vector, BRIDGE_MEM32(interrupt_va + 0),
                      BRIDGE_MEM32(interrupt_va + 4));
              fflush(stderr);
@@ -7256,7 +7383,7 @@ index 5b56513..f88c7c5 100644
          }
      }
      g_eax = 1;  /* connected -- see the note above */
-@@ -2127,6 +2609,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
+@@ -2127,6 +2673,46 @@ uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
      return (vector < XBOX_MAX_VECTORS) ? g_connected_isr[vector] : 0;
  }
 
@@ -7303,7 +7430,7 @@ index 5b56513..f88c7c5 100644
  /* ── MmClaimGpuInstanceMemory (ordinal 168) ───────────────
   * PVOID MmClaimGpuInstanceMemory(SIZE_T NumberOfBytes, SIZE_T *Padding)
   *
-@@ -2236,11 +2758,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
+@@ -2236,11 +2822,16 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
  static CRITICAL_SECTION g_timer_lock;
  static int g_timer_started;
 
@@ -7320,7 +7447,7 @@ index 5b56513..f88c7c5 100644
      if (slot < 0) {
          fprintf(stderr, "  [KERNEL] timer thread has no worker stack; "
                          "timer DPCs will not run\n");
-@@ -2265,11 +2792,77 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2265,11 +2856,77 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
 
      for (;;) {
          long long now;
@@ -7403,7 +7530,7 @@ index 5b56513..f88c7c5 100644
          now = (long long)GetTickCount64();
 
          for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2288,23 +2881,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+@@ -2288,23 +2945,41 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
                  g_timers[i].timer_va = 0;      /* one-shot, done */
              LeaveCriticalSection(&g_timer_lock);
 
@@ -7456,7 +7583,7 @@ index 5b56513..f88c7c5 100644
  /* Shared by KeSetTimer and KeSetTimerEx; period is 0 for the former. */
  static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
                               long period_ms, uint32_t dpc_va)
-@@ -2313,11 +2924,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
+@@ -2313,11 +2988,7 @@ static void kernel_set_timer(uint32_t timer_va, long long due_100ns,
      int i, free_slot = -1;
      uint32_t was_set = 0;
 
@@ -7469,7 +7596,7 @@ index 5b56513..f88c7c5 100644
 
      EnterCriticalSection(&g_timer_lock);
      for (i = 0; i < XBOX_MAX_TIMERS; i++) {
-@@ -2614,6 +3221,70 @@ static int bridge_is_cdrom_device(const char *path)
+@@ -2614,6 +3285,70 @@ static int bridge_is_cdrom_device(const char *path)
      return _stricmp(path, "\\Device\\CdRom0") == 0;
  }
 
@@ -7540,7 +7667,7 @@ index 5b56513..f88c7c5 100644
  /* Open a file by delegating to the ported xbox_NtCreateFile kernel HLE. */
  static NTSTATUS bridge_create_file_impl(
      uint32_t handle_va, ACCESS_MASK access, uint32_t obj_attrs_va,
-@@ -2632,6 +3303,14 @@ static NTSTATUS bridge_create_file_impl(
+@@ -2632,6 +3367,14 @@ static NTSTATUS bridge_create_file_impl(
          return STATUS_OBJECT_PATH_NOT_FOUND;
      }
 
@@ -7555,7 +7682,7 @@ index 5b56513..f88c7c5 100644
      if (bridge_is_cdrom_device(name.Buffer)) {
          fprintf(stderr, "  [FILE] %s -> synthetic DVD device handle\n",
                  name.Buffer);
-@@ -3068,6 +3747,16 @@ static void bridge_NtReadFile(void)
+@@ -3068,6 +3811,16 @@ static void bridge_NtReadFile(void)
                      got > 2 ? p[2] : 0, got > 3 ? p[3] : 0);
          fflush(stderr);
      }
@@ -7572,7 +7699,7 @@ index 5b56513..f88c7c5 100644
      bridge_write_iostatus(iostatus, ios.Status, (uint32_t)ios.Information);
      bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3),
                              iostatus);
-@@ -6576,6 +7265,10 @@ static void bridge_KeResetEvent(void)
+@@ -6576,6 +7329,10 @@ static void bridge_KeResetEvent(void)
      HANDLE h;
 
      h = ke_shadow_lookup(guest_va);
@@ -7583,7 +7710,7 @@ index 5b56513..f88c7c5 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6753,7 +7446,9 @@ static void bridge_KeLeaveCriticalRegion(void)
+@@ -6753,7 +7510,9 @@ static void bridge_KeLeaveCriticalRegion(void)
  /* --- KeRaiseIrqlToSynchLevel (ordinal 130, 0 args = 0 bytes) --- */
  static void bridge_KeRaiseIrqlToSynchLevel(void)
  {
@@ -7594,7 +7721,7 @@ index 5b56513..f88c7c5 100644
  }
 
  /* --- KeRemoveByKeyDeviceQueue (ordinal 133, 2 args = 8 bytes) --- */
-@@ -6808,6 +7503,11 @@ static void bridge_KeSetEventBoostPriority(void)
+@@ -6808,6 +7567,11 @@ static void bridge_KeSetEventBoostPriority(void)
      (void)increment;
 
      h = ke_shadow_lookup(guest_va);
@@ -7606,7 +7733,7 @@ index 5b56513..f88c7c5 100644
      if (!h)
          h = XBOX_TO_NATIVE(guest_va);
      if (h)
-@@ -6853,11 +7553,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
+@@ -6853,11 +7617,11 @@ static void bridge_KiUnlockDispatcherDatabase(void)
  }
 
  /* --- KeGetCurrentIrql (ordinal 103, 0 args = 0 bytes)
@@ -7621,7 +7748,7 @@ index 5b56513..f88c7c5 100644
  }
 
  /* --- KeGetCurrentThread (ordinal 104, 0 args = 0 bytes) --- */
-@@ -7260,6 +7960,8 @@ static void bridge_ObReferenceObjectByPointer(void)
+@@ -7260,6 +8024,8 @@ static void bridge_ObReferenceObjectByPointer(void)
  static void bridge_PsCreateSystemThread(void)
  {
      uint32_t xbox_handle_ptr = STACK_ARG(0);
@@ -7630,7 +7757,7 @@ index 5b56513..f88c7c5 100644
      uint32_t start_context1  = STACK_ARG(4);
      uint32_t start_context2  = STACK_ARG(5);
      uint32_t start_routine   = STACK_ARG(6);
-@@ -7271,6 +7973,9 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7271,6 +8037,9 @@ static void bridge_PsCreateSystemThread(void)
      /* Fake handle until the worker path can write a real one. */
      if (xbox_handle_ptr)
          BRIDGE_MEM32(xbox_handle_ptr) = 0xBEEF0002;
@@ -7640,7 +7767,7 @@ index 5b56513..f88c7c5 100644
 
      if (start_routine) {
          recomp_func_t fn = recomp_lookup(start_routine);
-@@ -7297,7 +8002,8 @@ static void bridge_PsCreateSystemThread(void)
+@@ -7297,7 +8066,8 @@ static void bridge_PsCreateSystemThread(void)
                      bridge_run_thread_inline(fn, start_context1, start_context2);
                  } else {
                      HANDLE th = bridge_spawn_thread(fn, start_context1,
@@ -7650,7 +7777,7 @@ index 5b56513..f88c7c5 100644
                      if (xbox_handle_ptr && th)
                          bridge_write_handle(xbox_handle_ptr, th);
                  }
-@@ -8811,6 +9517,221 @@ static void kernel_watch_arm_once(void)
+@@ -8811,6 +9581,221 @@ static void kernel_watch_arm_once(void)
  /* Current dispatching slot */
  static RECOMP_TLS int g_kernel_dispatch_slot = -1;
 
@@ -7872,7 +7999,7 @@ index 5b56513..f88c7c5 100644
  static void kernel_thunk_dispatch(void)
  {
      int slot = g_kernel_dispatch_slot;
-@@ -8885,6 +9806,28 @@ static void kernel_thunk_dispatch(void)
+@@ -8885,6 +9870,28 @@ static void kernel_thunk_dispatch(void)
       * section above all -- can then say which guest call site is holding the
       * lock, which is the one fact a deadlock report otherwise lacks. */
      g_xbox_kernel_caller = g_esp ? BRIDGE_MEM32(g_esp) : 0;
@@ -7901,7 +8028,7 @@ index 5b56513..f88c7c5 100644
      g_esp += 4;
 
      /* Name the bridge that corrupts a watched dword.
-@@ -8918,7 +9861,33 @@ static void kernel_thunk_dispatch(void)
+@@ -8918,7 +9925,33 @@ static void kernel_thunk_dispatch(void)
      }
 
      if (bridge) {
@@ -7935,7 +8062,7 @@ index 5b56513..f88c7c5 100644
      } else {
          /* No specific bridge - return 0. Warn once per ordinal rather than
           * gating on g_kernel_call_count: a missing bridge is rare and is
-@@ -8947,6 +9916,9 @@ static void kernel_thunk_dispatch(void)
+@@ -8947,6 +9980,9 @@ static void kernel_thunk_dispatch(void)
          g_eax = 0;
      }
 
@@ -7945,7 +8072,7 @@ index 5b56513..f88c7c5 100644
      /* Clean stdcall args from the simulated stack.
       * On real x86, stdcall callee does "ret N" to pop the return address
       * and N bytes of arguments. We already popped the dummy return address
-@@ -9081,7 +10053,8 @@ void xbox_kernel_bridge_init(void)
+@@ -9081,7 +10117,8 @@ void xbox_kernel_bridge_init(void)
          uint32_t va = g_thunk_table_base + i * 4;
          uint32_t current = BRIDGE_MEM32(va);
 
@@ -7955,7 +8082,7 @@ index 5b56513..f88c7c5 100644
              /* Read the actual ordinal from Xbox memory, then translate it into
               * the kernel's canonical ordinal space. Identity unless the title
               * set a remap (a different XDK). Every routing decision below --
-@@ -9154,9 +10127,17 @@ void xbox_kernel_bridge_init(void)
+@@ -9154,9 +10191,17 @@ void xbox_kernel_bridge_init(void)
              uint32_t current = BRIDGE_MEM32(va);
              int slot;
 
@@ -10451,10 +10578,10 @@ index 0000000..bb5c93b
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_gpu.c b/src/nv2a/kelvin/kelvin_gpu.c
 new file mode 100644
-index 0000000..d7ceca6
+index 0000000..e7ff2df
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.c
-@@ -0,0 +1,2214 @@
+@@ -0,0 +1,2217 @@
 +/*
 + * Kelvin D3D11 backend. See kelvin_gpu.h.
 + *
@@ -10847,6 +10974,8 @@ index 0000000..d7ceca6
 +    InterlockedExchange64(&s_pending_size, ((LONG64)w << 48) | ((LONG64)h << 32) | ((LONG64)ow << 16) | (LONG64)oh);
 +}
 +
++static void kgpu_vs_precompile(void);
++
 +bool kgpu_init(void)
 +{
 +    IDXGIFactory1 *factory = NULL;
@@ -11016,6 +11145,7 @@ index 0000000..d7ceca6
 +        HR_CHECK(ID3D11Device_CreateSamplerState(G.dev, &sd, &G.default_smp), "CreateSamplerState(default)");
 +    }
 +    G.ok = 1;
++    kgpu_vs_precompile();
 +    kg_post_poll();
 +    pc_video_set_resize_hook(kgpu_request_host_size);
 +    kgq_start();
@@ -12671,10 +12801,10 @@ index 0000000..d7ceca6
 +#include "kelvin_gpu_async.inc"
 diff --git a/src/nv2a/kelvin/kelvin_gpu.h b/src/nv2a/kelvin/kelvin_gpu.h
 new file mode 100644
-index 0000000..662239e
+index 0000000..daab7df
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu.h
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +/*
 + * Kelvin D3D11 backend: rasterization, pixel shading and output merging of
 + * the NV2A on the host GPU, for BLACK's draw subset.
@@ -12734,9 +12864,10 @@ index 0000000..662239e
 +    KGpuAttrSrc attr[16];
 +} KGpuVsDraw;
 +
-+/* The GPU can shade this program's vertices now (its shader is compiled). */
++/* The GPU can shade this program's vertices now (its shader is compiled). `words` is the program's microcode up
++ * to its final instruction (nwords words), recorded so later runs can compile it before the game starts. */
 +bool kgpu_vs_enabled(void);
-+bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start);
++bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords);
 +
 +/* KGpuDraw.clean: what the caller knows is unchanged since its previous draw (so what derives from it is kept). A
 + * caller that cannot tell leaves it zero. */
@@ -13397,7 +13528,7 @@ index 0000000..d00641c
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_draw.inc b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 new file mode 100644
-index 0000000..f1bf2f8
+index 0000000..43b88c8
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_draw.inc
 @@ -0,0 +1,773 @@
@@ -14101,7 +14232,7 @@ index 0000000..f1bf2f8
 +            b->ps = psx;
 +        }
 +        if (d->gvs) {
-+            KGpuVs *ve = vs_lookup(d->gvs->program, d->gvs->hash, d->gvs->start);
++            KGpuVs *ve = vs_lookup(d->gvs->program, d->gvs->hash, d->gvs->start, NULL, 0);
 +            if (!ve || !ve->vs) return;
 +            if (b->vs != ve->vs) {
 +                ID3D11DeviceContext_VSSetShader(G.ctx, ve->vs, NULL, 0);
@@ -16320,10 +16451,10 @@ index 0000000..2bcd677
 +}
 diff --git a/src/nv2a/kelvin/kelvin_gpu_vsh.inc b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
 new file mode 100644
-index 0000000..b96f4ee
+index 0000000..57f1f80
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_gpu_vsh.inc
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,809 @@
 +/* The GPU vertex path of the Kelvin D3D11 backend (included by kelvin_gpu.c).
 + *
 + * A transform program (nv2a_vsh_cpu's parsed steps, straight-line code) becomes
@@ -16680,26 +16811,42 @@ index 0000000..b96f4ee
 +}
 +
 +/* ---- shader cache with an asynchronous compiler -------------------------------------------- */
++/*
++ * Compiled programs are cached on disk by their HLSL (vs_<source hash>_<length>.bin), so a program has one file
++ * whatever program memory holds behind its final instruction. Each program's microcode is also recorded in
++ * vs_manifest.bin there. At startup kgpu_vs_precompile compiles every recorded program the cache lacks on all
++ * cores, before the game runs: a rebuild or a cleared cache costs a pause at launch instead of hitches in play
++ * (RECOMP_KGPU_PRECOMPILE=0 skips it). A program first met in play gets a quick unoptimised build, then an
++ * optimised one replaces it and is cached (RECOMP_KGPU_VS_QUICK=0 builds only the optimised one).
++ */
 +
 +typedef struct KGpuVs {
 +    bool used;
 +    uint32_t hash, start;
 +    volatile LONG state;               /* 0 compiling, 1 ready, 2 unusable */
-+    ID3D11VertexShader *vs;
++    ID3D11VertexShader *volatile vs;   /* the optimised build replaces the quick one */
++    ID3D11VertexShader *vs_quick;      /* kept: a queued draw may still bind it */
 +    char *source;
++    uint32_t sh, len;                  /* source hash and length: the cache key */
++    uint32_t *words;                   /* microcode up to the final instruction, for the manifest */
++    uint32_t nwords;
 +} KGpuVs;
 +
 +#define KG_VS_MAX 512
 +static KGpuVs s_vs[KG_VS_MAX];
-+/* Compile jobs (vertex programs, kind 0, and specialised pixel programs, kind 1) for the worker threads. */
++/* Compile jobs for the worker threads: vertex programs (kind 0), specialised pixel programs (kind 1) and the
++ * optimised build of a vertex program that runs its quick build (kind 2). */
 +typedef struct KgJob { int kind; void *p; } KgJob;
 +#define KG_JOB_MAX 4096
 +static KgJob s_jobs[KG_JOB_MAX];
 +static volatile LONG s_job_head, s_job_claim;    /* jobs queued / jobs taken by a compiler thread */
 +static HANDLE s_job_sem;                         /* released once per queued job */
++static SRWLOCK s_job_lock = SRWLOCK_INIT;        /* the pusher, the submission thread and the workers queue jobs */
 +#define KG_VS_WORKERS_MAX 8
 +static void kg_job_ps(void *p);
++static void kg_job_post(int kind, void *p);
 +static int s_vs_enabled = -1;
++static int s_vs_quick = -1;
 +
 +static uint32_t fnv_bytes(const void *p, size_t n)
 +{
@@ -16710,62 +16857,217 @@ index 0000000..b96f4ee
 +    return h;
 +}
 +
-+static void vs_cache_path(char *out, size_t cap, const KGpuVs *e)
++static const char *kg_cache_dir(void)
 +{
 +    const char *dir = getenv("RECOMP_KGPU_CACHE");
-+    uint32_t sh = e->source ? fnv_bytes(e->source, strlen(e->source)) : 0;
-+    snprintf(out, cap, "%s/vs_%08X_%08X_%08X.bin", dir && *dir ? dir : "kgpu-cache", e->hash, e->start, sh);
++    return dir && *dir ? dir : "kgpu-cache";
++}
++
++static void vs_cache_path(char *out, size_t cap, uint32_t sh, uint32_t len)
++{
++    snprintf(out, cap, "%s/vs_%08X_%05X.bin", kg_cache_dir(), sh, len);
++}
++
++static void *kg_read_file(const char *path, long *size)
++{
++    FILE *f = fopen(path, "rb");
++    void *buf;
++    long n;
++    if (!f) return NULL;
++    fseek(f, 0, SEEK_END);
++    n = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    buf = n > 0 ? malloc((size_t)n) : NULL;
++    if (buf && fread(buf, 1, (size_t)n, f) != (size_t)n) { free(buf); buf = NULL; }
++    fclose(f);
++    *size = n;
++    return buf;
++}
++
++/* Written beside and renamed, so an interrupted write never leaves a file that looks complete. */
++static void kg_write_file(const char *path, const void *p, size_t n)
++{
++    char tmp[600];
++    FILE *f;
++    CreateDirectoryA(kg_cache_dir(), NULL);
++    snprintf(tmp, sizeof(tmp), "%s.%lu.tmp", path, (unsigned long)GetCurrentThreadId());
++    f = fopen(tmp, "wb");
++    if (!f) return;
++    if (fwrite(p, 1, n, f) != n) { fclose(f); DeleteFileA(tmp); return; }
++    fclose(f);
++    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp);
 +}
 +
 +static bool vs_try_cache(KGpuVs *e)
 +{
 +    char path[512];
-+    FILE *f;
++    ID3D11VertexShader *vs = NULL;
 +    void *buf;
-+    long n;
-+    vs_cache_path(path, sizeof(path), e);
-+    f = fopen(path, "rb");
-+    if (!f) return false;
-+    fseek(f, 0, SEEK_END);
-+    n = ftell(f);
-+    fseek(f, 0, SEEK_SET);
-+    buf = n > 0 ? malloc((size_t)n) : NULL;
-+    if (buf && fread(buf, 1, (size_t)n, f) == (size_t)n &&
-+        SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, buf, (SIZE_T)n, NULL, &e->vs))) {
-+        free(buf); fclose(f);
-+        return true;
++    long n = 0;
++    vs_cache_path(path, sizeof(path), e->sh, e->len);
++    buf = kg_read_file(path, &n);
++    if (!buf) {
++        /* a cache written before the names were keyed by the source alone */
++        char old[512];
++        snprintf(old, sizeof(old), "%s/vs_%08X_%08X_%08X.bin", kg_cache_dir(), e->hash, e->start, e->sh);
++        buf = kg_read_file(old, &n);
++        if (buf) kg_write_file(path, buf, (size_t)n);
 +    }
-+    free(buf); fclose(f);
++    if (!buf) return false;
++    if (FAILED(ID3D11Device_CreateVertexShader(G.dev, buf, (SIZE_T)n, NULL, &vs))) vs = NULL;
++    free(buf);
++    e->vs = vs;
++    return vs != NULL;
++}
++
++/* ---- the manifest of the programs met so far ---- */
++
++#include <errno.h>
++#include <io.h>
++
++#define KG_MAN_MAGIC 0x3153564Bu       /* "KVS1"; a record is magic, source hash, source length, word count, words */
++#define KG_MAN_MAX 4096
++static uint64_t s_man_keys[KG_MAN_MAX];
++static int s_man_n;
++static bool s_man_loaded;
++static SRWLOCK s_man_lock = SRWLOCK_INIT;
++
++static void manifest_path(char *out, size_t cap)
++{
++    snprintf(out, cap, "%s/vs_manifest.bin", kg_cache_dir());
++}
++
++static bool manifest_has(uint64_t key)
++{
++    int i;
++    for (i = 0; i < s_man_n; i++) if (s_man_keys[i] == key) return true;
 +    return false;
 +}
 +
-+static void vs_compile(KGpuVs *e)
++static void manifest_note(uint64_t key)
 +{
-+    ID3DBlob *code = NULL, *errors = NULL;
-+    HRESULT hr;
++    if (s_man_n < KG_MAN_MAX && !manifest_has(key)) s_man_keys[s_man_n++] = key;
++}
++
++/* Calls fn for each whole record; a torn record at the end (an interrupted write) ends the list. */
++static void manifest_read(void (*fn)(void *ctx, const uint32_t *hdr, const uint32_t *words), void *ctx)
++{
++    char path[512];
++    void *buf;
++    long n = 0, at = 0;
++    manifest_path(path, sizeof(path));
++    buf = kg_read_file(path, &n);
++    if (!buf) return;
++    while (at + 16 <= n) {
++        const uint32_t *hdr = (const uint32_t *)((const uint8_t *)buf + at);
++        if (hdr[0] != KG_MAN_MAGIC || !hdr[3] || hdr[3] % VSH_TOKEN_SIZE ||
++            hdr[3] > NV2A_MAX_TRANSFORM_PROGRAM_LENGTH * VSH_TOKEN_SIZE || at + 16 + (long)hdr[3] * 4 > n) break;
++        fn(ctx, hdr, hdr + 4);
++        at += 16 + (long)hdr[3] * 4;
++    }
++    free(buf);
++}
++
++static void manifest_note_record(void *ctx, const uint32_t *hdr, const uint32_t *words)
++{
++    (void)ctx; (void)words;
++    manifest_note(((uint64_t)hdr[1] << 32) | hdr[2]);
++}
++
++/* Keep the complete prefix, then replace any interrupted header or payload with the new record.
++ * Scan the file we actually opened: it may have changed since the initial manifest_read. */
++static bool manifest_append(const KGpuVs *e)
++{
++    char path[512];
++    uint32_t hdr[4], words[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH * VSH_TOKEN_SIZE];
++    long valid = 0, end;
++    bool present = false, ok = false;
++    FILE *f;
++    manifest_path(path, sizeof(path));
++    f = fopen(path, "r+b");
++    if (!f && errno == ENOENT) f = fopen(path, "w+b");
++    if (!f) return false;
++    for (;;) {
++        size_t n = fread(hdr, 1, sizeof(hdr), f);
++        if (!n) break;
++        if (n != sizeof(hdr) || hdr[0] != KG_MAN_MAGIC || !hdr[3] || hdr[3] % VSH_TOKEN_SIZE ||
++            hdr[3] > NV2A_MAX_TRANSFORM_PROGRAM_LENGTH * VSH_TOKEN_SIZE) break;
++        if (fread(words, sizeof(words[0]), hdr[3], f) != hdr[3]) break;
++        valid = ftell(f);
++        if (valid < 0) goto done;
++        if (hdr[1] == e->sh && hdr[2] == e->len) present = true;
++    }
++    /* An I/O error is not evidence that the existing bytes are an incomplete record. */
++    if (ferror(f) || fseek(f, 0, SEEK_END) || (end = ftell(f)) < 0) goto done;
++    if (end != valid && _chsize_s(_fileno(f), valid)) goto done;
++    if (fseek(f, valid, SEEK_SET)) goto done;
++    if (!present) {
++        hdr[0] = KG_MAN_MAGIC; hdr[1] = e->sh; hdr[2] = e->len; hdr[3] = e->nwords;
++        if (fwrite(hdr, sizeof(hdr), 1, f) != 1 ||
++            fwrite(e->words, sizeof(e->words[0]), e->nwords, f) != e->nwords || fflush(f)) goto done;
++    }
++    ok = true;
++done:
++    if (fclose(f)) ok = false;
++    return ok;
++}
++
++static void manifest_add(const KGpuVs *e)
++{
++    uint64_t key = ((uint64_t)e->sh << 32) | e->len;
++    if (!e->words || !e->nwords || e->nwords % VSH_TOKEN_SIZE ||
++        e->nwords > NV2A_MAX_TRANSFORM_PROGRAM_LENGTH * VSH_TOKEN_SIZE) return;
++    AcquireSRWLockExclusive(&s_man_lock);
++    if (!s_man_loaded) { manifest_read(manifest_note_record, NULL); s_man_loaded = true; }
++    if (!manifest_has(key) && s_man_n < KG_MAN_MAX) {
++        CreateDirectoryA(kg_cache_dir(), NULL);
++        if (manifest_append(e)) manifest_note(key);
++    }
++    ReleaseSRWLockExclusive(&s_man_lock);
++}
++
++/* ---- compiling ---- */
++
++static ID3DBlob *vs_build(const char *source, bool quick, ID3DBlob **errors)
++{
++    ID3DBlob *code = NULL;
++    HRESULT hr = G.compile(source, strlen(source), "kgpu_vsh", NULL, NULL, "vs_main", "vs_5_0",
++                           quick ? D3DCOMPILE_SKIP_OPTIMIZATION : D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, errors);
++    if (FAILED(hr) && code) { ID3D10Blob_Release(code); code = NULL; }
++    return code;
++}
++
++static void vs_compile(KGpuVs *e, bool quick)
++{
++    ID3DBlob *code, *errors = NULL;
++    ID3D11VertexShader *vs = NULL;
 +    long long t0 = qpc_now();
-+    hr = G.compile(e->source, strlen(e->source), "kgpu_vsh", NULL, NULL, "vs_main", "vs_5_0",
-+                   D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, &errors);
-+    if (SUCCEEDED(hr) &&
-+        SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, ID3D10Blob_GetBufferPointer(code),
-+                                                  ID3D10Blob_GetBufferSize(code), NULL, &e->vs))) {
-+        char path[512];
-+        FILE *f;
-+        CreateDirectoryA(getenv("RECOMP_KGPU_CACHE") && *getenv("RECOMP_KGPU_CACHE") ? getenv("RECOMP_KGPU_CACHE")
-+                                                                                       : "kgpu-cache", NULL);
-+        vs_cache_path(path, sizeof(path), e);
-+        f = fopen(path, "wb");
-+        if (f) {
-+            fwrite(ID3D10Blob_GetBufferPointer(code), 1, ID3D10Blob_GetBufferSize(code), f);
-+            fclose(f);
++    code = vs_build(e->source, quick, &errors);
++    if (code && SUCCEEDED(ID3D11Device_CreateVertexShader(G.dev, ID3D10Blob_GetBufferPointer(code),
++                                                          ID3D10Blob_GetBufferSize(code), NULL, &vs))) {
++        double ms = (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf;
++        if (quick) {
++            e->vs_quick = vs;
++            e->vs = vs;
++            InterlockedExchange(&e->state, 1);
++            fprintf(stderr, "[KGPU] vertex program %08X/%u quick build in %.0f ms\n", e->hash, e->start, ms);
++            kg_job_post(2, e);
++        } else {
++            char path[512];
++            vs_cache_path(path, sizeof(path), e->sh, e->len);
++            kg_write_file(path, ID3D10Blob_GetBufferPointer(code), ID3D10Blob_GetBufferSize(code));
++            InterlockedExchangePointer((PVOID volatile *)&e->vs, vs);
++            InterlockedExchange(&e->state, 1);
++            manifest_add(e);
++            fprintf(stderr, "[KGPU] vertex program %08X/%u compiled in %.0f ms\n", e->hash, e->start, ms);
 +        }
-+        InterlockedExchange(&e->state, 1);
-+        fprintf(stderr, "[KGPU] vertex program %08X/%u compiled in %.0f ms\n", e->hash, e->start,
-+                (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf);
++    } else if (quick) {
++        /* the optimised build may still succeed */
++        kg_job_post(2, e);
 +    } else {
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u did not compile: %s\n", e->hash, e->start,
 +                errors ? (const char *)ID3D10Blob_GetBufferPointer(errors) : "(no log)");
-+        InterlockedExchange(&e->state, 2);
++        if (e->state != 1) InterlockedExchange(&e->state, 2);    /* a working quick build stays in use */
 +    }
 +    if (errors) ID3D10Blob_Release(errors);
 +    if (code) ID3D10Blob_Release(code);
@@ -16780,7 +17082,8 @@ index 0000000..b96f4ee
 +        WaitForSingleObject(s_job_sem, INFINITE);
 +        idx = InterlockedIncrement(&s_job_claim) - 1;
 +        j = s_jobs[idx % KG_JOB_MAX];
-+        if (j.kind == 0) vs_compile((KGpuVs *)j.p);
++        if (j.kind == 0) vs_compile((KGpuVs *)j.p, s_vs_quick != 0);
++        else if (j.kind == 2) vs_compile((KGpuVs *)j.p, false);
 +        else kg_job_ps(j.p);
 +    }
 +    return 0;
@@ -16788,6 +17091,7 @@ index 0000000..b96f4ee
 +
 +static void kg_job_post(int kind, void *p)
 +{
++    AcquireSRWLockExclusive(&s_job_lock);
 +    if (!s_job_sem) {
 +        /* Programs compile in parallel: a level's first frames name dozens of them at once, and until one is
 +         * ready its draws run the CPU vertex stage (vertex programs) or the ubershader (pixel programs).
@@ -16808,7 +17112,103 @@ index 0000000..b96f4ee
 +    s_jobs[s_job_head % KG_JOB_MAX].kind = kind;
 +    s_jobs[s_job_head % KG_JOB_MAX].p = p;
 +    InterlockedIncrement(&s_job_head);
++    ReleaseSRWLockExclusive(&s_job_lock);
 +    ReleaseSemaphore(s_job_sem, 1, NULL);
++}
++
++/* ---- compiling the recorded programs before the game starts ---- */
++
++typedef struct KgPre { char *source; uint32_t sh, len; } KgPre;
++typedef struct KgPreList { KgPre *items; int n, cap, cached, unusable; } KgPreList;
++static volatile LONG s_pre_next, s_pre_failed;
++
++static void precompile_note(void *ctx, const uint32_t *hdr, const uint32_t *words)
++{
++    KgPreList *l = (KgPreList *)ctx;
++    Nv2aVshProgram prog;
++    char *source, path[512];
++    uint32_t sh, len;
++    int i;
++    memset(&prog, 0, sizeof(prog));
++    if (nv2a_vsh_parse_program(&prog, words, hdr[3] / VSH_TOKEN_SIZE) != NV2AVPR_SUCCESS) { l->unusable++; return; }
++    source = vsh_generate(&prog);
++    nv2a_vsh_program_destroy(&prog);
++    if (!source) { l->unusable++; return; }
++    /* this build's translation, which may differ from the one that recorded the program */
++    len = (uint32_t)strlen(source);
++    sh = fnv_bytes(source, len);
++    manifest_note(((uint64_t)hdr[1] << 32) | hdr[2]);
++    manifest_note(((uint64_t)sh << 32) | len);
++    vs_cache_path(path, sizeof(path), sh, len);
++    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) { l->cached++; free(source); return; }
++    for (i = 0; i < l->n; i++) {
++        if (l->items[i].sh == sh && l->items[i].len == len) { free(source); return; }
++    }
++    if (l->n == l->cap) {
++        int cap = l->cap ? l->cap * 2 : 64;
++        KgPre *g = (KgPre *)realloc(l->items, (size_t)cap * sizeof(*g));
++        if (!g) { free(source); return; }
++        l->items = g; l->cap = cap;
++    }
++    l->items[l->n].source = source; l->items[l->n].sh = sh; l->items[l->n].len = len;
++    l->n++;
++}
++
++static DWORD WINAPI precompile_worker(LPVOID arg)
++{
++    KgPreList *l = (KgPreList *)arg;
++    for (;;) {
++        LONG i = InterlockedIncrement(&s_pre_next) - 1;
++        ID3DBlob *code, *errors = NULL;
++        if (i >= l->n) break;
++        code = vs_build(l->items[i].source, false, &errors);
++        if (code) {
++            char path[512];
++            vs_cache_path(path, sizeof(path), l->items[i].sh, l->items[i].len);
++            kg_write_file(path, ID3D10Blob_GetBufferPointer(code), ID3D10Blob_GetBufferSize(code));
++            ID3D10Blob_Release(code);
++        } else {
++            InterlockedIncrement(&s_pre_failed);
++        }
++        if (errors) ID3D10Blob_Release(errors);
++    }
++    return 0;
++}
++
++static void kgpu_vs_precompile(void)
++{
++    const char *env = getenv("RECOMP_KGPU_PRECOMPILE");
++    KgPreList l;
++    HANDLE th[32];
++    SYSTEM_INFO si;
++    int nth = 0, want, i;
++    long long t0 = qpc_now();
++    if ((env && *env == '0') || !kgpu_vs_enabled() || !G.compile) return;
++    memset(&l, 0, sizeof(l));
++    AcquireSRWLockExclusive(&s_man_lock);
++    manifest_read(precompile_note, &l);
++    s_man_loaded = true;
++    ReleaseSRWLockExclusive(&s_man_lock);
++    if (l.n) {
++        GetSystemInfo(&si);
++        want = (int)si.dwNumberOfProcessors > 1 ? (int)si.dwNumberOfProcessors - 1 : 1;
++        if (want > l.n) want = l.n;
++        if (want > 32) want = 32;
++        fprintf(stderr, "[KGPU] precompiling %d vertex programs on %d threads\n", l.n, want);
++        s_pre_next = 0; s_pre_failed = 0;
++        for (i = 0; i < want; i++) {
++            th[nth] = CreateThread(NULL, 0, precompile_worker, &l, 0, NULL);
++            if (th[nth]) nth++;
++        }
++        if (nth) WaitForMultipleObjects((DWORD)nth, th, TRUE, INFINITE);
++        else precompile_worker(&l);
++        for (i = 0; i < nth; i++) CloseHandle(th[i]);
++    }
++    fprintf(stderr, "[KGPU] shader manifest: %d vertex programs compiled before start in %.0f ms (%ld failed), "
++                    "%d already cached, %d unusable\n", l.n,
++            (double)(qpc_now() - t0) * 1000.0 / (double)G.qpf, (long)s_pre_failed, l.cached, l.unusable);
++    for (i = 0; i < l.n; i++) free(l.items[i].source);
++    free(l.items);
 +}
 +
 +bool kgpu_vs_enabled(void)
@@ -16823,7 +17223,7 @@ index 0000000..b96f4ee
 +/* The compiled shader for a program, once ready. Starts its translation and
 + * compilation the first time a program is seen; until then (or if the GPU cannot
 + * run it) false, and the draw uses the CPU vertex stage. */
-+static KGpuVs *vs_lookup(const void *program, uint32_t hash, uint32_t start)
++static KGpuVs *vs_lookup(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords)
 +{
 +    KGpuVs *e = NULL;
 +    unsigned int i, slot = (hash ^ (start * 40503u)) % KG_VS_MAX;
@@ -16833,6 +17233,10 @@ index 0000000..b96f4ee
 +        if (q->hash == hash && q->start == start) return q->state == 1 ? q : NULL;
 +    }
 +    if (!e) return NULL;
++    if (s_vs_quick < 0) {
++        const char *env = getenv("RECOMP_KGPU_VS_QUICK");
++        s_vs_quick = !(env && *env == '0');
++    }
 +    e->used = true; e->hash = hash; e->start = start; e->state = 0;
 +    e->source = vsh_generate((const Nv2aVshProgram *)program);
 +    if (!e->source) {
@@ -16840,8 +17244,15 @@ index 0000000..b96f4ee
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u runs on the CPU (unsupported operation)\n", hash, start);
 +        return NULL;
 +    }
++    e->len = (uint32_t)strlen(e->source);
++    e->sh = fnv_bytes(e->source, e->len);
++    if (words && nwords) {
++        e->words = (uint32_t *)malloc((size_t)nwords * 4);
++        if (e->words) { memcpy(e->words, words, (size_t)nwords * 4); e->nwords = nwords; }
++    }
 +    if (vs_try_cache(e)) {
 +        e->state = 1;
++        manifest_add(e);
 +        fprintf(stderr, "[KGPU] vertex program %08X/%u loaded from the shader cache\n", hash, start);
 +        return e;
 +    }
@@ -16849,9 +17260,9 @@ index 0000000..b96f4ee
 +    return NULL;
 +}
 +
-+bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start)
++bool kgpu_vs_ready(const void *program, uint32_t hash, uint32_t start, const uint32_t *words, uint32_t nwords)
 +{
-+    return vs_lookup(program, hash, start) != NULL;
++    return vs_lookup(program, hash, start, words, nwords) != NULL;
 +}
 diff --git a/src/nv2a/kelvin/kelvin_int.h b/src/nv2a/kelvin/kelvin_int.h
 new file mode 100644
@@ -23286,7 +23697,7 @@ index 0000000..8607782
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_render.c b/src/nv2a/kelvin/kelvin_render.c
 new file mode 100644
-index 0000000..3c3129b
+index 0000000..dd69e2e
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.c
 @@ -0,0 +1,5319 @@
@@ -28330,7 +28741,7 @@ index 0000000..3c3129b
 +    if (kgpu_vs_enabled() && mode >= PRIM_TYPE_TRIANGLES) {
 +        KVshGpuInfo gi;
 +        if (kvsh_gpu_info(&gi)) {
-+            if (kgpu_vs_ready(gi.program, gi.hash, gi.start)) {
++            if (kgpu_vs_ready(gi.program, gi.hash, gi.start, gi.words, gi.nwords)) {
 +                if (gpu_draw_gvs(pg, &c, &src, &gi)) {
 +                    if (commit_inline) update_inline_values(pg, &src);
 +                    return;
@@ -28611,10 +29022,10 @@ index 0000000..3c3129b
 +}
 diff --git a/src/nv2a/kelvin/kelvin_render.h b/src/nv2a/kelvin/kelvin_render.h
 new file mode 100644
-index 0000000..5c22fad
+index 0000000..ede8503
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_render.h
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,324 @@
 +/*
 + * Kelvin CPU renderer: types shared by the vertex, raster, texture and pixel
 + * stages. See kelvin_int.h for the overall design.
@@ -28872,6 +29283,8 @@ index 0000000..5c22fad
 +typedef struct KVshGpuInfo {
 +    const void *program;          /* Nv2aVshProgram */
 +    uint32_t hash, start;
++    const uint32_t *words;        /* the microcode up to the final instruction */
++    uint32_t nwords;
 +    const float *constants;       /* NV2A_VERTEXSHADER_CONSTANTS x 4 */
 +    bool fog_enable;
 +    int fog_mode;
@@ -30889,10 +31302,10 @@ index 0000000..f4db705
 +#endif
 diff --git a/src/nv2a/kelvin/kelvin_vsh.c b/src/nv2a/kelvin/kelvin_vsh.c
 new file mode 100644
-index 0000000..2d3a097
+index 0000000..62ca381
 --- /dev/null
 +++ b/src/nv2a/kelvin/kelvin_vsh.c
-@@ -0,0 +1,939 @@
+@@ -0,0 +1,943 @@
 +/*
 + * Kelvin vertex stage.
 + *
@@ -30927,6 +31340,7 @@ index 0000000..2d3a097
 +typedef struct ProgEntry {
 +    uint32_t start, hash;
 +    bool writes_constants;        /* c[] outputs: vertices depend on order */
++    uint32_t nslots;              /* instructions up to the final one */
 +    Nv2aVshProgram prog;
 +    uint32_t words[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE];
 +} ProgEntry;
@@ -31035,6 +31449,7 @@ index 0000000..2d3a097
 +    memcpy(e->words, pg->program_data[start], bytes);
 +    for (step = e->prog.steps;; step++) {
 +        int k;
++        e->nslots++;
 +        for (k = 0; k < 2; k++) {
 +            if (step->mac.outputs[k].type == NV2ART_CONTEXT ||
 +                step->ilu.outputs[k].type == NV2ART_CONTEXT) {
@@ -31645,6 +32060,8 @@ index 0000000..2d3a097
 +    out->program = &s_vs.entry->prog;
 +    out->hash = s_vs.prog_hash;
 +    out->start = s_vs.prog_start;
++    out->words = &s_vs.entry->words[0][0];
++    out->nwords = s_vs.entry->nslots * VSH_TOKEN_SIZE;
 +    out->constants = s_cur.constants;
 +    out->fog_enable = s_cur.fog_enable;
 +    out->fog_mode = s_cur.fog_mode;
@@ -36116,10 +36533,10 @@ index 2189a3b..175c522 100644
 +    target_link_libraries(xbox_video PUBLIC mfplat mfreadwrite mfuuid mf ole32 gdi32 user32)
  endif()
 diff --git a/src/video/fb_present.c b/src/video/fb_present.c
-index 69ced11..80c3783 100644
+index 69ced11..d2cc468 100644
 --- a/src/video/fb_present.c
 +++ b/src/video/fb_present.c
-@@ -1,219 +1,981 @@
+@@ -1,219 +1,985 @@
 -/**
 - * Show the guest framebuffer in a window.
 - *
@@ -36630,6 +37047,10 @@ index 69ced11..80c3783 100644
 +    case WM_MOUSEWHEEL:
 +        pc_input_wheel_event(GET_WHEEL_DELTA_WPARAM(w));
 +        *result = 0; return 1;
++    case WM_MOUSEMOVE:
++        /* a native menu page follows the free pointer (gameplay captures it and reads raw motion instead) */
++        if (!s_ui_captured) pc_menu_pointer((int)(short)LOWORD(l), (int)(short)HIWORD(l));
++        return 0;
 +    case WM_INPUT: {
 +        RAWINPUT raw = {0}; UINT size = sizeof(raw);
 +        UINT received = GetRawInputData((HRAWINPUT)l, RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER));
@@ -37450,10 +37871,10 @@ index 0000000..c6bbbe6
 +#endif
 diff --git a/src/video/pc_menu.c b/src/video/pc_menu.c
 new file mode 100644
-index 0000000..d91ce90
+index 0000000..1562513
 --- /dev/null
 +++ b/src/video/pc_menu.c
-@@ -0,0 +1,2776 @@
+@@ -0,0 +1,2898 @@
 +/* Native, editable menus. See pc_menu.h.
 + *
 + * The page logic follows the menu classes the game's own pages are written with (BkMenuList,
@@ -38244,6 +38665,17 @@ index 0000000..d91ce90
 +static volatile LONG m_active;
 +static ULONGLONG m_active_tick;
 +static Display m_display, m_scratch;     /* m_display under m_lock; m_scratch is the game thread's */
++/* Where each item of the shown page is, for the pointer: in menu units, written by build (game thread) into
++ * m_hit_scratch and published with the display list. kind is IT_*, split the x where a click changes meaning
++ * (OFF of a toggle, the lit end of a slider), or 0. m_xf maps menu units to client pixels (presenter thread). */
++typedef struct Hit { float x0, y0, x1, y1, split; int kind, ok; } Hit;
++static Hit m_hit[PCM_ITEMS], m_hit_scratch[PCM_ITEMS];
++static int m_hit_n, m_hit_scratch_n;
++static float m_xf_ox, m_xf_oy, m_xf_s;
++static int m_pointer_item = -1, m_pointer_known;
++static int m_pointer_x, m_pointer_y;     /* saved client pixels, also valid after a page change or resize */
++static float m_pointer_mx;
++#define PCM_ACT_HOVER 64                 /* + item index: the pointer moved onto that item */
 +static unsigned m_generation;
 +/* The presenter asks for the overlay every frame it shows. A native page needs it (it is what draws the page and
 + * installs the input filter): without it -- the game started without the presenter window -- pages stay the game's. */
@@ -38253,6 +38685,24 @@ index 0000000..d91ce90
 +static volatile LONG m_movie_skip_prompt;
 +static const uint64_t *m_replaced;         /* earlier built-in definitions (FNV-1a 64 of the file) */
 +static int m_nreplaced;
++
++/* m_lock held: clicks always use the currently published rows and window mapping. */
++static void pointer_hit_locked(void)
++{
++    float my;
++    int i;
++    m_pointer_item = -1;
++    if (!m_pointer_known || m_xf_s <= 0) return;
++    m_pointer_mx = ((float)m_pointer_x - m_xf_ox) / m_xf_s;
++    my = ((float)m_pointer_y - m_xf_oy) / m_xf_s;
++    for (i = 0; i < m_hit_n; i++) {
++        const Hit *h = &m_hit[i];
++        if (h->ok && m_pointer_mx >= h->x0 && m_pointer_mx < h->x1 && my >= h->y0 && my < h->y1) {
++            m_pointer_item = i;
++            break;
++        }
++    }
++}
 +
 +static double now_s(void)
 +{
@@ -39044,6 +39494,23 @@ index 0000000..d91ce90
 +        if (item_visible(host, &p->item[i])) y += p->step + (p->item[i].kind == IT_SLIDER ? 37.0f : 0.0f);   /* a slider's bar */
 +        else ys[i] = -1;
 +    }
++    m_hit_scratch_n = p->nitem;
++    for (i = 0; i < p->nitem; i++) {
++        /* the selector bar's area (and a slider's row of bullets below it) */
++        Hit *h = &m_hit_scratch[i];
++        const Item *it = &p->item[i];
++        const float bw = p->bar_w > 0 ? p->bar_w : 300.0f;
++        h->ok = ys[i] >= 0 && !loading && item_focusable(host, it);
++        h->kind = it->kind;
++        h->x0 = p->list_x - 7; h->x1 = h->x0 + bw;
++        /* a row's values belong to it even where a narrow selector does not reach them */
++        if (it->kind == IT_TOGGLE && p->col2 > 0 && p->col2 + 60.0f > h->x1) h->x1 = p->col2 + 60.0f;
++        if (p->values_x > 0 && p->values_x + 8.0f > h->x1) h->x1 = p->values_x + 8.0f;
++        h->y0 = ys[i] - 8; h->y1 = ys[i] + 18 + (it->kind == IT_SLIDER ? 37.0f : 0.0f);
++        h->split = 0;
++        if (it->kind == IT_TOGGLE && p->col2 > p->col1) h->split = p->col2 - 6.0f;
++        else if (it->kind == IT_SLIDER && it->step > 0) h->split = p->list_x - 2 + (float)((m_slider[i] - it->lo) / it->step) * 10.0f;
++    }
 +    {   /* the selector: a dark bar behind the focused item, brackets at its ends, lines out to the rail and the edge */
 +        const float u = st->anim > 0 ? ease((float)((t - m_focus_t0) / st->anim)) : 1.0f;
 +        if (m_focus >= 0 && m_focus < p->nitem && ys[m_focus] >= 0 && !loading) {
@@ -39243,6 +39710,9 @@ index 0000000..d91ce90
 +        m_depth = 0;                                /* subpages leave with their underlying game page */
 +        m_focus = m_prev_focus = -1;
 +        m_page_t0 = t;
++        AcquireSRWLockExclusive(&m_lock);
++        m_hit_n = 0; m_pointer_item = -1;
++        ReleaseSRWLockExclusive(&m_lock);
 +        if (idx >= 0) {
 +            p = &m_doc->page[idx];
 +            m_page = idx;
@@ -39288,6 +39758,15 @@ index 0000000..d91ce90
 +            if (m_page < 0) continue;
 +            p = &m_doc->page[m_page];
 +            first_focus(host, p, t);
++            if (actions[i] >= PCM_ACT_HOVER && actions[i] < PCM_ACT_HOVER + PCM_ITEMS) {
++                const int target = actions[i] - PCM_ACT_HOVER;
++                if (!InterlockedCompareExchange(&m_capture, 0, 0) &&
++                    target < p->nitem && target != m_focus && item_focusable(host, &p->item[target])) {
++                    play(host, "SNDChange");
++                    set_focus(host, p, target, t);
++                }
++                continue;
++            }
 +            apply(host, p, actions[i], t);
 +            if ((actions[i] == PCM_ACT_CONFIRM || actions[i] == PCM_ACT_BACK || actions[i] == PCM_ACT_START) &&
 +                !InterlockedCompareExchange(&m_capture, 0, 0))
@@ -39309,6 +39788,9 @@ index 0000000..d91ce90
 +        memcpy(m_display.prim, m_scratch.prim, sizeof(Prim) * (size_t)m_scratch.n);
 +        m_generation++;
 +    }
++    memcpy(m_hit, m_hit_scratch, sizeof(m_hit));
++    m_hit_n = m_hit_scratch_n;
++    pointer_hit_locked();
 +    ReleaseSRWLockExclusive(&m_lock);
 +    m_active_tick = GetTickCount64();
 +    if (!InterlockedExchange(&m_active, 1)) pc_video_menu_hide_hint(1);
@@ -39348,6 +39830,13 @@ index 0000000..d91ce90
 +static void queue(int action)
 +{
 +    AcquireSRWLockExclusive(&m_lock);
++    /* Mouse motion can report the same row repeatedly before the game polls. Keep one hover so clicks
++     * still have room, while a real new motion can re-focus a row after a page or keyboard change. */
++    if (action >= PCM_ACT_HOVER && action < PCM_ACT_HOVER + PCM_ITEMS && m_qhead != m_qtail &&
++        m_queue[(m_qtail + 31) % 32] == action) {
++        ReleaseSRWLockExclusive(&m_lock);
++        return;
++    }
 +    if ((m_qtail + 1) % 32 != m_qhead) { m_queue[m_qtail] = action; m_qtail = (m_qtail + 1) % 32; }
 +    ReleaseSRWLockExclusive(&m_lock);
 +}
@@ -39422,10 +39911,37 @@ index 0000000..d91ce90
 +        const LONG cap = InterlockedCompareExchange(&m_capture, 0, 0);
 +        input_seen();
 +        if (cap) { if (cap == CAP_KEY) queue(ACT_KEY | (int)PC_SOURCE_MOUSE(button)); }
-+        else if (button == 0) queue(PCM_ACT_CONFIRM);
-+        else if (button == 1) queue(PCM_ACT_BACK);
++        else if (button == 0) {
++            int item, kind = IT_BUTTON, act = PCM_ACT_CONFIRM;
++            AcquireSRWLockExclusive(&m_lock);
++            pointer_hit_locked();
++            item = m_pointer_known ? m_pointer_item : -2;    /* -2: no pointer yet, the keyboard's confirm */
++            if (item >= 0 && item < m_hit_n) {
++                const Hit *h = &m_hit[item];
++                kind = h->kind;
++                if (kind == IT_TOGGLE && h->split > 0) act = m_pointer_mx >= h->split ? PCM_ACT_RIGHT : PCM_ACT_LEFT;
++                else if (kind == IT_SLIDER) act = m_pointer_mx >= h->split ? PCM_ACT_RIGHT : PCM_ACT_LEFT;
++            }
++            ReleaseSRWLockExclusive(&m_lock);
++            if (item >= 0) { queue(PCM_ACT_HOVER + item); queue(act); }
++            else if (item == -2) queue(PCM_ACT_CONFIRM);
++        } else if (button == 1) queue(PCM_ACT_BACK);
 +    }
 +    return take;
++}
++
++void pc_menu_pointer(int x, int y)
++{
++    int item;
++    if (!pc_menu_active()) return;
++    AcquireSRWLockExclusive(&m_lock);
++    if (m_xf_s <= 0) { ReleaseSRWLockExclusive(&m_lock); return; }
++    m_pointer_x = x; m_pointer_y = y;
++    m_pointer_known = 1;
++    pointer_hit_locked();
++    item = m_pointer_item;
++    ReleaseSRWLockExclusive(&m_lock);
++    if (item >= 0) { input_seen(); queue(PCM_ACT_HOVER + item); }
 +}
 +
 +static int f_wheel(int delta)
@@ -39884,6 +40400,14 @@ index 0000000..d91ce90
 +    Box boxes[PCM_BOXES];
 +    m_overlay_seen = GetTickCount64();
 +    m_dirty.x0 = m_dirty.y0 = m_dirty.x1 = m_dirty.y1 = 0;
++    if (pw && ph) {
++        Canvas xf;
++        canvas_for(&xf, NULL, w, h, px, py, pw, ph);
++        AcquireSRWLockExclusive(&m_lock);
++        m_xf_ox = xf.ox; m_xf_oy = xf.oy; m_xf_s = xf.s;
++        pointer_hit_locked();
++        ReleaseSRWLockExclusive(&m_lock);
++    }
 +    video_on = pc_video_menu_overlay(w, h, &video, &video_changed);
 +    menu_on = pc_menu_active();
 +    if (!menu_on) {
@@ -40152,6 +40676,8 @@ index 0000000..d91ce90
 +    m_generation++;
 +    ReleaseSRWLockExclusive(&m_lock);
 +    m_page = -1; m_page_name[0] = 0; m_focus = m_prev_focus = -1; m_depth = 0;
++    m_hit_n = m_hit_scratch_n = 0; m_pointer_item = -1; m_pointer_known = 0; m_xf_s = 0;
++    m_button_swallowed = 0;
 +    m_disabled = 0;
 +    InterlockedExchange(&m_input_seen, 0);
 +    pc_menu_set_movie_skip_prompt(0);
@@ -40183,6 +40709,19 @@ index 0000000..d91ce90
 +    free(d);
 +    return 1;
 +}
++
++void pc_menu_test_pointer_space(unsigned w, unsigned h)
++{
++    Canvas xf;
++    canvas_for(&xf, NULL, w, h, 0, 0, w, h);
++    AcquireSRWLockExclusive(&m_lock);
++    m_xf_ox = xf.ox; m_xf_oy = xf.oy; m_xf_s = xf.s;
++    pointer_hit_locked();
++    ReleaseSRWLockExclusive(&m_lock);
++}
++
++void pc_menu_test_button(int button, int down) { f_button(button, down); }
++int pc_menu_test_pointer_item(void) { return m_pointer_item; }
 +
 +size_t pc_menu_test_dump(char *out, size_t cap)
 +{
@@ -40228,14 +40767,18 @@ index 0000000..d91ce90
 +int pc_menu_test_focus(void) { return -1; }
 +int pc_menu_test_load_file(const char *path) { (void)path; return 0; }
 +int pc_menu_test_render(uint32_t *p, unsigned w, unsigned h) { (void)p; (void)w; (void)h; return 0; }
++void pc_menu_pointer(int x, int y) { (void)x; (void)y; }
++void pc_menu_test_pointer_space(unsigned w, unsigned h) { (void)w; (void)h; }
++void pc_menu_test_button(int button, int down) { (void)button; (void)down; }
++int pc_menu_test_pointer_item(void) { return -1; }
 +size_t pc_menu_test_dump(char *out, size_t cap) { (void)out; (void)cap; return 0; }
 +#endif
 diff --git a/src/video/pc_menu.h b/src/video/pc_menu.h
 new file mode 100644
-index 0000000..c47114d
+index 0000000..9ce4b3c
 --- /dev/null
 +++ b/src/video/pc_menu.h
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,168 @@
 +/*
 + * pc_menu.h -- native, editable menus, drawn by the presenter over the game picture.
 + *
@@ -40350,6 +40893,10 @@ index 0000000..c47114d
 +
 +/* A native page is on screen (any thread). */
 +int pc_menu_active(void);
++/* Window thread: the pointer moved to (x, y) in client pixels, the same space as pc_menu_overlay's picture
++ * rectangle. On a native page the item under it takes the focus, and a left click acts on that item
++ * (confirm; ON/OFF and sliders by where the click lands); a click away from the items does nothing. */
++void pc_menu_pointer(int x, int y);
 +
 +/* 1 when the player used a native page (a key, button or stick) since the last call; clears it (any thread). A
 + * native page takes all input, so the game's own idle checks (an attract mode) would see none: the game project
@@ -40382,6 +40929,10 @@ index 0000000..c47114d
 +
 +/* START is the pad's start button: back on a page with "start = back", confirm elsewhere (as the original). */
 +enum { PCM_ACT_UP = 1, PCM_ACT_DOWN, PCM_ACT_LEFT, PCM_ACT_RIGHT, PCM_ACT_CONFIRM, PCM_ACT_BACK, PCM_ACT_START, PCM_ACT_VIDEO };
++/* Tests: the menu-space to pixel mapping the pointer uses, as pc_menu_test_render sets it for w x h. */
++void pc_menu_test_pointer_space(unsigned w, unsigned h);
++void pc_menu_test_button(int button, int down);  /* a mouse button, through the native page's input filter */
++int pc_menu_test_pointer_item(void);              /* the item under the pointer, -1 none */
 +void pc_menu_test_reset(const char *definition);   /* forget state, use this definition (no file) */
 +void pc_menu_test_action(int action);              /* as if the player pressed it */
 +int pc_menu_test_focus(void);                      /* index of the focused item, -1 none */
@@ -40957,10 +41508,10 @@ new file mode 100644
 +#endif
 diff --git a/src/video/pc_video.c b/src/video/pc_video.c
 new file mode 100644
-index 0000000..b7b77eb
+index 0000000..6eedd88
 --- /dev/null
 +++ b/src/video/pc_video.c
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,610 @@
 +/* PC video settings: defaults, settings file, environment overrides. See pc_video.h. */
 +#include "pc_video.h"
 +#include <stdio.h>
@@ -41016,7 +41567,7 @@ index 0000000..b7b77eb
 +    for (i = 0; i < count; i++) if (list[i] == v) return 1;
 +    return 0;
 +}
-+static int valid_fov(double f) { return f == 0.0 || (isfinite(f) && f >= 35.0 && f <= 100.0); }
++static int valid_fov(double f) { return f == 0.0 || (isfinite(f) && f >= 35.0 && f <= 120.0); }
 +
 +const char *pc_video_aspect_name(unsigned a)
 +{
@@ -41133,6 +41684,9 @@ index 0000000..b7b77eb
 +    } else if (!_stricmp(key, "motion_blur")) {
 +        if (!_stricmp(value, "off")) { s->motion_blur_off = 1; return 1; }
 +        if (!_stricmp(value, "original")) { s->motion_blur_off = 0; return 1; }
++    } else if (!_stricmp(key, "action_blur")) {
++        if (!_stricmp(value, "off")) { s->action_blur_off = 1; return 1; }
++        if (!_stricmp(value, "original")) { s->action_blur_off = 0; return 1; }
 +    } else if (!_stricmp(key, "aa")) {
 +        int a = name_index(k_aa_names, PCV_AA_COUNT, value);
 +        if (a >= 0) { s->aa = (unsigned)a; return 1; }
@@ -41199,6 +41753,7 @@ index 0000000..b7b77eb
 +        "aspect=%s\n"
 +        "fov=%g\n"
 +        "motion_blur=%s\n"
++        "action_blur=%s\n"
 +        "aa=%s\n"
 +        "af=%u\n"
 +        "dof=%s\n"
@@ -41210,6 +41765,7 @@ index 0000000..b7b77eb
 +        s->scale == PCV_SCALE_STRETCH ? "stretch" : s->scale == PCV_SCALE_INTEGER ? "integer" : "fit",
 +        s->nearest ? "nearest" : "linear", s->vsync ? 1u : 0u, s->fps_limit,
 +        pc_video_aspect_name(s->aspect), s->fov, s->motion_blur_off ? "off" : "original",
++        s->action_blur_off ? "off" : "original",
 +        k_aa_names[s->aa < PCV_AA_COUNT ? s->aa : 0], s->af, k_step_names[s->dof < PCV_STEP_COUNT ? s->dof : 0],
 +        k_step_names[s->sharpen < PCV_STEP_COUNT ? s->sharpen : 0],
 +        k_ao_names[s->ao_method < PCV_AO_COUNT ? s->ao_method : PCV_AO_OFF],
@@ -41568,10 +42124,10 @@ index 0000000..b7b77eb
 +}
 diff --git a/src/video/pc_video.h b/src/video/pc_video.h
 new file mode 100644
-index 0000000..5610b01
+index 0000000..dc6ab67
 --- /dev/null
 +++ b/src/video/pc_video.h
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,131 @@
 +/*
 + * pc_video.h -- the PC video settings of the recompiled game: one model for the window, the
 + * internal (render) resolution, the camera and the presenter.
@@ -41624,8 +42180,9 @@ index 0000000..5610b01
 +    unsigned vsync;
 +    unsigned fps_limit;                       /* 0 or one of the entries of pc_video_fps_limits */
 +    unsigned aspect;                          /* PCV_ASPECT_* */
-+    double fov;                               /* vertical degrees (35..100) or 0 = the game's own */
++    double fov;                               /* vertical degrees (35..120) or 0 = the game's own */
 +    unsigned motion_blur_off;
++    unsigned action_blur_off;                 /* BLACK's own reload/aim blur (the game's hook reads it) */
 +    unsigned aa;                              /* PCV_AA_* */
 +    unsigned af;                              /* anisotropic filtering: 1 (off), 2, 4, 8 or 16 */
 +    unsigned dof;                             /* depth of field, PCV_STEP_* */
@@ -41704,7 +42261,7 @@ index 0000000..5610b01
 +#endif /* XBOXRECOMP_PC_VIDEO_H */
 diff --git a/src/video/pc_video_menu.c b/src/video/pc_video_menu.c
 new file mode 100644
-index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
+index 0000000..9b53ca0
 --- /dev/null
 +++ b/src/video/pc_video_menu.c
 @@ -0,0 +1,835 @@
@@ -41871,11 +42428,11 @@ index 0000000..bc9c3a2b9161476380ee87edaf51ef1556595d35
 +        s.aspect = wrap((int)s.aspect + dir, PCV_ASPECT_COUNT); break;
 +    case R_FOV: {
 +        int deg;
-+        /* Original, then 35 .. 100 degrees in steps of 5. */
++        /* Original, then 35 .. 120 degrees in steps of 5. */
 +        deg = s.fov == 0.0 ? 30 : (int)(s.fov / 5.0 + 0.5) * 5;
 +        deg += dir * 5;
-+        if (deg < 30) deg = 100;                 /* wrap: below Original is the widest */
-+        if (deg > 100) deg = 30;
++        if (deg < 30) deg = 120;                 /* wrap: below Original is the widest */
++        if (deg > 120) deg = 30;
 +        if (deg < 35) s.fov = 0.0; else s.fov = (double)deg;
 +        break;
 +    }
