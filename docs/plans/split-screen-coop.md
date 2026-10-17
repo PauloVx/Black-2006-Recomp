@@ -82,11 +82,23 @@ for a second actor. So player 2 is swapped into core+0x30 whenever its code runs
   one of the world's 20 character proxies), so the world's step and contacts reach player 2's own data.
 - **Kept with the core**: the actor's world-grid node (+0x20..+0x57) and any field whose list neighbour points back
   at it. The draw does not use the node for the players: each view draws its own player after the grid walk.
-- **Swapped with the actor**: the camera owner `[2D12B8]`, and player 2's copy of the first-person weapon state (the
-  viewmodel set `[2D12C8]`: two slots of 0x240 bytes, their pose matrices and animation controllers).
+- **Swapped with the actor**: the camera owner `[2D12B8]`; player 2's copy of the first-person weapon state (the
+  viewmodel set `[2D12C8]`: its animation sets and two slots, each slot's locator records and animation controller,
+  and the animation-pool blocks the controllers use; exchanged in place, since the loaded animations point back into
+  it); the first-person muzzle flash (`[2D1990]+0x4E1F0`, drawn at the in-view player's Flash_Loc) and shells
+  (`+0x506D0`, thrown from Bullet_Loc); and, in the effects held by characters (`+0x65690`), the owner of the
+  out player's (the shadow), so each view leaves out the other player's first-person effects.
 - **Per frame**: player 2's controller, actor update, and the post-physics update (actor vtable +0x10, which sets
-  the eye matrix the camera follows) run after player 1's. Player 2's HUD elements refresh with player 2 in, before
-  its HUD is drawn.
+  the eye matrix the camera follows) run after player 1's, then its muzzle flash ages and its shells move, as
+  player 1's do in the effects' update. The held effects update once per player, with that player in.
+- **HUD**: player 2's HUD keeps its own state (the elements, the HUD itself and its sprite/text/layer pools,
+  `0x2DB790..0x2E7100`), updated with player 2 in and the frame's time, and drawn into its half. While the set of
+  elements is the one last seen; otherwise it starts again from player 1's.
+- **Scripted scenes**: when the mission drives player 1 with the scripted controller (+0x324 = +0x800) and stops the
+  first-person idle (slot +0x234), player 2 follows; joining during a suppressor fitting, its weapon starts in the
+  same state.
+- **Crosshair and hit markers**: each player has its own spread and markers. A marker shows only when that player's
+  bullets hurt a soldier (1E74B0's attacker), not when soldiers hurt each other.
 - **Own weapons**: player 2 starts with an empty weapon array of its own, so its load takes its own weapons.
 - **Seen by the other player**: each player has a puppet, a copy of a level soldier in a free character slot, kept
   at that player's position, posed each frame (standing or moving clip), and drawn only in the other player's view.
