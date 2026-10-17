@@ -395,6 +395,15 @@ std::vector<SettingsFlow::Option> SettingsFlow::gameOptions() {
     rows.push_back(toggle(tr("SKIP MOVIES"), tr("Skips the intro and story movies."), s.skipMovies));
     rows.push_back(toggle(tr("SKIP STARTUP MENUS"), tr("Presses A through the startup menus for the first minute."),
                           s.advanceMenus));
+    rows.push_back({tr("TEXTURES"),
+                    tr("HD PACK uses the texture pack in the texture_pack_hd folder (made for the PS2 version): each "
+                       "texture it has a look-alike for is replaced."),
+                    [&s] { return std::string(s.textures == "hd-pack" ? tr("HD PACK") : tr("ORIGINAL")); },
+                    [&s](int step) {
+                        const std::vector<Choice<std::string>> modes = {{"original", {}}, {"hd-pack", {}}};
+                        cycle(modes, s.textures, step);
+                    },
+                    {}});
     rows.push_back(toggle(tr("INFINITE AMMO"), tr("Weapons never run out."), s.infiniteAmmo));
     rows.push_back({tr("SILVER WEAPONS"),
                     tr("The silver weapons the game unlocks on Hard. Game keeps its own rules."),

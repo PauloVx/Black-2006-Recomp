@@ -352,6 +352,7 @@ std::string settingsJson(const Settings& s) {
     json["AdvanceMenus"] = s.advanceMenus;
     json["InfiniteAmmo"] = s.infiniteAmmo;
     json["SilverWeaponMode"] = s.silverWeaponMode;
+    json["Textures"] = s.textures;
     json["MenuLanguage"] = s.menuLanguage;
     json["VisualTraceEnabled"] = s.visualTraceEnabled;
     json["VisualTraceFrames"] = s.visualTraceFrames;
@@ -404,6 +405,7 @@ Settings settingsFromJson(std::string_view text) {
     readField(json, "AdvanceMenus", s.advanceMenus, kAny);
     readField(json, "InfiniteAmmo", s.infiniteAmmo, kAny);
     readField(json, "SilverWeaponMode", s.silverWeaponMode, among(choices::kSilverWeapons));
+    readField(json, "Textures", s.textures, among(choices::kTextures));
     if (!json.contains("SilverWeaponMode") && json.value("SilverWeapons", false)) {
         s.silverWeaponMode = "force-on";  // the old on/off field
     }

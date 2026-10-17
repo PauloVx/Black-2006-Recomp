@@ -290,6 +290,9 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
     if (settings.infiniteAmmo) {
         env["RECOMP_BLACK_INFINITE_AMMO"] = "1";
     }
+    if (settings.textures == "hd-pack" && fs::is_directory(project.root() / "texture_pack_hd")) {
+        env["RECOMP_TEXTURE_PACK"] = gamePath(project.root() / "texture_pack_hd", style);  // replacement textures
+    }
     if (settings.silverWeaponMode == "force-on") {
         env["RECOMP_BLACK_SILVER_WEAPONS"] = "1";
     } else if (settings.silverWeaponMode == "force-off") {

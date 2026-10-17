@@ -23,6 +23,7 @@ struct Settings {
     bool advanceMenus = false;
     bool infiniteAmmo = false;
     std::string silverWeaponMode = "native";  // native, force-on, force-off
+    std::string textures = "original";        // original, hd-pack (the texture_pack_hd folder)
     std::string menuLanguage = "en-US";
 
     // Diagnostics
@@ -85,6 +86,7 @@ inline constexpr std::array<std::string_view, 5> kReflections = {"original", "lo
 inline constexpr std::array<std::string_view, 2> kOnOff = {"off", "on"};
 inline constexpr std::array<std::string_view, 4> kCrosshairs = {"original", "cross", "t", "circle"};
 inline constexpr std::array<std::string_view, 3> kSilverWeapons = {"native", "force-on", "force-off"};
+inline constexpr std::array<std::string_view, 2> kTextures = {"original", "hd-pack"};
 inline constexpr std::array<std::string_view, 3> kInputModes = {"auto", "keyboard_mouse", "controller"};
 inline constexpr std::array<std::string_view, 6> kLanguages = {"en-US", "pt-BR", "es", "fr", "de", "it"};
 }  // namespace choices

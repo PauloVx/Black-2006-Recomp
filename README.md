@@ -42,6 +42,22 @@ See [launcher/README.md](launcher/README.md) to build or change it.
 | **Save game** | **In Portuguese** |
 | ![Save game missions](docs/images/launcher-save.png) | ![The main menu in Brazilian Portuguese](docs/images/launcher-pt-br.png) |
 
+## HD textures
+
+The game can use [BLACK HD Reimagined](#credits-and-licensing), a texture pack made by HD REIMAGINED for the PS2
+version in PCSX2. Put the pack's files in a `texture_pack_hd` folder next to the launcher (any layout of subfolders
+works), then choose **Settings > Game > Textures: HD PACK**. **ORIGINAL** goes back to the game's own textures.
+
+The pack's files are named by PS2 hashes that mean nothing to the Xbox version, so each game texture is matched to
+the pack file that looks like it, and replaced only when the match is clear. The first start with the pack reads
+every file once and keeps what it learned in `texture_pack_hd/black_recomp_index.bin`; later starts are quick.
+The pack is not included here: download it from its authors.
+
+| Original | HD pack |
+| --- | --- |
+| ![The first room with the original textures](docs/images/textures-original.jpg) | ![The first room with the HD pack](docs/images/textures-hd-pack.jpg) |
+| ![The peeling wall, original](docs/images/textures-original-wall.jpg) | ![The peeling wall, HD pack](docs/images/textures-hd-pack-wall.jpg) |
+
 ## Release archives
 
 The starter release includes **BLACK Launcher** built for Windows (`BLACK Launcher.exe`) and for Linux. Open it,
@@ -294,6 +310,10 @@ Development included assistance from Claude Code and OpenAI Codex.
 The launcher's stand-in fonts are [Russo One](https://fonts.google.com/specimen/Russo+One) and
 [Saira Condensed](https://fonts.google.com/specimen/Saira+Condensed) (SIL Open Font License, in `launcher/assets/fonts`).
 The Xbox disc reader follows the format as documented by [extract-xiso](https://github.com/xboxdev/extract-xiso).
+
+The optional HD textures are **BLACK HD Reimagined** by **HD REIMAGINED** (@HDREIMAGINED on Instagram and
+YouTube, @HD.REIMAGINED on TikTok), a pack made for the PS2 version in PCSX2. It is their work and is not part of
+this repository; the screenshots above show it running in this version.
 
 Original project code is MIT licensed. Third-party components and their
 modifications retain their respective licenses; see [LICENSE](LICENSE),
