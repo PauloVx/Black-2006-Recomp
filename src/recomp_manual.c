@@ -2670,7 +2670,8 @@ static int black_controls_preset_control(int preset, int slot)
     uint32_t control;
     if (preset < 0 || preset >= PCC_PRESETS || slot < 0 || slot >= PCC_SLOTS || !black_pc_ram_span(at, 4u)) return -1;
     control = GUEST32(at);
-    return control < (uint32_t)PCC_CONTROLS ? (int)control : -1;
+    /* PCC_CONTROLS is the retail "none" sentinel, including slot zero of every preset. */
+    return control <= (uint32_t)PCC_CONTROLS ? (int)control : -1;
 }
 
 static void black_controls_write_map(void)

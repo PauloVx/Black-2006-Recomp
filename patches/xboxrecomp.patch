@@ -4064,10 +4064,10 @@ index caef326..e1a51e2 100644
  target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 diff --git a/src/input/pc_controls.c b/src/input/pc_controls.c
 new file mode 100644
-index 0000000..6e628ac
+index 0000000..8531eb3
 --- /dev/null
 +++ b/src/input/pc_controls.c
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,295 @@
 +/*
 + * pc_controls.c -- the player's controls: keyboard bindings and controller layout, kept in local\controls.ini.
 + * See pc_controls.h.
@@ -4194,11 +4194,8 @@ index 0000000..6e628ac
 +    int old, a;
 +    pc_controls_load();
 +    if (!pc_controls_pad_action(action) || slot < 0) return 0;
-+    if (control < 0) {
-+        s_override[slot] = -1;
-+        changed();
-+        return 1;
-+    }
++    /* Restoring a default can displace the action that took this button in an earlier swap. */
++    if (control < 0) control = preset_control(layout_preset(), slot);
 +    if (!pc_controls_pad_bindable(control) || (old = slot_control(slot)) < 0) return 0;
 +    if (old == control) return 1;
 +    /* a listed action that had this control takes this one's old control */
@@ -4368,7 +4365,7 @@ index 0000000..6e628ac
 +}
 diff --git a/src/input/pc_controls.h b/src/input/pc_controls.h
 new file mode 100644
-index 0000000..838497f
+index 0000000..12d970e
 --- /dev/null
 +++ b/src/input/pc_controls.h
 @@ -0,0 +1,86 @@
@@ -4402,7 +4399,7 @@ index 0000000..838497f
 +enum { PCC_PRESETS = 4, PCC_SLOTS = 37, PCC_CONTROLS = 28 };
 +
 +typedef struct PcControlsGame {
-+    /* The control a preset gives a slot (0..27), -1 when the presets cannot be read yet. */
++    /* The control a preset gives a slot (0..27, 28 = none), -1 when the presets cannot be read yet. */
 +    int (*preset_control)(int preset, int slot);
 +    /* The layout changed: write it into the live map now (when there is one). */
 +    void (*apply)(void);
