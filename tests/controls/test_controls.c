@@ -70,6 +70,111 @@ static uint8_t *read_all(const char *path, size_t *size)
     return b;
 }
 
+static char *last_occurrence(char *text, const char *needle)
+{
+    char *found = NULL, *cursor = text;
+    while ((cursor = strstr(cursor, needle)) != NULL) {
+        found = cursor;
+        cursor += strlen(needle);
+    }
+    return found;
+}
+
+/* ---- the actual manual wrapper with synthetic guest memory ----
+ * The extracted production block is compiled directly below. The fake generated body models only the native map
+ * fill; all preset reads, layout writes and live-map writes go through recomp_manual.c's real wrapper. */
+enum { SYNTH_GUEST_BYTES = 0x00400000, SYNTH_MAP_VA = 0x00310000 };
+static uint32_t g_synth_guest_memory[SYNTH_GUEST_BYTES / sizeof(uint32_t)];
+uint32_t g_ecx;
+#define GUEST32(va) (g_synth_guest_memory[(uint32_t)(va) / sizeof(uint32_t)])
+
+static int black_pc_ram_span(uint32_t va, size_t bytes)
+{
+    return va <= SYNTH_GUEST_BYTES && bytes <= (size_t)SYNTH_GUEST_BYTES - va;
+}
+
+#include "black_pc_controls_wrapper.inc"
+
+static uint32_t synth_control(int preset, int slot)
+{
+    static const uint32_t base[PCC_SLOTS] = {
+        28, 4, 5, 6, 7, 10, 11, 8, 9, 23, 19, 18, 14, 16, 3, 2, 15, 25, 25, 24, 24, 26, 26,
+        27, 27, 12, 20, 22, 0, 1, 0, 19, 17, 1, 21, 0, 13
+    };
+    if (preset == 3 && slot == 9) return 22;
+    if (preset == 3 && slot == 27) return 23;
+    return base[slot];
+}
+
+static void seed_synthetic_guest(void)
+{
+    int preset, slot;
+    memset(g_synth_guest_memory, 0, sizeof(g_synth_guest_memory));
+    GUEST32(0x002F3BD4u) = SYNTH_MAP_VA;
+    for (preset = 0; preset < PCC_PRESETS; preset++)
+        for (slot = 0; slot < PCC_SLOTS; slot++)
+            GUEST32(0x002A7AF0u + (uint32_t)preset * 0x94u + (uint32_t)slot * 4u) = synth_control(preset, slot);
+}
+
+void sub_001F1520_gen(void)
+{
+    uint32_t slot, map = GUEST32(0x002F3BD4u);
+    for (slot = 0; slot < PCC_SLOTS; slot++)
+        GUEST32(map + slot * 4u) = GUEST32(0x002A7AF0u + g_ecx * 0x94u + slot * 4u);
+}
+
+static void check_synthetic_map(int preset)
+{
+    int slot;
+    for (slot = 0; slot < PCC_SLOTS; slot++)
+        CHECK(GUEST32(SYNTH_MAP_VA + (uint32_t)slot * 4u) == synth_control(preset, slot));
+}
+
+static void test_manual_wrapper(const char *path)
+{
+    char *text, *controller;
+    int slot;
+
+    seed_synthetic_guest();
+    pc_controls_pad_reset();
+    black_controls_install();
+    pc_controls_pad_reset();
+    g_ecx = 0;
+    sub_001F1520();
+    CHECK(pc_controls_pad_layout() == 0);
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(pc_controls_pad_control(PC_ACTION_RELOAD) == 18);
+    check_synthetic_map(0);
+
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, 18));
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 18 && pc_controls_pad_control(PC_ACTION_RELOAD) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 18 && GUEST32(SYNTH_MAP_VA + 11u * 4u) == 23);
+    for (slot = 0; slot < PCC_SLOTS; slot++) {
+        const uint32_t want = slot == 9 ? 18 : slot == 11 ? 23 : synth_control(0, slot);
+        CHECK(GUEST32(SYNTH_MAP_VA + (uint32_t)slot * 4u) == want);
+    }
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && strstr(controller, "FIRE=X") && strstr(controller, "RELOAD=RT"));
+    free(text);
+
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, -1));
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23 && pc_controls_pad_control(PC_ACTION_RELOAD) == 18);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23 && GUEST32(SYNTH_MAP_VA + 11u * 4u) == 18);
+    check_synthetic_map(0);
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && !strstr(controller, "FIRE=") && !strstr(controller, "RELOAD="));
+    free(text);
+
+    CHECK(pc_controls_pad_layout_step(-1) && pc_controls_pad_layout() == 3);
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 22 && pc_controls_pad_control(PC_ACTION_GRENADE) == 23);
+    check_synthetic_map(3); /* includes sentinel slot 0 == PCC_CONTROLS, copied with all 37 slots */
+
+    pc_controls_set_game(&g_game);
+    pc_controls_pad_reset();
+}
+
 /* ---- keyboard ---- */
 
 static void test_keyboard(void)
@@ -253,6 +358,7 @@ int main(int argc, char **argv)
     pc_controls_load();
     test_keyboard();
     test_controller();
+    test_manual_wrapper(ini);
     test_file(ini);
     test_pages(argv[1]);
     if (load_fonts()) {

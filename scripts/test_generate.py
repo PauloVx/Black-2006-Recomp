@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import hashlib
+import importlib.util
 import json
 import subprocess
 from tempfile import TemporaryDirectory
@@ -403,6 +404,25 @@ def test_checkpoint_boundaries():
     assert generate.checkpoint_hooks("other", "unchanged") == "unchanged"
 
 
+def test_controls_wrapper_keeps_generated_body_as_gen():
+    repo = Path(__file__).resolve().parents[1]
+    scanner_path = repo / "third_party/xboxrecomp/tools/recomp/manual_scan.py"
+    spec = importlib.util.spec_from_file_location("black_manual_scan", scanner_path)
+    scanner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scanner)
+
+    flattened = generate.flatten_manual(repo / "src/recomp_manual.c")
+    with TemporaryDirectory() as temp:
+        manual = Path(temp) / "recomp_manual.c"
+        manual.write_text(flattened, encoding="utf-8")
+        skipped, wrapped, referenced = scanner.scan(str(manual))
+
+    address = 0x001F1520
+    assert address in skipped, "the manual wrapper itself must be excluded from generated definitions"
+    assert address in wrapped, "--exclude-manual must retain the original body under the _gen name"
+    assert address in referenced, "the wrapper's generated-body reference must stay bound to this address"
+
+
 if __name__ == "__main__":
     test_checkpoint_boundaries()
     test_weapon_runtime_consumers()
@@ -419,4 +439,5 @@ if __name__ == "__main__":
     test_native_lab_loadout_boundary()
     test_native_lab_streaming_boundary()
     test_scope_mask_native_boundary()
-    print("15 checks passed")
+    test_controls_wrapper_keeps_generated_body_as_gen()
+    print("16 checks passed")
