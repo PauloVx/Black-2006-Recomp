@@ -137,7 +137,7 @@ waiting for `pc_debug_note_ping`.
 | --- | --- | --- |
 | 0 | Debug overlay (Insert) | Done: frame times, latency and render numbers to measure the cost of a second view. |
 | 1 | **Second view** (done: 69–72 FPS at 1440p with DLAA, GTAO, SSR and RT on; one view 69–88) | The world is drawn twice per frame, the second time from a free camera on the second controller (photo-mode style), into the bottom half. P1 plays normally in the top half. HUD in P1's half only. Frame rate stays at least 60 at 1440p on an RTX 3060 Ti. |
-| 2 | **Player 2 joins** (done: chosen before the difficulty; P2 joins beside P1 when the mission starts) | P2 moves, aims and shoots with its own camera, view, weapons and HUD, and each player sees the other as a soldier. |
+| 2 | **Player 2 joins** (done: chosen before the difficulty, as "Two players (experimental)" while enemies do not engage P2; P2 joins beside P1 when the mission starts) | P2 moves, aims and shoots with its own camera, view, weapons and HUD, and each player sees the other as a soldier. |
 | 3 | **Playing together** | Enemies target the nearer player. Damage, death (a downed P2 respawns at P1 after a few seconds), pickups, objectives and mission end work for both. Checkpoints and saves stay P1's. |
 | 4 | **Polish** | A HUD, crosshair and hit markers per view. Audio from P1's camera, or the nearer one. Split-screen settings in game and in the launcher (layout, P2's controls). Leaving with START > Quit. |
 | 5 | PvP groundwork | Contexts filled from the network, a lobby, snapshots and prediction, and the PING row. |

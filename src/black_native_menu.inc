@@ -508,7 +508,7 @@ static const char black_menu_definition[] =
 "focus = 1\r\n"
 "back = gamecode DifficultyBack\r\n"
 "item = \"ONE PLAYER\" | set SplitPlayers 1\r\n"
-"item = \"TWO PLAYERS\" | set SplitPlayers 2\r\n"
+"item = \"TWO PLAYERS (EXPERIMENTAL)\" | set SplitPlayers 2\r\n"
 "\r\n"
 "; The main menu once a mission is done.\r\n"
 "[page blacktitlemenu]\r\n"
@@ -542,11 +542,12 @@ static const char black_menu_definition[] =
 /* The built-in definitions of earlier builds (FNV-1a 64 of the whole file): a local\menus.ini that is still exactly
  * one of them was never edited and is brought up to date. 1: the in-game pages only (2026-10-05); 4: before the
  * Controls, Photo mode and Reflections pages; 5-7: the Controls, Photo mode and Reflections builds alone; 8-9: the
- * two builds before the Ray tracing row; 10: the Ray tracing build, before the crosshair rows. */
+ * two builds before the Ray tracing row; 10: the Ray tracing build, before the crosshair rows; 12: the Players page
+ * before its two-player choice was marked experimental. */
 static const uint64_t black_menu_replaced[] = { 0xD8419D900AB2FEA6ull, 0xBBE0D874943DB641ull, 0x9F7652C358180DC6ull,
                                                 0xFF74A7E07CF4C7F0ull, 0x33977C1E8AC020F3ull, 0xB86AB9AC7D0F4406ull,
                                                 0xDC483F969B68C28Aull, 0x9EE07629CB313D32ull, 0xC6D3B76BDD8FC724ull,
-                                                0xCAB7BCC76B5F689Aull, 0x53E79C5FCD83D531ull };
+                                                0xCAB7BCC76B5F689Aull, 0x53E79C5FCD83D531ull, 0x8895E21EE19C8166ull };
 
 /* ---- guest helpers --------------------------------------------------------------------------------------- */
 
