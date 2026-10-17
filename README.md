@@ -155,6 +155,13 @@ and diagnostic logs in `reports/`. Save-related data uses `save/` as well as
 game and back up all three data directories before moving or removing the
 project folder if you want to keep your progress.
 
+Reached checkpoints are also saved under `save/checkpoints/` for the selected
+saved profile, mission and difficulty. Starting that same mission again resumes
+the checkpoint with its native inventory, objectives and statistics. **Restart
+Mission** discards it; completing a mission retires it. Unsaved profiles retain
+the original session-only checkpoints. Keep `save/` together with your profile
+data when moving the game. See the [checkpoint regressions](tests/checkpoints/README.md).
+
 The launcher's **Game > Menu language** setting chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian
