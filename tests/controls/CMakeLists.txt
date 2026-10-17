@@ -50,3 +50,4 @@ endif()
 
 enable_testing()
 add_test(NAME controls COMMAND controls-test "${definition}" "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME controls-restore-default COMMAND controls-test "${definition}" "${CMAKE_CURRENT_BINARY_DIR}" --restore-default)

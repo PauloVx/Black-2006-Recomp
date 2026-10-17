@@ -80,6 +80,17 @@ static char *last_occurrence(char *text, const char *needle)
     return found;
 }
 
+static int seed_explicit_default_override(const char *path)
+{
+    static const char contents[] = "[controller]\r\nFIRE=RT\r\n";
+    FILE *f = fopen(path, "wb");
+    int ok;
+    if (!f) return 0;
+    ok = fwrite(contents, 1, sizeof(contents) - 1, f) == sizeof(contents) - 1;
+    if (fclose(f) != 0) ok = 0;
+    return ok;
+}
+
 /* ---- the actual manual wrapper with synthetic guest memory ----
  * The extracted production block is compiled directly below. The fake generated body models only the native map
  * fill; all preset reads, layout writes and live-map writes go through recomp_manual.c's real wrapper. */
@@ -173,6 +184,25 @@ static void test_manual_wrapper(const char *path)
 
     pc_controls_set_game(&g_game);
     pc_controls_pad_reset();
+}
+
+static void test_restore_loaded_default_override(const char *path)
+{
+    char *text, *controller;
+
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, -1));
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && !strstr(controller, "FIRE="));
+    free(text);
+
+    /* With the override canonicalized away, a native profile change takes effect in the live map. */
+    g_ecx = 3;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 22);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 22);
 }
 
 /* ---- keyboard ---- */
@@ -343,8 +373,10 @@ int main(int argc, char **argv)
 {
     char ini[MAX_PATH], env[MAX_PATH + 32];
     const char *outdir = argc > 2 ? argv[2] : ".";
+    const int restore_default_case = argc > 3 && !strcmp(argv[3], "--restore-default");
     if (argc < 2) { printf("usage: controls-test MENUS.INI [OUTDIR]\n"); return 2; }
-    snprintf(ini, sizeof(ini), "%s\\controls-test.ini", outdir);
+    snprintf(ini, sizeof(ini), "%s\\%s.ini", outdir,
+             restore_default_case ? "controls-restore-default" : "controls-test");
     DeleteFileA(ini);
     snprintf(env, sizeof(env), "RECOMP_CONTROLS_INI=%s", ini);
     _putenv(env);
@@ -353,6 +385,23 @@ int main(int argc, char **argv)
     _putenv("RECOMP_LANGUAGE=en-US");
     _putenv("RECOMP_BLACK_INPUT_MODE=auto");
     _putenv("RECOMP_BLACK_PROMPT_MODE=keyboard_mouse");
+
+    if (restore_default_case) {
+        seed_synthetic_guest();
+        if (!seed_explicit_default_override(ini)) {
+            CHECK(0);
+        } else {
+            pc_input_init();
+            black_controls_install(); /* loads FIRE=RT before the first guest profile fill */
+            g_ecx = 0;
+            sub_001F1520();
+            test_restore_loaded_default_override(ini);
+        }
+        DeleteFileA(ini);
+        printf("%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
+
     pc_input_init();
     pc_controls_set_game(&g_game);
     pc_controls_load();

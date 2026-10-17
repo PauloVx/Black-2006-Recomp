@@ -33,6 +33,10 @@ The test covers:
   retail "none" sentinel) in slot zero while writing all 37 slots, applying a
   Fire/Reload swap to guest memory, restoring Fire with its displaced Reload
   action, clearing persisted overrides, and cycling to another preset;
+- a fresh-process regression that loads a synthetic `FIRE=RT` override equal
+  to the current profile default, restores Fire, confirms the saved override
+  clears, and then verifies a later profile change updates Fire to its new
+  default;
 - `controls.ini`: the `[keyboard]` and `[controller]` sections as the game
   writes them;
 - the native page flow: Options > CONTROLS > Keyboard > Movement, a key capture
