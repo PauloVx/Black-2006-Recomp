@@ -1259,8 +1259,9 @@ static void black_p2_find_links(void)
  * 0xA0 bytes each) and animation controller (+54, 0x9D0 bytes, 17EAE0), and the set's animation pool (+8F0): blocks
  * (addresses at +8FC, 0x3F9A bytes each, +90C of them) each filled up to its top (+900), which the controllers'
  * state is taken from. The loaded animations point back into that state, so it cannot move: player two keeps a copy
- * of its contents, taken when it joins, and the two are exchanged in place with the actor. The pool's tops are each
- * player's, so each block is exchanged up to the higher of the two. The animation library's own working state
+ * of its contents, taken when it joins, and the two are exchanged in place with the actor. The pool is every animated
+ * model's (the level's characters too): only the first-person slots' blocks and tops are each player's, each block
+ * exchanged up to the higher of the two tops. The animation library's own working state
  * (2C3260..2CE710: its jobs, 0x670 bytes each, which a controller keeps one of at +984 from one pose to the next) is
  * each player's too. Its cache of decoded keys ([2CE6B0], built by 950F0 from the pool: entries at +C, data at +20,
  * +24 bytes) is keyed by where the animations are, which player two's loads move: it starts empty again on every
@@ -1385,6 +1386,19 @@ static void black_vm_exchange(uint8_t *live, uint8_t *kept, uint32_t bytes)
     }
 }
 
+/* The pool's blocks are every animated model's (a model's is its +AC, which its pose makes the pool's current one at
+ * +8F8): only the first-person slots' blocks, player one's and player two's, are each player's. */
+static int black_vm_fp_block(uint32_t set, uint32_t i)
+{
+    unsigned k;
+    for (k = 0; k < 2u; k++) {
+        const uint32_t at = 0x470u + k * 0x240u + 0xACu;
+        if (GUEST32(set + at) == i || *(const uint32_t *)(black_p2_vm_kept + black_p2_vm_piece[0].kept + (at - BLACK_VM_AT)) == i)
+            return 1;
+    }
+    return 0;
+}
+
 /* Player two's copy of the first-person state (start), or that state exchanged with it in place (swap). */
 static void black_p2_vm(int start)
 {
@@ -1405,15 +1419,20 @@ static void black_p2_vm(int start)
         const uint32_t tops = GUEST32(set + 0x900u);
         for (i = 0; i < count; i++) {
             const uint32_t block = GUEST32(blocks + i * 4u);
-            const uint32_t mine = GUEST32(tops + i * 4u) - block;
-            const uint32_t theirs = *(const uint32_t *)(black_p2_vm_kept + black_p2_vm_tops + i * 4u) - block;
+            uint32_t *const top2 = (uint32_t *)(black_p2_vm_kept + black_p2_vm_tops + i * 4u), held;
+            const uint32_t mine = GUEST32(tops + i * 4u) - block, theirs = *top2 - block;
             uint32_t len = mine > theirs ? mine : theirs;
+            if (!black_vm_fp_block(set, i)) continue;
             if (len > bytes) len = bytes;
             if (len && black_pc_ram_span(block, len)) black_vm_exchange(m + block, black_p2_vm_blocks + i * BLACK_VM_BLOCK_BYTES, len);
+            held = GUEST32(tops + i * 4u);
+            GUEST32(tops + i * 4u) = *top2;
+            *top2 = held;
         }
     }
     for (i = 0; i < black_p2_vm_pieces; i++)
-        black_vm_exchange(m + black_p2_vm_piece[i].at, black_p2_vm_kept + black_p2_vm_piece[i].kept, black_p2_vm_piece[i].bytes);
+        if (black_p2_vm_piece[i].kept != black_p2_vm_tops)
+            black_vm_exchange(m + black_p2_vm_piece[i].at, black_p2_vm_kept + black_p2_vm_piece[i].kept, black_p2_vm_piece[i].bytes);
 }
 
 /* The first-person weapons' files are read by one manager ([2D12D8], 0xD0 bytes, 1BC4C0): two records (+8 and +40,
@@ -2377,24 +2396,6 @@ void sub_001B7440(void)
     sub_001B7440_gen();
 }
 
-/* A soldier's draw (vtable +14, 1C6150) uses what its model's last pose (1801B0) left, and with two views a frame
- * the update's pose only shows in neither or one: in split-screen each of the level's characters is posed again, with
- * no time passing, before each view draws it. */
-extern void sub_001C6150_gen(void);
-void sub_001C6150(void)
-{
-    const uint32_t ch = g_ecx, pool = black_pc_ram_span(0x002D1980u, 4u) ? GUEST32(0x002D1980u) + BLACK_CHAR_POOL_AT : 0;
-    if (black_p2_playing() && pool && ch >= pool && ch < pool + BLACK_CHARS * BLACK_CHAR_BYTES &&
-        !((ch - pool) % BLACK_CHAR_BYTES) && black_pc_ram_span(GUEST32(ch + 0x328u), 0x240u)) {
-        BlackRegs r;
-        const uint32_t args[2] = { 0, 0 };
-        memset(&r, 0, sizeof(r));
-        r.eax = GUEST32(ch + 0x328u);
-        black_guest_call(sub_001801B0, &r, args, 2, 0x001F0C37u);
-    }
-    sub_001C6150_gen();
-}
-
 void sub_000D1500(void)
 {
     static const uint32_t partly = 0;
@@ -2660,22 +2661,23 @@ static int black_hud_ammo(void)
 static void black_hud_hide(uint32_t p) { GUEST32(p + 0x1Cu) = 0; }
 
 /* The other elements' sprites (the health bar's among them) are the same ones for both players: what each player's
- * update put in them (their data, not their links) is its own. */
+ * update put in them (their data, not their links) is its own. Only a sprite both players' states hold in the same
+ * place: one an element has let go of (12E790 clears its pointers) may be another element's by now. */
 #define BLACK_HUD_PANEL_SPRITES 128u
 #define BLACK_HUD_SPRITE_DATA 0x48u
 static uint32_t black_hud_p2_panel[BLACK_HUD_PANEL_SPRITES];
 static uint8_t black_hud_p2_panel_data[BLACK_HUD_PANEL_SPRITES][BLACK_HUD_SPRITE_DATA];
 static unsigned black_hud_p2_panels;
 
-static unsigned black_hud_panel(uint8_t (*states)[BLACK_HUD_ELEMENT_BYTES], uint32_t *out)
+static unsigned black_hud_panel(uint32_t *out)
 {
     unsigned n = 0, i, k, j;
     for (i = 0; i < black_hud_count; i++) {
         const uint32_t vt = black_hud_bytes[i] >= 4u ? GUEST32(black_hud_at[i]) : 0;
         if (!black_hud_mine(vt) || vt == BLACK_HUD_AMMO_VTABLE) continue;
         for (k = 0; k + 4u <= black_hud_bytes[i] && n < BLACK_HUD_PANEL_SPRITES; k += 4u) {
-            const uint32_t p = *(const uint32_t *)(states[i] + k);
-            if (!black_hud_sprite(p)) continue;
+            const uint32_t p = *(const uint32_t *)(black_hud_p1[i] + k);
+            if (p != *(const uint32_t *)(black_hud_p2[i] + k) || !black_hud_sprite(p)) continue;
             for (j = 0; j < n && out[j] != p; j++) {}
             if (j == n) out[n++] = p;
         }
@@ -2795,14 +2797,15 @@ void sub_00129340(void)
             black_hud_copy(black_hud_p1, 1);
             ones = ammo >= 0 ? black_hud_sprites(black_hud_p1[ammo], black_hud_bytes[ammo], one) : 0;
             for (k = 0; k < ones; k++) memcpy(one_data[k], m + one[k] - 8u, 0x50u);
-            panels = black_hud_panel(black_hud_p1, panel);
-            for (k = 0; k < panels; k++) memcpy(panel_data[k], m + panel[k], BLACK_HUD_SPRITE_DATA);
             if (same && black_hud_p2_kept) {
+                panels = black_hud_panel(panel);
+                for (k = 0; k < panels; k++) memcpy(panel_data[k], m + panel[k], BLACK_HUD_SPRITE_DATA);
                 black_hud_copy(black_hud_p2, 0);
                 for (k = 0; k < black_hud_p2_sprites; k++)
                     memcpy(m + black_hud_p2_sprite[k] - 8u, black_hud_p2_sprite_data[k], 0x50u);
                 for (k = 0; k < black_hud_p2_panels; k++)
-                    memcpy(m + black_hud_p2_panel[k], black_hud_p2_panel_data[k], BLACK_HUD_SPRITE_DATA);
+                    if (black_hud_has(panel, panels, black_hud_p2_panel[k]))
+                        memcpy(m + black_hud_p2_panel[k], black_hud_p2_panel_data[k], BLACK_HUD_SPRITE_DATA);
             }
             /* player one's cases out of player two's half */
             for (k = 0; k < ones; k++)
@@ -2844,7 +2847,7 @@ void sub_00129340(void)
             if (black_msg_in) black_msg_swap();
             black_hud_p2_sprites = ammo >= 0 ? black_hud_sprites(black_hud_p2[ammo], black_hud_bytes[ammo], black_hud_p2_sprite) : 0;
             for (k = 0; k < black_hud_p2_sprites; k++) memcpy(black_hud_p2_sprite_data[k], m + black_hud_p2_sprite[k] - 8u, 0x50u);
-            black_hud_p2_panels = black_hud_panel(black_hud_p2, black_hud_p2_panel);
+            black_hud_p2_panels = black_hud_panel(black_hud_p2_panel);
             for (k = 0; k < black_hud_p2_panels; k++)
                 memcpy(black_hud_p2_panel_data[k], m + black_hud_p2_panel[k], BLACK_HUD_SPRITE_DATA);
             black_hud_copy(black_hud_p1, 0);

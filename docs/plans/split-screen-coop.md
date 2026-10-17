@@ -99,7 +99,8 @@ for a second actor. So player 2 is swapped into core+0x30 whenever its code runs
   player, with that player in.
 - **HUD**: the elements that show the player (the health and ammo panels, 290F9C, 290F64, 290EEC) keep player 2's
   own state (each element's whole state: the health panel's reaches 0xBC0 bytes), updated with player 2 in and the
-  frame's time; what each player's update put in those elements' sprites (the health bar's among them) is its own,
+  frame's time; what each player's update put in those elements' sprites (the health bar's among them, only the
+  sprites both players' states hold in the same place) is its own,
   and the ammo counter's sprites are each player's. The pack count in the HUD movie ("HealthPacks", one movie for
   both halves) is set to each half's player's count (actor +0x8E1) for its half. The messages element (the use
   prompt and what was picked up, all posted by the player in the core) is player 2's own, exchanged for its update
@@ -117,9 +118,9 @@ for a second actor. So player 2 is swapped into core+0x30 whenever its code runs
   at that player's position (its transform without the fourth words player 1's actor keeps there), posed each frame
   (standing or moving clip), and drawn only in the other player's view; a puppet the game takes for a character of
   its own is made again in another free slot.
-- **Characters in both views**: a soldier's draw uses what its model's last pose left, and with two views a frame
-  the update's pose shows in at most one, so each of the level's characters is posed again (no time passing)
-  before each view draws it.
+- **Characters in both views**: the viewmodel set's animation pool holds every animated model's blocks (a model's
+  is its +0xAC), the level's characters too; only the first-person slots' blocks and tops are exchanged with the
+  actor, so the characters keep their poses while player 2 is in (its update and its view).
 - **Enemies**: the characters' brains know the player as the actor in the core, so each character updates with
   the nearer player in it (actor and camera owner only), keeping the one it has until the other is 3 m nearer.
 
