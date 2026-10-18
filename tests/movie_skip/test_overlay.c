@@ -12,10 +12,9 @@
 static unsigned checks, failures;
 #define CHECK(c, ...) do { ++checks; if (!(c)) { ++failures; fprintf(stderr, "FAIL line %d: ", __LINE__); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } } while (0)
 
-/* The test never opens Video Settings or takes input. Keep those unrelated
- * services inactive, so they cannot initialize or write a profile. */
-PcDevice pc_input_prompt_device(void) { return PC_DEVICE_KEYBOARD_MOUSE; }
-void pc_input_set_filter_slot(int slot, const PcInputFilter *filter) { (void)slot; (void)filter; }
+/* The real input/control sources are linked because pc_menu references their
+ * services even in this movie-only harness. No Controls page or profile load
+ * is requested; input initialization only reads the process environment. */
 void pc_video_menu_hide_hint(int hide) { (void)hide; }
 void pc_video_menu_set_native_opener(void (*request)(void)) { (void)request; }
 const char *pc_video_menu_row_help(int row) { (void)row; return ""; }
