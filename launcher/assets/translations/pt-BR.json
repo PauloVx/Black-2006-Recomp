@@ -443,5 +443,7 @@
   "Mouse button 4": "Botão 4 do mouse",
   "Mouse button 5": "Botão 5 do mouse",
   "Mouse wheel up": "Roda do mouse para cima",
-  "Mouse wheel down": "Roda do mouse para baixo"
+  "Mouse wheel down": "Roda do mouse para baixo",
+  "ACTION BLUR": "DESFOQUE DE AÇÃO",
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original mantém o desfoque de BLACK ao recarregar e mirar. Desativado o remove; desfoque de movimento e profundidade de campo são ajustes separados."
 }

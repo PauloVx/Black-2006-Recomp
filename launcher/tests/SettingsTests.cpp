@@ -65,9 +65,11 @@ TEST_CASE("video.ini round-trips and skips what the game would skip") {
     settings.crosshair = "circle";
     settings.hitmarkers = "off";
     settings.vsync = false;
+    settings.actionBlur = "off";
     Settings read;
-    CHECK(applyVideoIni(read, videoIni(settings)) == 21);
+    CHECK(applyVideoIni(read, videoIni(settings)) == 22);
     CHECK(videoIni(read) == videoIni(settings));
+    CHECK(read.actionBlur == "off");
 
     Settings legacy;
     CHECK(applyVideoIni(legacy, "[video]\r\nSSAO = Medium\r\ninternal_height=999\r\nfov=20\r\nnonsense=1\r\n") == 1);

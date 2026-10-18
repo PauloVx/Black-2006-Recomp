@@ -227,6 +227,7 @@ std::string videoIni(const Settings& s) {
     line("aspect", s.cameraAspect);
     line("fov", formatNumber(s.verticalFov));
     line("motion_blur", s.motionBlur);
+    line("action_blur", s.actionBlur);
     line("aa", s.antiAliasing);
     line("af", std::to_string(s.anisotropy));
     line("dof", s.depthOfField);
@@ -304,6 +305,8 @@ int applyVideoIni(Settings& s, std::string_view text) {
             }
         } else if (key == "motion_blur") {
             pick(choices::kMotionBlur, s.motionBlur);
+        } else if (key == "action_blur") {
+            pick(choices::kMotionBlur, s.actionBlur);
         } else if (key == "aa") {
             pick(choices::kAntiAliasing, s.antiAliasing);
         } else if (key == "af") {
@@ -379,6 +382,7 @@ std::string settingsJson(const Settings& s) {
     json["CameraAspect"] = s.cameraAspect;
     json["VerticalFov"] = s.verticalFov;
     json["MotionBlur"] = s.motionBlur;
+    json["ActionBlur"] = s.actionBlur;
     json["InputMode"] = s.inputMode;
     json["PromptMode"] = s.promptMode;
     json["MouseSensitivity"] = s.mouseSensitivity;
@@ -438,6 +442,7 @@ Settings settingsFromJson(std::string_view text) {
     readField(json, "CameraAspect", s.cameraAspect, among(choices::kAspects));
     readField(json, "VerticalFov", s.verticalFov, [](double v) { return validFov(v); });
     readField(json, "MotionBlur", s.motionBlur, among(choices::kMotionBlur));
+    readField(json, "ActionBlur", s.actionBlur, among(choices::kMotionBlur));
     readField(json, "InputMode", s.inputMode, among(choices::kInputModes));
     readField(json, "PromptMode", s.promptMode, among(choices::kInputModes));
     readField(json, "MouseSensitivity", s.mouseSensitivity, [](double v) { return validSensitivity(v); });

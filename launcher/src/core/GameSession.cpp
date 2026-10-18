@@ -258,6 +258,7 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
         {"RECOMP_APU_DSP_ACK", "0x83218810"},
         {"RECOMP_NV2A_KELVIN", "1"},
         {"RECOMP_VBLANK", "1"},
+        {"RECOMP_VBLANK_KEEP_GRID", "1"},  // vblanks a stalled timer misses are owed, not dropped
         {"RECOMP_USB", "1"},
         {"RECOMP_FB_WINDOW", "1"},
         {"RECOMP_KELVIN_THREADS", std::to_string(settings.threads)},

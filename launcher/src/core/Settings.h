@@ -44,6 +44,7 @@ struct Settings {
     std::string cameraAspect = "original";
     double verticalFov = 0;  // 0 keeps the game's own camera
     std::string motionBlur = "original";
+    std::string actionBlur = "original";  // BLACK's own reload and aim blur
 
     // Graphics (video.ini)
     std::string antiAliasing = "fxaa";

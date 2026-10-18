@@ -443,5 +443,7 @@
   "Mouse button 4": "Maustaste 4",
   "Mouse button 5": "Maustaste 5",
   "Mouse wheel up": "Mausrad hoch",
-  "Mouse wheel down": "Mausrad runter"
+  "Mouse wheel down": "Mausrad runter",
+  "ACTION BLUR": "AKTIONSUNSCHÄRFE",
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original behält BLACKs eigene Unschärfe beim Nachladen und Zielen. Aus entfernt sie; Bewegungsunschärfe und Tiefenschärfe sind eigene Einstellungen."
 }

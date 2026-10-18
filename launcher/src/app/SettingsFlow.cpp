@@ -215,6 +215,10 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                     {}});
     rows.push_back(pick(tr("MOTION BLUR"), tr("Original keeps BLACK's motion blur; off removes only that effect."),
                         s.motionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
+    rows.push_back(pick(tr("ACTION BLUR"),
+                        tr("Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and "
+                           "depth of field are separate settings."),
+                        s.actionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
     rows.push_back(pick(tr("CROSSHAIR"),
                         tr("A crosshair around the game's dot that opens as you move and fire. Original keeps the dot "
                            "alone."),

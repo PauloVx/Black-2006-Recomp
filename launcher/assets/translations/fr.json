@@ -443,5 +443,7 @@
   "Mouse button 4": "Bouton 4 de la souris",
   "Mouse button 5": "Bouton 5 de la souris",
   "Mouse wheel up": "Molette vers le haut",
-  "Mouse wheel down": "Molette vers le bas"
+  "Mouse wheel down": "Molette vers le bas",
+  "ACTION BLUR": "FLOU D'ACTION",
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original garde le flou de BLACK pendant le rechargement et la visée. Désactivé le supprime ; le flou de mouvement et la profondeur de champ sont des réglages séparés."
 }
