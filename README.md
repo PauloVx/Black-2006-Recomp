@@ -252,6 +252,13 @@ without the HUD, menus or (unless shown) the weapon. The camera stays within a c
 photo mode started, so it cannot leave the built level. See [Photo mode](docs/photo-mode.md) and the
 [photo tests](tests/photo/README.md).
 
+Reached checkpoints are also saved under `save/checkpoints/` for the selected
+saved profile, mission and difficulty. Starting that same mission again resumes
+the checkpoint with its native inventory, objectives and statistics. **Restart
+Mission** discards it; completing a mission retires it. Unsaved profiles retain
+the original session-only checkpoints. Keep `save/` together with your profile
+data when moving the game. See the [checkpoint regressions](tests/checkpoints/README.md).
+
 The launcher's **Settings > Game > Menu language** chooses English, Brazilian
 Portuguese, Spanish, French, German, or Italian for both the launcher and game,
 and is saved in `local/xbox-launcher.json`. Spanish, French, German, and Italian

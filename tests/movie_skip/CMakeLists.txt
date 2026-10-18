@@ -24,12 +24,15 @@ add_executable(movie-input-test test_input.c
 target_compile_definitions(movie-input-test PRIVATE PC_MOVIE_SKIP_TEST)
 target_link_libraries(movie-input-test PRIVATE user32)
 
-# Use the real subtitle parser/session with the page/hint renderer. Inactive video
-# settings and input services stay stubbed, without opening profile files.
+# Use the real subtitle parser/session and input/control implementations with
+# the page/hint renderer. Video-settings services remain stubbed; no Controls
+# page or controls profile load is requested.
 add_executable(movie-overlay-test test_overlay.c
     "${XBOXRECOMP_DIR}/src/video/pc_menu.c"
     "${XBOXRECOMP_DIR}/src/video/pc_photo.c"
-    "${XBOXRECOMP_DIR}/src/video/pc_movie_skip.c")
+    "${XBOXRECOMP_DIR}/src/video/pc_movie_skip.c"
+    "${XBOXRECOMP_DIR}/src/input/pc_input.c"
+    "${XBOXRECOMP_DIR}/src/input/pc_controls.c")
 target_compile_definitions(movie-overlay-test PRIVATE PC_MOVIE_SKIP_TEST)
 target_link_libraries(movie-overlay-test PRIVATE user32 gdi32 shell32 ole32)
 

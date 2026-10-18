@@ -3119,6 +3119,8 @@ void black_test_weapon_loadout(uint32_t record)
 }
 /* END BLACK_TEST_WEAPON_LOADOUT */
 
+#include "black_checkpoint.inc"
+
 /* BEGIN BLACK_TEST_STREAM_UNIT
  * Explicit offline checkpoint control. Select a unit from the loaded mission's
  * own bounded table before native streaming chooses its two initial units. */
@@ -3221,10 +3223,11 @@ void sub_00168A30(void)
 /* END BLACK_PC_MOTION_BLUR */
 
 /* BEGIN BLACK_PC_DEPTH_OF_FIELD
- * The retail action blur is a separate full-screen composite at 0x1772E0,
- * after its producer (0x15E260) and spatial glow preparation. The GPU DoF
- * setting previously controlled only the added depth-buffer pass, so reload
- * and aim could still blend the retail blurred texture with DoF Off.
+ * The retail action blur (reload and aim) is a separate full-screen
+ * composite at 0x1772E0, after its producer (0x15E260) and spatial glow
+ * preparation. It has its own setting, Action Blur (Original/Off, video.ini
+ * action_blur), independent of the camera-motion blur and of the GPU DoF
+ * setting, which only controls the added depth-buffer pass.
  * Mode zero takes the original no-blur branch before any graphics writes.
  * Mask it only during this draw; retain the producer, tint, timers and mode
  * so live re-enabling resumes the original effect. --exclude-manual keeps
@@ -3240,7 +3243,7 @@ void sub_001772E0(void)
     PcVideoSettings video;
     pc_video_get(&video);
     _mm_setcsr(caller_csr);
-    if (video.dof == PCV_STEP_OFF || pc_photo_active()) GUEST32(effect + 0x34u) = 0u;   /* photo mode: no reload/aim blur */
+    if (video.action_blur_off || pc_photo_active()) GUEST32(effect + 0x34u) = 0u;   /* photo mode: no reload/aim blur */
     sub_001772E0_gen();
     GUEST32(effect + 0x34u) = mode;
 }
@@ -4511,7 +4514,8 @@ static int black_controls_preset_control(int preset, int slot)
     uint32_t control;
     if (preset < 0 || preset >= PCC_PRESETS || slot < 0 || slot >= PCC_SLOTS || !black_pc_ram_span(at, 4u)) return -1;
     control = GUEST32(at);
-    return control < (uint32_t)PCC_CONTROLS ? (int)control : -1;
+    /* PCC_CONTROLS is the retail "none" sentinel, including slot zero of every preset. */
+    return control <= (uint32_t)PCC_CONTROLS ? (int)control : -1;
 }
 
 static void black_controls_write_map(void)

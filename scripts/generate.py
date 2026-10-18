@@ -419,7 +419,21 @@ def title_hooks(name, body):
     body = viewmodel_hooks(name, body)
     body = unsigned_division_hooks(name, body)
     body = test_weapon_hooks(name, body)
+    body = checkpoint_hooks(name, body)
     body = scope_mask_boundary(name, body)
+    return body
+
+
+def checkpoint_hooks(name, body):
+    """Restore only after level/gun data is ready, before initial streaming."""
+    sites = {"sub_001EDC90": ("001EE310", "2u"),
+             "sub_001FE450": ("001FE713", "4u")}
+    if name in sites:
+        label, event = sites[name]
+        marker = f"loc_{label}: ;\n"
+        hook = f"    black_checkpoint_event({event}, ebp);\n"
+        if marker + hook not in body:
+            body = replace_once(body, marker, marker + hook)
     return body
 
 
@@ -810,6 +824,7 @@ def main():
     declarations += "extern int black_silver_weapon_flag(int);\n"
     declarations += "extern int black_infinite_ammo_flag(int);\n"
     declarations += "\nextern void black_test_stream_unit(uint32_t);\n"
+    declarations += "\nextern void black_checkpoint_event(uint32_t, uint32_t);\n"
     declarations += "\nextern uint32_t black_audio_queue_completion(uint32_t);\n"
     for chunk in chunks:
         text = chunk.read_text(encoding="utf-8")

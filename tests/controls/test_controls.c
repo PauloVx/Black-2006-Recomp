@@ -70,6 +70,150 @@ static uint8_t *read_all(const char *path, size_t *size)
     return b;
 }
 
+static char *last_occurrence(char *text, const char *needle)
+{
+    char *found = NULL, *cursor = text;
+    while ((cursor = strstr(cursor, needle)) != NULL) {
+        found = cursor;
+        cursor += strlen(needle);
+    }
+    return found;
+}
+
+static int seed_explicit_default_override(const char *path)
+{
+    static const char contents[] = "[controller]\r\nFIRE=RT\r\n";
+    FILE *f = fopen(path, "wb");
+    int ok;
+    if (!f) return 0;
+    ok = fwrite(contents, 1, sizeof(contents) - 1, f) == sizeof(contents) - 1;
+    if (fclose(f) != 0) ok = 0;
+    return ok;
+}
+
+/* ---- the actual manual wrapper with synthetic guest memory ----
+ * The extracted production block is compiled directly below. The fake generated body models only the native map
+ * fill; all preset reads, layout writes and live-map writes go through recomp_manual.c's real wrapper. */
+enum { SYNTH_GUEST_BYTES = 0x00400000, SYNTH_MAP_VA = 0x00310000 };
+static uint32_t g_synth_guest_memory[SYNTH_GUEST_BYTES / sizeof(uint32_t)];
+uint32_t g_ecx;
+#define GUEST32(va) (g_synth_guest_memory[(uint32_t)(va) / sizeof(uint32_t)])
+
+static int black_pc_ram_span(uint32_t va, size_t bytes)
+{
+    return va <= SYNTH_GUEST_BYTES && bytes <= (size_t)SYNTH_GUEST_BYTES - va;
+}
+
+#include "black_pc_controls_wrapper.inc"
+
+static uint32_t synth_control(int preset, int slot)
+{
+    static const uint32_t base[PCC_SLOTS] = {
+        28, 4, 5, 6, 7, 10, 11, 8, 9, 23, 19, 18, 14, 16, 3, 2, 15, 25, 25, 24, 24, 26, 26,
+        27, 27, 12, 20, 22, 0, 1, 0, 19, 17, 1, 21, 0, 13
+    };
+    if (preset == 3 && slot == 9) return 22;
+    if (preset == 3 && slot == 27) return 23;
+    return base[slot];
+}
+
+static void seed_synthetic_guest(void)
+{
+    int preset, slot;
+    memset(g_synth_guest_memory, 0, sizeof(g_synth_guest_memory));
+    GUEST32(0x002F3BD4u) = SYNTH_MAP_VA;
+    for (preset = 0; preset < PCC_PRESETS; preset++)
+        for (slot = 0; slot < PCC_SLOTS; slot++)
+            GUEST32(0x002A7AF0u + (uint32_t)preset * 0x94u + (uint32_t)slot * 4u) = synth_control(preset, slot);
+}
+
+void sub_001F1520_gen(void)
+{
+    uint32_t slot, map = GUEST32(0x002F3BD4u);
+    for (slot = 0; slot < PCC_SLOTS; slot++)
+        GUEST32(map + slot * 4u) = GUEST32(0x002A7AF0u + g_ecx * 0x94u + slot * 4u);
+}
+
+static void check_synthetic_map(int preset)
+{
+    int slot;
+    for (slot = 0; slot < PCC_SLOTS; slot++)
+        CHECK(GUEST32(SYNTH_MAP_VA + (uint32_t)slot * 4u) == synth_control(preset, slot));
+}
+
+static void test_manual_wrapper(const char *path)
+{
+    char *text, *controller;
+    int slot;
+
+    seed_synthetic_guest();
+    pc_controls_pad_reset();
+    black_controls_install();
+    pc_controls_pad_reset();
+    g_ecx = 0;
+    sub_001F1520();
+    CHECK(pc_controls_pad_layout() == 0);
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(pc_controls_pad_control(PC_ACTION_RELOAD) == 18);
+    check_synthetic_map(0);
+
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, 18));
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 18 && pc_controls_pad_control(PC_ACTION_RELOAD) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 18 && GUEST32(SYNTH_MAP_VA + 11u * 4u) == 23);
+    for (slot = 0; slot < PCC_SLOTS; slot++) {
+        const uint32_t want = slot == 9 ? 18 : slot == 11 ? 23 : synth_control(0, slot);
+        CHECK(GUEST32(SYNTH_MAP_VA + (uint32_t)slot * 4u) == want);
+    }
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && strstr(controller, "FIRE=X") && strstr(controller, "RELOAD=RT"));
+    free(text);
+
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, -1));
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23 && pc_controls_pad_control(PC_ACTION_RELOAD) == 18);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23 && GUEST32(SYNTH_MAP_VA + 11u * 4u) == 18);
+    check_synthetic_map(0);
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && !strstr(controller, "FIRE=") && !strstr(controller, "RELOAD="));
+    free(text);
+
+    CHECK(pc_controls_pad_layout_step(-1) && pc_controls_pad_layout() == 3);
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 22 && pc_controls_pad_control(PC_ACTION_GRENADE) == 23);
+    check_synthetic_map(3); /* includes sentinel slot 0 == PCC_CONTROLS, copied with all 37 slots */
+
+    pc_controls_set_game(&g_game);
+    pc_controls_pad_reset();
+}
+
+static void test_restore_loaded_default_override(const char *path)
+{
+    char *text, *controller;
+
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+    /* Profile 3's default is 22. Staying on 23 proves FIRE=RT was loaded, not merely seeded on disk. */
+    g_ecx = 3;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+    g_ecx = 0;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 23 && GUEST32(SYNTH_MAP_VA + 9u * 4u) == 23);
+
+    CHECK(pc_controls_pad_bind(PC_ACTION_FIRE, -1));
+    text = (char *)read_all(path, NULL);
+    controller = text ? last_occurrence(text, "[controller]") : NULL;
+    CHECK(controller && !strstr(controller, "FIRE="));
+    free(text);
+
+    /* With the override canonicalized away, a native profile change takes effect in the live map. */
+    g_ecx = 3;
+    sub_001F1520();
+    CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 22);
+    CHECK(GUEST32(SYNTH_MAP_VA + 9u * 4u) == 22);
+}
+
 /* ---- keyboard ---- */
 
 static void test_keyboard(void)
@@ -175,6 +319,73 @@ static void test_pages(const char *definition_path)
     free(def);
 }
 
+/* Input used to bind the focused Controls row even when the pointer hovered a different row during
+ * capture. Use the real window-input filter and synthetic menu geometry so each physical source
+ * exercises the same ACT_KEY / ACT_PAD path as the native pages. */
+static const char k_capture_pointer_def[] =
+"[style]\nintro = 0\nanimation = 0\n"
+"[page ControlsCapture]\nlist = 100 150 30\nfocus = 1\nback = close\n"
+"keybind = \"FIRE\" | FIRE\n"
+"padbind = \"FIRE\" | FIRE\n"
+"keybind = \"RELOAD\" | RELOAD\n"
+"padbind = \"RELOAD\" | RELOAD\n";
+
+static void capture_pointer_page(void)
+{
+    pc_menu_test_reset(k_capture_pointer_def);
+    tick("");
+    tick("ControlsCapture");
+    pc_menu_test_pointer_space(640, 480);
+    press(PCM_ACT_LEFT, "ControlsCapture"); /* Keep keyboard captures in the primary column. */
+    CHECK(pc_menu_test_focus() == 0);
+}
+
+static void test_capture_input_routing(int device)
+{
+    uint8_t report[20] = { 0, 20 };
+
+    pc_input_bindings_reset();
+    pc_controls_set_game(&g_game);
+    pc_controls_pad_reset();
+    capture_pointer_page();
+    if (device == 2) {
+        press(PCM_ACT_DOWN, "ControlsCapture"); /* Fire's controller row. */
+        press(PCM_ACT_CONFIRM, "ControlsCapture");
+        pc_menu_pointer(120, 245); /* Reload's controller row, while Fire is waiting for a button. */
+        CHECK(pc_menu_test_pointer_item() == 3);
+        report[6] = 200; /* synthetic X press, control 18 */
+        pc_input_apply_report(report, 1);
+        tick("ControlsCapture");
+        memset(report + 2, 0, 18);
+        pc_input_apply_report(report, 1);
+        tick("ControlsCapture");
+        CHECK(pc_menu_test_focus() == 1);
+        CHECK(pc_controls_pad_control(PC_ACTION_FIRE) == 18 && pc_controls_pad_control(PC_ACTION_RELOAD) == 23);
+    } else {
+        press(PCM_ACT_CONFIRM, "ControlsCapture");
+        pc_menu_pointer(120, 215); /* Reload's keyboard row, while Fire is waiting for a source. */
+        CHECK(pc_menu_test_pointer_item() == 2);
+        if (device == 0) {
+            pc_input_key_event(0x30, 0, 1, 0); /* B */
+            tick("ControlsCapture");
+            pc_input_key_event(0x30, 0, 0, 0);
+            tick("ControlsCapture");
+            CHECK(pc_menu_test_focus() == 0);
+            CHECK(pc_input_binding(PC_ACTION_FIRE, 0) == 0x30 && pc_input_binding(PC_ACTION_RELOAD, 0) == 0x13);
+        } else {
+            pc_input_mouse_button_event(2, 1); /* Mouse 3, distinct from the default Fire binding. */
+            tick("ControlsCapture");
+            pc_input_mouse_button_event(2, 0);
+            tick("ControlsCapture");
+            CHECK(pc_menu_test_focus() == 0);
+            CHECK(pc_input_binding(PC_ACTION_FIRE, 0) == PC_SOURCE_MOUSE(2) && pc_input_binding(PC_ACTION_RELOAD, 0) == 0x13);
+        }
+    }
+
+    pc_input_bindings_reset();
+    pc_controls_pad_reset();
+}
+
 /* ---- pictures with the game's fonts ---- */
 
 static int write_bmp(const char *path, const uint32_t *px, unsigned w, unsigned h)
@@ -238,8 +449,17 @@ int main(int argc, char **argv)
 {
     char ini[MAX_PATH], env[MAX_PATH + 32];
     const char *outdir = argc > 2 ? argv[2] : ".";
+    const int restore_default_case = argc > 3 && !strcmp(argv[3], "--restore-default");
+    const int capture_keyboard_case = argc > 3 && !strcmp(argv[3], "--capture-keyboard");
+    const int capture_mouse_case = argc > 3 && !strcmp(argv[3], "--capture-mouse");
+    const int capture_pad_case = argc > 3 && !strcmp(argv[3], "--capture-pad");
+    const int capture_routing_case = capture_keyboard_case || capture_mouse_case || capture_pad_case;
+    const char *ini_name = restore_default_case ? "controls-restore-default" :
+                           capture_keyboard_case ? "controls-capture-keyboard" :
+                           capture_mouse_case ? "controls-capture-mouse" :
+                           capture_pad_case ? "controls-capture-pad" : "controls-test";
     if (argc < 2) { printf("usage: controls-test MENUS.INI [OUTDIR]\n"); return 2; }
-    snprintf(ini, sizeof(ini), "%s\\controls-test.ini", outdir);
+    snprintf(ini, sizeof(ini), "%s\\%s.ini", outdir, ini_name);
     DeleteFileA(ini);
     snprintf(env, sizeof(env), "RECOMP_CONTROLS_INI=%s", ini);
     _putenv(env);
@@ -248,11 +468,38 @@ int main(int argc, char **argv)
     _putenv("RECOMP_LANGUAGE=en-US");
     _putenv("RECOMP_BLACK_INPUT_MODE=auto");
     _putenv("RECOMP_BLACK_PROMPT_MODE=keyboard_mouse");
+
+    if (restore_default_case) {
+        seed_synthetic_guest();
+        if (!seed_explicit_default_override(ini)) {
+            CHECK(0);
+        } else {
+            pc_input_init();
+            black_controls_install(); /* loads FIRE=RT before the first guest profile fill */
+            g_ecx = 0;
+            sub_001F1520();
+            test_restore_loaded_default_override(ini);
+        }
+        DeleteFileA(ini);
+        printf("%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
+
+    if (capture_routing_case) {
+        pc_input_init();
+        pc_menu_install();
+        test_capture_input_routing(capture_keyboard_case ? 0 : capture_mouse_case ? 1 : 2);
+        DeleteFileA(ini);
+        printf("%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
+
     pc_input_init();
     pc_controls_set_game(&g_game);
     pc_controls_load();
     test_keyboard();
     test_controller();
+    test_manual_wrapper(ini);
     test_file(ini);
     test_pages(argv[1]);
     if (load_fonts()) {

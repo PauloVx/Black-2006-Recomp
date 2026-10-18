@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.20)
+project(black_checkpoint_test C)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(checkpoint-test test_checkpoint.c)
+target_compile_definitions(checkpoint-test PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+    target_compile_options(checkpoint-test PRIVATE /W4 /fp:strict)
+endif()
+enable_testing()
+add_test(NAME checkpoint-process-restart COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/verify.py" "$<TARGET_FILE:checkpoint-test>")

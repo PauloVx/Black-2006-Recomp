@@ -42,10 +42,35 @@ jobs:
             ctest --test-dir build-ambient-occlusion -C $configuration --output-on-failure
             if ($LASTEXITCODE -ne 0) { throw "$configuration regression failed" }
           }
+      - name: Build and run shader manifest recovery regressions
+        shell: pwsh
+        run: |
+          cmake -S tests/shader_manifest -B build-shader-manifest -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Shader manifest test configure failed' }
+          foreach ($configuration in 'Release', 'Debug') {
+            cmake --build build-shader-manifest --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw "$configuration shader manifest build failed" }
+            ctest --test-dir build-shader-manifest -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$configuration shader manifest regression failed" }
+          }
+      - name: Build and run native controls regressions
+        shell: pwsh
+        run: |
+          cmake -S tests/controls -B build-controls -G "Visual Studio 17 2022" -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Controls test configure failed' }
+          foreach ($configuration in 'Release', 'Debug') {
+            cmake --build build-controls --config $configuration
+            if ($LASTEXITCODE -ne 0) { throw "$configuration controls build failed" }
+            ctest --test-dir build-controls -C $configuration --output-on-failure
+            if ($LASTEXITCODE -ne 0) { throw "$configuration controls regression failed" }
+          }
       - name: Retain test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ambient-occlusion-test-diagnostics
-          path: build-ambient-occlusion/Testing/Temporary/
+          path: |
+            build-ambient-occlusion/Testing/Temporary/
+            build-shader-manifest/Testing/Temporary/
+            build-controls/Testing/Temporary/
           if-no-files-found: ignore
