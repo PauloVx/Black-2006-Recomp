@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+**Ray-traced bounce light on walls and floors.** With ray tracing on, the level takes on the colour of what is
+around it, followed over 4 bounces, and gets contact shading where surfaces meet, finer than the baked lightmaps;
+the brightness stays the bake's. Characters and props get their bounce colour over 4 bounces too, twice as strong as
+before. About 2.7 ms more a frame on an RTX 3060 Ti at 1440p (DLAA).
+
 ## 0.1.0-alpha.4 — 2026-10-17
 
 **HD textures.** The game can use [BLACK HD Reimagined](https://www.moddb.com/mods/black-hd-reimagined/addons/black-hd-reimagined-texture-pack),
