@@ -46,13 +46,19 @@ int main(void)
     pc_video_test_reset(path);
     pc_crosshair_test_clock(test_now);
 
-    /* the defaults: a cross and hit markers; nothing before the game ticks */
+    /* Fresh settings keep both additions off, including after gameplay ticks and hit events. */
     {
         PcVideoSettings s;
         pc_video_get(&s);
-        CHECK(s.crosshair == PCX_CROSS && s.hitmarkers == 1);
+        CHECK(s.crosshair == PCX_ORIGINAL && s.hitmarkers == 0);
     }
     CHECK(!pc_crosshair_frame(&d));
+    CHECK(!run(0.5, 1, 0.0f, 0, 1.0f, &d) && !pc_crosshair_replaces_dot());
+    pc_crosshair_hit(PCX_MARK_HIT);
+    pc_crosshair_hit(PCX_MARK_KILL);
+    CHECK(!pc_crosshair_frame(&d));
+    settings(PCX_CROSS, 1);
+    run(0.7, 1, 0.0f, 0, 1.0f, &d);
     CHECK(run(0.5, 1, 0.0f, 0, 1.0f, &d) && d.style == PCX_CROSS && d.alpha > 0.5f && d.marker_alpha == 0.0f);
     rest = d.gap;
     CHECK(rest >= 5.0f && rest <= 9.0f);

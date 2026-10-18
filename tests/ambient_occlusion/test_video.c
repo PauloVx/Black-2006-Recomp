@@ -520,6 +520,7 @@ static void test_model(void)
     CHECK(!s.borderless && s.scale == PCV_SCALE_FIT && !s.nearest && s.vsync && !s.fps_limit);
     CHECK(s.aspect == PCV_ASPECT_ORIGINAL && s.fov == 0.0 && !s.motion_blur_off);
     CHECK(s.aa == PCV_AA_FXAA && s.af == 16 && s.dof == PCV_STEP_OFF && s.sharpen == PCV_STEP_OFF);
+    CHECK(s.crosshair == 0 && s.hitmarkers == 0);
     pc_video_render_size(&w, &h);
     CHECK(w == 960 && h == 720);
     pc_video_raster_size(&w, &h);

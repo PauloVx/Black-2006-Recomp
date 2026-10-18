@@ -16,6 +16,32 @@ std::string fileText(const std::filesystem::path& path) {
 
 }  // namespace
 
+TEST_CASE("Gameplay additions default off and preserve explicit independent choices") {
+    const Settings defaults = defaultSettings();
+    CHECK(defaults.crosshair == "original");
+    CHECK(defaults.hitmarkers == "off");
+    const Settings legacy = settingsFromJson(R"({"Schema":3,"MenuLanguage":"en-US"})");
+    CHECK(legacy.crosshair == "original");
+    CHECK(legacy.hitmarkers == "off");
+    const Settings invalid = settingsFromJson(R"({"Crosshair":"invalid","HitMarkers":"invalid"})");
+    CHECK(invalid.crosshair == "original");
+    CHECK(invalid.hitmarkers == "off");
+    for (const std::string_view crosshair : choices::kCrosshairs) {
+        for (const std::string_view markers : choices::kOnOff) {
+            Settings wanted = defaults;
+            wanted.crosshair = crosshair;
+            wanted.hitmarkers = markers;
+            const Settings jsonRead = settingsFromJson(settingsJson(wanted));
+            CHECK(jsonRead.crosshair == crosshair);
+            CHECK(jsonRead.hitmarkers == markers);
+            Settings iniRead = defaults;
+            CHECK(applyVideoIni(iniRead, videoIni(wanted)) > 0);
+            CHECK(iniRead.crosshair == crosshair);
+            CHECK(iniRead.hitmarkers == markers);
+        }
+    }
+}
+
 TEST_CASE("Render size follows the camera aspect, and SSAA doubles it") {
     Settings settings;
     settings.internalHeight = 720;

@@ -92,6 +92,12 @@ holding a button cannot confirm. The hint also works with native menus disabled
 and stays at the window corner on ultrawide displays. Looping menu backgrounds
 keep playing normally. See the [movie skip tests](tests/movie_skip/README.md).
 
+The added **Crosshair** and **Hit Markers** are independent options in the launcher's
+**Settings > Gameplay** and the in-game **Options > Gameplay Settings** page,
+including while paused. Both default to **Off**. Crosshair Off keeps BLACK's
+original aiming dot; enabling it offers Cross, T-shape and Circle styles. Choices
+are saved in `local/video.ini`; existing saved preferences are preserved.
+
 Ambient occlusion adds contact shading from scene depth with **SSAO Classic,
 HBAO, HBAO+, and GTAO**, each with Low, Medium, High, and Ultra quality. Choose
 the method and quality in the launcher's **Settings > Graphics** or the in-game
@@ -208,15 +214,16 @@ git clone --recursive https://github.com/PauloVx/Black-2006-Recomp.git
 ```
 
 The runtime is a submodule: `third_party/xboxrecomp` is
-[PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) on its `black` branch,
-a fork of XboxRecomp that carries this project's runtime changes as ordinary commits.
+[portingpete/xboxrecomp](https://github.com/portingpete/xboxrecomp) on its
+`codex/optional-gameplay-hud` branch, based on [PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp)'s
+`black` branch and carrying this project's runtime changes as ordinary commits.
 `third_party/dsp56300` is the pinned DSP56300 audio core. In an existing clone, run
 `git submodule update --init --recursive` (the build does this when they are missing).
 The build creates a local Python environment, generates code from your XBE, and compiles
 the game. Generated code and build outputs stay outside Git. Building the generated C code
 can take several minutes; later builds only redo what changed.
 
-To change the runtime, work inside `third_party/xboxrecomp` on the `black` branch,
+To change the runtime, work inside `third_party/xboxrecomp` on the branch named in `.gitmodules`,
 commit and push there, then commit the new submodule commit in this repository.
 
 `scripts/setup.ps1` (and **Build BLACK.cmd**) builds **BLACK Launcher.exe**, then runs
@@ -314,7 +321,7 @@ Development included assistance from Claude Code and OpenAI Codex.
 
 | Submodule | Source | Used for |
 | --- | --- | --- |
-| `third_party/xboxrecomp` | [PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) (branch `black`), a fork of [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nz | The recompilation runtime, with this project's changes as commits |
+| `third_party/xboxrecomp` | [portingpete/xboxrecomp](https://github.com/portingpete/xboxrecomp) (branch `codex/optional-gameplay-hud`), based on [PauloVx/xboxrecomp](https://github.com/PauloVx/xboxrecomp) and [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) by sp00nz | The recompilation runtime, with this project's changes as commits |
 | `third_party/dsp56300` | [mborgerson/dsp56300](https://github.com/mborgerson/dsp56300) by Matt Borgerson | The audio DSP core |
 | `launcher/vendor/walnut` | [PauloVx/Walnut](https://github.com/PauloVx/Walnut) (branch `black`), a fork of [StudioCherno/Walnut](https://github.com/StudioCherno/Walnut) by Studio Cherno | The launcher's application framework (Vulkan + Dear ImGui) |
 | `launcher/vendor/imgui` | [TheCherno/imgui](https://github.com/TheCherno/imgui), a fork of [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut | Launcher UI |

@@ -248,7 +248,7 @@
   "MOTION BLUR": "BEWEGUNGSUNSCHÄRFE",
   "Original keeps BLACK's motion blur; off removes only that effect.": "Original behält BLACKs Bewegungsunschärfe; aus entfernt nur diesen Effekt.",
   "CROSSHAIR": "FADENKREUZ",
-  "A crosshair around the game's dot that opens as you move and fire. Original keeps the dot alone.": "Ein Fadenkreuz um den Punkt des Spiels, das sich beim Bewegen und Schießen öffnet. Original behält nur den Punkt.",
+  "A crosshair around the game's dot that opens as you move and fire. Off keeps the dot alone.": "Ein Fadenkreuz um den Punkt des Spiels, das sich beim Bewegen und Schießen öffnet. Aus behält nur den Punkt.",
   "CROSS": "KREUZ",
   "T-SHAPE": "T-FORM",
   "CIRCLE": "KREIS",
@@ -445,5 +445,7 @@
   "Mouse wheel up": "Mausrad hoch",
   "Mouse wheel down": "Mausrad runter",
   "ACTION BLUR": "AKTIONSUNSCHÄRFE",
-  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original behält BLACKs eigene Unschärfe beim Nachladen und Zielen. Aus entfernt sie; Bewegungsunschärfe und Tiefenschärfe sind eigene Einstellungen."
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original behält BLACKs eigene Unschärfe beim Nachladen und Zielen. Aus entfernt sie; Bewegungsunschärfe und Tiefenschärfe sind eigene Einstellungen.",
+  "GAMEPLAY": "GAMEPLAY",
+  "Crosshair and hit markers. Both are off by default.": "Fadenkreuz und Treffermarker. Beide sind standardmäßig ausgeschaltet."
 }

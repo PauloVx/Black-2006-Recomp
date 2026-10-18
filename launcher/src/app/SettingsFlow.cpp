@@ -115,6 +115,7 @@ std::vector<SettingsFlow::Option> SettingsFlow::options(Section section) {
         case Section::Display: return displayOptions();
         case Section::Graphics: return graphicsOptions();
         case Section::Controls: return controlsOptions();
+        case Section::Gameplay: return gameplayOptions();
         case Section::Game: return gameOptions();
         case Section::Diagnostics: return diagnosticsOptions();
         case Section::Report:
@@ -215,17 +216,11 @@ std::vector<SettingsFlow::Option> SettingsFlow::displayOptions() {
                     {}});
     rows.push_back(pick(tr("MOTION BLUR"), tr("Original keeps BLACK's motion blur; off removes only that effect."),
                         s.motionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
-    rows.push_back(pick(tr("ACTION BLUR"),
-                        tr("Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and "
-                           "depth of field are separate settings."),
-                        s.actionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
-    rows.push_back(pick(tr("CROSSHAIR"),
-                        tr("A crosshair around the game's dot that opens as you move and fire. Original keeps the dot "
-                           "alone."),
-                        s.crosshair,
-                        {{"original", tr("ORIGINAL")}, {"cross", tr("CROSS")}, {"t", tr("T-SHAPE")}, {"circle", tr("CIRCLE")}}));
-    rows.push_back(pick(tr("HIT MARKERS"), tr("A mark on the crosshair when a shot of yours kills an enemy."), s.hitmarkers,
-                        {{"off", tr("OFF")}, {"on", tr("ON")}}));
+    rows.push_back(
+        pick(tr("ACTION BLUR"),
+             tr("Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and "
+                "depth of field are separate settings."),
+             s.actionBlur, {{"original", tr("ORIGINAL")}, {"off", tr("OFF")}}));
     return rows;
 }
 
@@ -339,6 +334,26 @@ std::vector<SettingsFlow::Option> SettingsFlow::controlsOptions() {
                     [&s](int) { s.invertY = !s.invertY; },
                     {}});
     return rows;
+}
+
+std::vector<SettingsFlow::Option> SettingsFlow::gameplayOptions() {
+    core::Settings& s = m_settings;
+    const auto pick = [](std::string label, std::string help, std::string& field,
+                         std::vector<Choice<std::string>> list) {
+        return Option{std::move(label),
+                      std::move(help),
+                      [&field, list] { return std::string(list[indexOf(list, field)].label); },
+                      [&field, list](int step) { cycle(list, field, step); },
+                      {}};
+    };
+    return {
+        pick(tr("CROSSHAIR"),
+             tr("A crosshair around the game's dot that opens as you move and fire. Off keeps the dot alone."),
+             s.crosshair,
+             {{"original", tr("OFF")}, {"cross", tr("CROSS")}, {"t", tr("T-SHAPE")}, {"circle", tr("CIRCLE")}}),
+        pick(tr("HIT MARKERS"), tr("A mark on the crosshair when a shot of yours kills an enemy."), s.hitmarkers,
+             {{"off", tr("OFF")}, {"on", tr("ON")}}),
+    };
 }
 
 std::vector<SettingsFlow::Option> SettingsFlow::gameOptions() {
@@ -735,6 +750,7 @@ Page SettingsFlow::page() {
             {tr("DISPLAY"), "", tr("Window, resolution, camera and field of view."), true},
             {tr("GRAPHICS"), "", tr("Anti-aliasing, ambient occlusion, reflections and other effects."), true},
             {tr("CONTROLS"), "", tr("Key bindings, mouse and controller."), true},
+            {tr("GAMEPLAY"), "", tr("Crosshair and hit markers. Both are off by default."), true},
             {tr("GAME"), "", tr("Renderer, game clock, menu language and cheats."), true},
             {tr("DIAGNOSTICS"), "", tr("Logs for finding problems, and reporting one."), true},
             {tr("BACK"), "", "", true},
@@ -742,14 +758,15 @@ Page SettingsFlow::page() {
         page.initialRow = m_lastSection == Section::Graphics                                          ? 1
                           : m_lastSection == Section::Controls                                        ? 2
                           : m_lastSection == Section::Bindings                                        ? 2
-                          : m_lastSection == Section::Game                                            ? 3
-                          : m_lastSection == Section::Diagnostics || m_lastSection == Section::Report ? 4
+                          : m_lastSection == Section::Gameplay                                        ? 3
+                          : m_lastSection == Section::Game                                            ? 4
+                          : m_lastSection == Section::Diagnostics || m_lastSection == Section::Report ? 5
                                                                                                       : 0;
         return page;
     }
-    const std::array<const char*, 7> titles = {trMark("SETTINGS"),   trMark("DISPLAY"),      trMark("GRAPHICS"),
-                                               trMark("CONTROLS"),   trMark("KEY BINDINGS"), trMark("GAME"),
-                                               trMark("DIAGNOSTICS")};
+    const std::array<const char*, 8> titles = {trMark("SETTINGS"), trMark("DISPLAY"),      trMark("GRAPHICS"),
+                                               trMark("CONTROLS"), trMark("KEY BINDINGS"), trMark("GAMEPLAY"),
+                                               trMark("GAME"),     trMark("DIAGNOSTICS")};
     page.title = tr(titles.at(static_cast<std::size_t>(m_section)));
     page.id = "settings-" + page.title;
     const std::vector<Option> rows = options(m_section);
@@ -785,8 +802,8 @@ SettingsFlow::Outcome SettingsFlow::handle(MenuEvent event) {
         return Outcome::Stay;
     }
     if (m_section == Section::Hub) {
-        constexpr std::array kSections = {Section::Display, Section::Graphics, Section::Controls, Section::Game,
-                                          Section::Diagnostics};
+        constexpr std::array kSections = {Section::Display,  Section::Graphics, Section::Controls,
+                                          Section::Gameplay, Section::Game,     Section::Diagnostics};
         if (event.row < kSections.size()) {
             open(kSections.at(event.row));
             return Outcome::Stay;

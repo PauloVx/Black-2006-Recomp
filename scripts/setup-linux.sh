@@ -54,7 +54,7 @@ export CC_SHELL_ESCAPED_FLAGS=1
 export CFLAGS_x86_64_pc_windows_msvc="/imsvc\"$BLACK_XWIN_ROOT/crt/include\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/ucrt\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/shared\" /imsvc\"$BLACK_XWIN_ROOT/sdk/include/um\""
 toolkit="$project_root/third_party/xboxrecomp"
 dsp="$project_root/third_party/dsp56300"
-# XboxRecomp (PauloVx's fork, branch black) and the DSP56300 core are submodules at the commits this
+# XboxRecomp (the project fork named in .gitmodules) and the DSP56300 core are submodules at the commits this
 # checkout records. Only missing ones are fetched, so a checked-out runtime branch with new commits is left alone.
 # A release archive without .git ships them already in place.
 if [[ -e "$project_root/.git" && ( ! -f "$toolkit/CMakeLists.txt" || ! -f "$dsp/crates/emu-ffi/Cargo.toml" ) ]]; then

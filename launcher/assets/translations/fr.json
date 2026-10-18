@@ -248,7 +248,7 @@
   "MOTION BLUR": "FLOU DE MOUVEMENT",
   "Original keeps BLACK's motion blur; off removes only that effect.": "Original conserve le flou de mouvement de BLACK ; non retire seulement cet effet.",
   "CROSSHAIR": "RÉTICULE",
-  "A crosshair around the game's dot that opens as you move and fire. Original keeps the dot alone.": "Un réticule autour du point du jeu qui s’ouvre quand vous bougez et tirez. Original garde le point seul.",
+  "A crosshair around the game's dot that opens as you move and fire. Off keeps the dot alone.": "Un réticule autour du point du jeu qui s’ouvre quand vous bougez et tirez. Désactivé garde le point seul.",
   "CROSS": "CROIX",
   "T-SHAPE": "EN T",
   "CIRCLE": "CERCLE",
@@ -445,5 +445,7 @@
   "Mouse wheel up": "Molette vers le haut",
   "Mouse wheel down": "Molette vers le bas",
   "ACTION BLUR": "FLOU D'ACTION",
-  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original garde le flou de BLACK pendant le rechargement et la visée. Désactivé le supprime ; le flou de mouvement et la profondeur de champ sont des réglages séparés."
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original garde le flou de BLACK pendant le rechargement et la visée. Désactivé le supprime ; le flou de mouvement et la profondeur de champ sont des réglages séparés.",
+  "GAMEPLAY": "JOUABILITÉ",
+  "Crosshair and hit markers. Both are off by default.": "Réticule et marqueurs d’impact. Tous deux désactivés par défaut."
 }

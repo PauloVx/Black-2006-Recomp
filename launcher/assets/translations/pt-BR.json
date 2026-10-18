@@ -248,7 +248,7 @@
   "MOTION BLUR": "DESFOQUE DE MOVIMENTO",
   "Original keeps BLACK's motion blur; off removes only that effect.": "Original mantém o desfoque de movimento do BLACK; desligado remove só esse efeito.",
   "CROSSHAIR": "MIRA",
-  "A crosshair around the game's dot that opens as you move and fire. Original keeps the dot alone.": "Uma mira em volta do ponto do jogo que se abre ao se mover e atirar. Original mantém só o ponto.",
+  "A crosshair around the game's dot that opens as you move and fire. Off keeps the dot alone.": "Uma mira em volta do ponto do jogo que se abre ao se mover e atirar. Desligado mantém só o ponto.",
   "CROSS": "CRUZ",
   "T-SHAPE": "EM T",
   "CIRCLE": "CÍRCULO",
@@ -445,5 +445,7 @@
   "Mouse wheel up": "Roda do mouse para cima",
   "Mouse wheel down": "Roda do mouse para baixo",
   "ACTION BLUR": "DESFOQUE DE AÇÃO",
-  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original mantém o desfoque de BLACK ao recarregar e mirar. Desativado o remove; desfoque de movimento e profundidade de campo são ajustes separados."
+  "Original keeps BLACK's own blur while reloading and aiming. Off removes it; motion blur and depth of field are separate settings.": "Original mantém o desfoque de BLACK ao recarregar e mirar. Desativado o remove; desfoque de movimento e profundidade de campo são ajustes separados.",
+  "GAMEPLAY": "JOGABILIDADE",
+  "Crosshair and hit markers. Both are off by default.": "Mira e marcadores de acerto. Ambos desativados por padrão."
 }

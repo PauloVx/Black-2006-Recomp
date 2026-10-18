@@ -19,6 +19,7 @@
 #include "pc_input.h"
 #include "pc_video.h"
 #include "pc_video_menu.h"
+#include "native_menu.extracted.inc"
 
 /* The menu regression never runs a movie, so keep the subtitle service inactive. */
 int pc_movie_skip_subtitle(uint16_t *out, unsigned capacity)
@@ -522,6 +523,61 @@ static void test_native_video_pages(void)
     press(PCM_ACT_CONFIRM, "OptionsMenuXbox"); pc_video_get(&s);
     CHECK(!s.vsync && s.fov == 90 && s.aa == PCV_AA_FXAA, "hub Reset preserves pinned fields and resets other settings");
     video_fresh();
+}
+
+static int file_is(const char *path, const char *want);
+static void file_put(const char *path, const char *text);
+
+static void test_gameplay_pages(void)
+{
+    static const char *const options[] = { "OptionsMenuXbox", "PauseMenuOptionXbox" };
+    static const int gameplay_row[] = { 4, 6 };
+    PcVideoSettings s;
+    char log[4096];
+    int variant, i;
+    CHECK(pc_menu_check_definition(k_black_menu_default, log, sizeof(log)) == 23 && !log[0],
+          "the production definition parses, including Gameplay settings: '%s'", log);
+    for (variant = 0; variant < 2; variant++) {
+        const char *page = options[variant];
+        video_fresh(); reset_game(); pc_menu_test_reset(k_black_menu_default); tick(""); tick(page);
+        for (i = 0; i < gameplay_row[variant]; i++) press(PCM_ACT_DOWN, page);
+        press(PCM_ACT_CONFIRM, page);
+        CHECK(display_has("GAMEPLAY SETTINGS") && display_has("CROSSHAIR") && display_has("HIT MARKERS"),
+              "%s reaches the dedicated Gameplay page", page);
+        pc_video_get(&s);
+        CHECK(s.crosshair == 0 && s.hitmarkers == 0, "both Gameplay additions default off");
+        press(PCM_ACT_RIGHT, page);
+        pc_video_get(&s);
+        CHECK(s.crosshair == 1 && s.hitmarkers == 0, "crosshair can be enabled independently");
+        press(PCM_ACT_DOWN, page); press(PCM_ACT_RIGHT, page);
+        pc_video_test_reset(g_video_ini); pc_video_get(&s);
+        CHECK(s.crosshair == 1 && s.hitmarkers == 1, "both explicit choices survive a settings reload");
+        press(PCM_ACT_UP, page); press(PCM_ACT_LEFT, page);
+        pc_video_get(&s);
+        CHECK(s.crosshair == 0 && s.hitmarkers == 1, "markers remain enabled with the crosshair off");
+        press(PCM_ACT_DOWN, page); press(PCM_ACT_LEFT, page);
+        pc_video_get(&s);
+        CHECK(s.crosshair == 0 && s.hitmarkers == 0, "both additions can be switched off again");
+        press(PCM_ACT_BACK, page); press(PCM_ACT_DOWN, page); press(PCM_ACT_CONFIRM, page);
+        press(PCM_ACT_CONFIRM, page);
+        CHECK(display_has("WINDOW MODE") && !display_has("CROSSHAIR") && !display_has("HIT MARKERS"),
+              "Display no longer contains Gameplay settings");
+    }
+    {
+        static const char edited[] = "[page OptionsMenuXbox]\nitem = \"CUSTOM GAMEPLAY\" | open GameplaySettings\n";
+        char path[MAX_PATH];
+        GetTempPathA(sizeof(path), path);
+        strcat_s(path, sizeof(path), "pc-menu-gameplay-custom.ini");
+        video_fresh(); reset_game();
+        pc_menu_set_default_definition(k_black_menu_default);
+        file_put(path, edited);
+        pc_menu_test_load_file(path); tick(""); tick("OptionsMenuXbox");
+        press(PCM_ACT_CONFIRM, "OptionsMenuXbox");
+        CHECK(display_has("HIT MARKERS") && file_is(path, edited),
+              "missing Gameplay page is supplemented without rewriting an edited menu");
+        DeleteFileA(path);
+        pc_menu_set_default_definition(NULL);
+    }
 }
 
 static void test_pause(void)
@@ -1612,6 +1668,7 @@ int main(int argc, char **argv)
     test_exit_game();
     test_replaced_default();
     test_video_file_supplements();
+    test_gameplay_pages();
     test_native_page_stack();
     test_video_setting_focus_and_layout();
     test_input();

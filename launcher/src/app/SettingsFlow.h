@@ -29,7 +29,7 @@ public:
     [[nodiscard]] bool busy() const override { return m_capture.active || m_entry.active() || m_inputUsed; }
 
 private:
-    enum class Section { Hub, Display, Graphics, Controls, Bindings, Game, Diagnostics, Report };
+    enum class Section { Hub, Display, Graphics, Controls, Bindings, Gameplay, Game, Diagnostics, Report };
 
     struct Option {
         std::string label;
@@ -53,6 +53,7 @@ private:
     [[nodiscard]] std::vector<Option> displayOptions();
     [[nodiscard]] std::vector<Option> graphicsOptions();
     [[nodiscard]] std::vector<Option> controlsOptions();
+    [[nodiscard]] std::vector<Option> gameplayOptions();
     [[nodiscard]] std::vector<Option> gameOptions();
     [[nodiscard]] std::vector<Option> diagnosticsOptions();
     [[nodiscard]] Page reportPage() const;

@@ -53,6 +53,15 @@ else()
     target_compile_options(ao-post-order-test PRIVATE -Wall -Wextra -UNDEBUG)
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(native_menu_extracted "${CMAKE_CURRENT_BINARY_DIR}/native_menu.extracted.inc")
+add_custom_command(OUTPUT "${native_menu_extracted}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_menu_default.py"
+        --source "${CMAKE_CURRENT_SOURCE_DIR}/../../src/black_native_menu.inc" --output "${native_menu_extracted}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/black_native_menu.inc" "${CMAKE_CURRENT_SOURCE_DIR}/extract_menu_default.py"
+    COMMENT "Extracting the production native menu definition" VERBATIM)
+set_source_files_properties("${native_menu_extracted}" PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+target_sources(ao-menu-test PRIVATE "${native_menu_extracted}")
+target_include_directories(ao-menu-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set(scene_retry_extracted "${CMAKE_CURRENT_BINARY_DIR}/scene_retry.extracted.inc")
 add_custom_command(OUTPUT "${scene_retry_extracted}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_scene_retry.py"
