@@ -19,10 +19,10 @@ struct Tool {
     std::string help;
     bool required = true;
     bool found = false;
-    std::string version;
-    std::filesystem::path program;  // what to run; the installation folder for Visual Studio
-    std::string package;            // Windows: the winget package that installs it
-    std::vector<std::string> installArguments;
+    std::string version{};
+    std::filesystem::path program{};  // what to run; the installation folder for Visual Studio
+    std::string package{};            // Windows: the winget package that installs it
+    std::vector<std::string> installArguments{};
 };
 
 struct Toolchain {

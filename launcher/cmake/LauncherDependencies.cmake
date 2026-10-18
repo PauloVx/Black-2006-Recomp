@@ -41,16 +41,27 @@ add_library(black_imgui STATIC
     "${BLACK_VENDOR}/imgui/imgui_widgets.cpp")
 target_include_directories(black_imgui SYSTEM PUBLIC "${BLACK_VENDOR}/imgui")
 
-# Walnut: its platform-independent Source/ plus the GUI platform (Platform/Headless is not used)
+# Build the Walnut GUI services used by the launcher. Its unused console and serialization
+# modules rely on MSVC-specific declarations and are not part of this application's file handling.
 set(BLACK_WALNUT "${BLACK_VENDOR}/walnut/Walnut")
-file(GLOB_RECURSE BLACK_WALNUT_SOURCES CONFIGURE_DEPENDS "${BLACK_WALNUT}/Source/*.cpp" "${BLACK_WALNUT}/Platform/GUI/*.cpp")
-add_library(black_walnut STATIC ${BLACK_WALNUT_SOURCES})
+add_library(black_walnut STATIC
+    "${BLACK_WALNUT}/Source/Walnut/Core/Log.cpp"
+    "${BLACK_WALNUT}/Source/Walnut/Utils/StringUtils.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/ApplicationGUI.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/Image.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/Input/Input.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/ImGui/ImGuiBuild.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/ImGui/ImGuiTheme.cpp"
+    "${BLACK_WALNUT}/Platform/GUI/Walnut/UI/UI.cpp")
 target_include_directories(black_walnut SYSTEM PUBLIC
     "${BLACK_WALNUT}/Source"
     "${BLACK_WALNUT}/Platform/GUI"
     "${BLACK_VENDOR}/walnut/vendor/stb_image")
 target_link_libraries(black_walnut PUBLIC black_imgui black_glm black_spdlog glfw black_vulkan)
 target_compile_features(black_walnut PUBLIC cxx_std_20)
+
+# Walnut uses Vulkan. GLFW must not pull in unused OpenGL headers on Linux or its consumers.
+target_compile_definitions(black_walnut PUBLIC GLFW_INCLUDE_NONE=)
 target_compile_definitions(black_walnut PUBLIC $<$<CONFIG:Debug>:WL_DEBUG> $<$<NOT:$<CONFIG:Debug>>:WL_RELEASE>)
 if(WIN32)
     target_compile_definitions(black_walnut PUBLIC WL_PLATFORM_WINDOWS)

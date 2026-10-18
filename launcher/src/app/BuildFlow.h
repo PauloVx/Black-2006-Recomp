@@ -19,7 +19,7 @@ class MenuFont;
 /// build itself, with each stage's progress, and what went wrong if it fails.
 class BuildFlow final : public MenuFlow {
 public:
-    BuildFlow(core::ProjectLayout project, const MenuFont* rows, const MenuFont* titles);
+    BuildFlow(core::ProjectLayout project, const MenuFont* rows);
 
     void update(double time, std::size_t selectedRow) override;
     [[nodiscard]] Page page() override;
@@ -56,7 +56,6 @@ private:
 
     core::ProjectLayout m_project;
     const MenuFont* m_rowFont;
-    const MenuFont* m_titleFont;
     Screen m_screen = Screen::Checking;
     std::vector<Action> m_actions;
     double m_time = 0;

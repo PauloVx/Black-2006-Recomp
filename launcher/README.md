@@ -36,7 +36,8 @@ cmake --build --preset windows-release
 ctest --preset windows-release
 ```
 
-On Linux (Ubuntu: `sudo apt install build-essential cmake ninja-build libx11-dev libxrandr-dev libxinerama-dev
+On Linux, use GCC 13 or newer with C++20 `std::format` support (Ubuntu 24.04:
+`sudo apt install build-essential cmake ninja-build libx11-dev libxrandr-dev libxinerama-dev
 libxcursor-dev libxi-dev libwayland-dev wayland-protocols libxkbcommon-dev`, plus a graphics driver with Vulkan),
 use the `linux-release` presets. The launcher is written to `build-launcher*/bin/` and finds the project folder
 by searching upwards from itself, so it runs from the build folder too. `scripts/build-launcher.ps1` and

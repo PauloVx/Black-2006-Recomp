@@ -257,7 +257,7 @@ void LauncherLayer::run(Action action) {
         case Action::OpenFolder: result = core::openFolder(m_project->root()); break;
         case Action::Quit: Walnut::Application::Get().Close(); break;
         case Action::Disc: openDiscPages(); break;
-        case Action::Build: openFlow(std::make_unique<BuildFlow>(*m_project, &m_rowFont, &m_titleFont)); break;
+        case Action::Build: openFlow(std::make_unique<BuildFlow>(*m_project, &m_rowFont)); break;
     }
     m_notice = result ? std::string() : result.error().message;
 }

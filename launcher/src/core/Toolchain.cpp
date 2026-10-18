@@ -45,6 +45,7 @@ bool isFile(const fs::path& path) {
     return fs::is_regular_file(path, error);
 }
 
+#ifdef _WIN32
 std::vector<std::string> lines(const std::string& text) {
     std::vector<std::string> result;
     std::istringstream stream(text);
@@ -58,6 +59,7 @@ std::vector<std::string> lines(const std::string& text) {
     }
     return result;
 }
+#endif
 
 #ifdef _WIN32
 constexpr char kPathSeparator = ';';
@@ -124,6 +126,7 @@ std::vector<fs::path> candidates(std::string_view name, const std::vector<fs::pa
     return found;
 }
 
+#ifdef _WIN32
 /// Each folder matching `prefix*` in `parent`, newest name first ("Python312" before "Python310").
 std::vector<fs::path> versionedFolders(const fs::path& parent, std::string_view prefix) {
     std::vector<fs::path> found;
@@ -136,6 +139,7 @@ std::vector<fs::path> versionedFolders(const fs::path& parent, std::string_view 
     std::sort(found.rbegin(), found.rend());
     return found;
 }
+#endif
 
 void addFolder(Toolchain& toolchain, const fs::path& program) {
     const fs::path folder = program.parent_path();

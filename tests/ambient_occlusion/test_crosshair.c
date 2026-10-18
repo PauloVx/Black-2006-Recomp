@@ -4,6 +4,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <string.h>
 #include <windows.h>
 
 static int failures;
@@ -11,6 +13,90 @@ static int failures;
 
 static double s_now;
 static double test_now(void) { return s_now; }
+
+static ULONGLONG hit_now;
+static ULONGLONG hit_clock(void) { return hit_now; }
+#define GetTickCount64 hit_clock
+#include "hit_attribution.extracted.inc"
+#undef GetTickCount64
+
+static void hit_history_reset(unsigned cursor)
+{
+    memset(black_hit_soldier, 0, sizeof(black_hit_soldier));
+    memset(black_hit_at, 0, sizeof(black_hit_at));
+    memset(black_hit_player, 0, sizeof(black_hit_player));
+    black_hit_next = cursor;
+    hit_now = 100000;
+}
+
+/* Feed the history that the native damage wrapper records; the lookup itself is production code. */
+static void record_hit(uint32_t soldier, int player)
+{
+    const unsigned k = black_hit_next++ % BLACK_HITS;
+    black_hit_soldier[k] = soldier;
+    black_hit_at[k] = hit_now;
+    black_hit_player[k] = player;
+}
+
+static void test_hit_attribution(void)
+{
+    const uint32_t soldier = 0x123400u, other = 0x567800u;
+    PcCrosshairDraw d;
+    int by;
+    unsigned i;
+    hit_history_reset(0);
+    CHECK(black_hit_by(soldier) == -1 && black_hit_by(0) == -1);
+    record_hit(soldier, 0);
+    hit_now += 1;
+    record_hit(soldier, 1);
+    CHECK(black_hit_by(soldier) == 1);
+    hit_now += 1;
+    record_hit(soldier, 0);
+    CHECK(black_hit_by(soldier) == 0);
+    CHECK(black_hit_by(other) == -1);
+
+    /* Equal clock ticks still have a definite insertion order, in either direction. */
+    record_hit(soldier, 1);
+    CHECK(black_hit_by(soldier) == 1);
+    record_hit(soldier, 0);
+    CHECK(black_hit_by(soldier) == 0);
+
+    /* Lower slot indexes can be newer after ring wrap; the cursor itself can wrap too. */
+    hit_history_reset(BLACK_HITS - 1u);
+    record_hit(soldier, 0);
+    record_hit(soldier, 1);
+    CHECK(black_hit_by(soldier) == 1);
+    hit_history_reset(UINT_MAX);
+    record_hit(soldier, 0);
+    CHECK(black_hit_next == 0 && black_hit_by(soldier) == 0);
+    record_hit(soldier, 1);
+    CHECK(black_hit_by(soldier) == 1);
+    for (i = 0; i < BLACK_HITS; i++) record_hit(other, 0);
+    CHECK(black_hit_by(soldier) == -1 && black_hit_by(other) == 0);
+    hit_now += 1499;
+    CHECK(black_hit_by(other) == 0);
+    hit_now += 1;
+    CHECK(black_hit_by(other) == -1);
+
+    /* A P1 -> P2 hit on the same clock tick draws the marker only on P2's production frame. */
+    hit_history_reset(0);
+    record_hit(soldier, 0);
+    record_hit(soldier, 1);
+    by = black_hit_by(soldier);
+    CHECK(by == 1);
+    pc_crosshair_test_clock(test_now);
+    pc_crosshair_tick_for(0, 1, 0.0f, 0, 1.0f);
+    pc_crosshair_tick_for(1, 1, 0.0f, 0, 1.0f);
+    if (by >= 0) pc_crosshair_hit_for(by, PCX_MARK_HIT);
+    CHECK(!pc_crosshair_frame_for(0, &d) && d.marker_alpha == 0.0f);
+    CHECK(pc_crosshair_frame_for(1, &d) && d.marker_alpha > 0.9f && !d.marker_kill);
+    pc_crosshair_test_clock(test_now);
+    pc_crosshair_tick_for(0, 1, 0.0f, 0, 1.0f);
+    pc_crosshair_tick_for(1, 1, 0.0f, 0, 1.0f);
+    if (by >= 0) pc_crosshair_hit_for(by, PCX_MARK_KILL);
+    CHECK(!pc_crosshair_frame_for(0, &d) && d.marker_alpha == 0.0f);
+    CHECK(pc_crosshair_frame_for(1, &d) && d.marker_alpha > 0.9f && d.marker_kill);
+}
 
 /* Ticks every 1/120 s for `seconds`, then the look of that moment. */
 static int run(double seconds, int control, float speed, unsigned shots, float zoom, PcCrosshairDraw *out)
@@ -121,6 +207,8 @@ int main(void)
     settings(PCX_ORIGINAL, 0);
     CHECK(!run(0.2, 1, 0.0f, 0, 1.0f, &d));
 
+    settings(PCX_ORIGINAL, 1);
+    test_hit_attribution();
     pc_crosshair_test_clock(NULL);
     DeleteFileA(path);
     if (failures) fprintf(stderr, "%d failure(s)\n", failures);

@@ -73,8 +73,8 @@ std::string fit(const MenuFont& font, std::string text, float size, float width)
 
 }  // namespace
 
-BuildFlow::BuildFlow(core::ProjectLayout project, const MenuFont* rows, const MenuFont* titles)
-    : m_project(std::move(project)), m_rowFont(rows), m_titleFont(titles) {
+BuildFlow::BuildFlow(core::ProjectLayout project, const MenuFont* rows)
+    : m_project(std::move(project)), m_rowFont(rows) {
     detect();
 }
 

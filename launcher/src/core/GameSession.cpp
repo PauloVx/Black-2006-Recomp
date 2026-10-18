@@ -96,6 +96,7 @@ std::string randomHex8() {
     return text.data();
 }
 
+#ifdef _WIN32
 /// Upper-case hex SHA-256 of the project folder, naming its lock so two copies of the project do not block each
 /// other.
 std::string projectIdentity(const ProjectLayout& project) {
@@ -110,7 +111,6 @@ std::string projectIdentity(const ProjectLayout& project) {
     return Sha256::toHex(hash.finish());
 }
 
-#ifdef _WIN32
 /// A copy of this project's game already running, started from anywhere: its process id, or 0.
 unsigned long runningGame(const fs::path& executable) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -293,8 +293,10 @@ std::map<std::string, std::string> gameEnvironment(const ProjectLayout& project,
     }
     if (settings.textures == "hd-pack" && fs::is_directory(project.root() / "texture_pack_hd")) {
         env["RECOMP_TEXTURE_PACK"] = gamePath(project.root() / "texture_pack_hd", style);  // replacement textures
-        const fs::path map = project.root() / "textures" / "black-hd-reimagined.map";  // which file replaces which texture
-        if (fs::is_regular_file(map)) env["RECOMP_TEXTURE_PACK_MAP"] = gamePath(map, style);
+        const fs::path map =
+            project.root() / "textures" / "black-hd-reimagined.map";  // which file replaces which texture
+        if (fs::is_regular_file(map))
+            env["RECOMP_TEXTURE_PACK_MAP"] = gamePath(map, style);
     }
     if (settings.silverWeaponMode == "force-on") {
         env["RECOMP_BLACK_SILVER_WEAPONS"] = "1";

@@ -17,6 +17,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("#include <format>
+int main() { return std::format(\"{}\", 1).empty(); }" BLACK_LAUNCHER_HAS_STD_FORMAT)
+if(NOT BLACK_LAUNCHER_HAS_STD_FORMAT)
+    message(FATAL_ERROR "BLACK Launcher needs C++20 std::format support (GCC 13 or newer, or Visual Studio 2022).")
+endif()
+
 option(BLACK_LAUNCHER_TESTS "Build the launcher unit tests" ON)
 option(BLACK_LAUNCHER_WARNINGS_AS_ERRORS "Treat warnings in launcher code as errors" OFF)
 

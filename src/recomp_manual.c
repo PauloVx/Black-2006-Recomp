@@ -4667,13 +4667,17 @@ void sub_001E74B0(void)
     sub_001E74B0_gen();
 }
 
-/* The player whose bullets hurt this soldier in the last moment, or -1. */
+/* The latest player whose bullets hurt this soldier in the last moment, or -1.
+ * Traverse insertion order backwards: two players can hit in the same clock tick. */
 static int black_hit_by(uint32_t soldier)
 {
     const ULONGLONG now = GetTickCount64();
-    unsigned k;
-    for (k = 0; k < BLACK_HITS; k++)
+    unsigned i;
+    if (!soldier) return -1;
+    for (i = 0; i < BLACK_HITS; i++) {
+        const unsigned k = (black_hit_next - 1u - i) % BLACK_HITS;
         if (black_hit_soldier[k] == soldier && now - black_hit_at[k] < 1500u) return black_hit_player[k];
+    }
     return -1;
 }
 

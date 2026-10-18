@@ -36,6 +36,7 @@ std::string fileStamp() {
     return {text.data(), std::strftime(text.data(), text.size(), "%Y%m%d-%H%M%S", &local)};
 }
 
+#ifdef _WIN32
 std::size_t sourceFiles(const fs::path& folder) {
     std::size_t count = 0;
     std::error_code error;
@@ -47,6 +48,7 @@ std::size_t sourceFiles(const fs::path& folder) {
     }
     return count;
 }
+#endif
 
 /// Runs the build's programs one after another, with their output logged and turned into progress.
 class Runner {

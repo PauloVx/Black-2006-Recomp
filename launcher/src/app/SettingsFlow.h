@@ -39,8 +39,8 @@ private:
         std::function<bool()> enabled;
         bool adjustable = true;
         /// For typed values: checks and stores the text, or says why it cannot be used.
-        std::function<std::optional<std::string>(const std::string& text)> commit;
-        std::string allowed;  // the characters that can be typed
+        std::function<std::optional<std::string>(const std::string& text)> commit{};
+        std::string allowed{};  // the characters that can be typed
     };
 
     struct Capture {

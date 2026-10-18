@@ -18,6 +18,9 @@ The workflow first compiles the production renderer, video and input libraries, 
 - The actual video settings and menu row services: all AO methods and qualities, INI round trips,
   validation, legacy SSAO conversion, per-field environment locks, persistence, cycling and Reset.
 - Native page parsing, input and state against a fake game host, including both English AO rows.
+- Crosshair defaults and marker timing, plus the extracted production hit-ownership lookup: the latest
+  player wins even for equal timestamps, ring/cursor wrap, expiry and eviction. Per-player frame checks
+  verify that both hit and kill markers appear only for the returned owner.
 - The actual embedded pixel shaders on D3D11 WARP: all 16 enabled method/quality combinations,
   unoccluded flat/sky depth, an occluded corner, finite float masks, R8 masks, bilateral blur,
   alpha-preserving scene darkening, distinct kernels, quality differences and camera sensitivity.

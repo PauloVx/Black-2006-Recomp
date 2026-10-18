@@ -12,7 +12,8 @@ The starter contains the compiled launcher and all host source. Open the launche
 Linux build below and shows its progress. It lists any missing packages with the command that installs them. No Windows installation, VM,
 PowerShell, Visual Studio, or files copied from Windows are required to build.
 
-On Ubuntu 24.04, install native Linux development packages:
+The native launcher needs a C++20 standard library with `std::format` (GCC 13 or
+newer). On Ubuntu 24.04, install native Linux development packages:
 
 ```bash
 sudo apt-get update

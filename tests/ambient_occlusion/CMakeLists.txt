@@ -53,6 +53,15 @@ else()
     target_compile_options(ao-post-order-test PRIVATE -Wall -Wextra -UNDEBUG)
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(hit_attribution_extracted "${CMAKE_CURRENT_BINARY_DIR}/hit_attribution.extracted.inc")
+add_custom_command(OUTPUT "${hit_attribution_extracted}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_hit_attribution.py"
+        --source "${BLACK_MANUAL_SOURCE}" --output "${hit_attribution_extracted}"
+    DEPENDS "${BLACK_MANUAL_SOURCE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_hit_attribution.py"
+    COMMENT "Extracting the production hit-marker attribution" VERBATIM)
+set_source_files_properties("${hit_attribution_extracted}" PROPERTIES GENERATED TRUE HEADER_FILE_ONLY TRUE)
+target_sources(ao-crosshair-test PRIVATE "${hit_attribution_extracted}")
+target_include_directories(ao-crosshair-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set(native_menu_extracted "${CMAKE_CURRENT_BINARY_DIR}/native_menu.extracted.inc")
 add_custom_command(OUTPUT "${native_menu_extracted}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_menu_default.py"
